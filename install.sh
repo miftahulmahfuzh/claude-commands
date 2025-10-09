@@ -59,7 +59,10 @@ if [ -L "$CLAUDE_COMMANDS_DIR" ] && [ -d "$CLAUDE_COMMANDS_DIR" ]; then
     for cmd_file in "$REPO_DIR"/*.md; do
         if [ -f "$cmd_file" ]; then
             cmd_name=$(basename "$cmd_file" .md)
-            echo "   /$cmd_name"
+            # Skip documentation files that are not commands
+            if [[ "$cmd_name" != "CHANGELOG" && "$cmd_name" != "README" ]]; then
+                echo "   /$cmd_name"
+            fi
         fi
     done
     echo ""

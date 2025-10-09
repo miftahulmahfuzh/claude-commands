@@ -1,13 +1,13 @@
 # Claude Commands Collection 🚀
 
-A curated collection of custom Claude Code commands that supercharge your development workflow. These commands automate common git operations with intelligent analysis and semantic versioning.
+A curated collection of custom Claude Code commands that supercharge your development workflow. These commands automate common git operations with intelligent analysis, semantic versioning, and comprehensive package documentation.
 
 ## 🛠️ Installation
 
 Clone this repository and run the installation script to set up all commands:
 
 ```bash
-git clone https://github.com/yourusername/claude-commands.git
+git clone https://github.com/miftahulmahfuzh/claude-commands.git
 cd claude-commands
 ./install.sh
 ```
@@ -32,8 +32,9 @@ ln -s /path/to/claude-commands ~/.claude/commands
 
 ## 📋 Available Commands
 
-### `/push` - Intelligent Git Workflow Automation
+### Git Workflow Commands
 
+#### `/push` - Intelligent Git Workflow Automation
 Streamlines your entire git commit and push process with AI-powered commit message generation.
 
 **What it does:**
@@ -56,8 +57,7 @@ Streamlines your entire git commit and push process with AI-powered commit messa
 
 ---
 
-### `/up-version` - Automated Semantic Versioning
-
+#### `/up-version` - Automated Semantic Versioning
 Automates the entire version release process with intelligent semantic versioning and changelog generation.
 
 **What it does:**
@@ -80,14 +80,286 @@ Automates the entire version release process with intelligent semantic versionin
 - Automated changelog generation
 - Professional project maintenance
 
+---
+
+### Package Documentation Commands
+
+These commands provide comprehensive package analysis and documentation for Go projects, creating a complete picture of your codebase architecture, quality, and task tracking.
+
+#### `/update-readme` - Generate Comprehensive Package Documentation
+
+Creates detailed technical documentation for any Go package, analyzing its API surface, dependencies, architecture, and usage patterns.
+
+**What it does:**
+- 📦 Analyzes all source files in the package (excluding tests)
+- 🔍 Documents exported API surface (types, functions, constants)
+- 🏗️ Maps internal architecture and data flow
+- 🔗 Identifies forward and reverse dependencies
+- ⚡ Analyzes concurrency model and thread-safety
+- 🚨 Documents error handling patterns
+- 📊 References performance characteristics from benchmarks
+- 💡 Provides usage patterns and gotchas
+- 🔄 Updates existing documentation to reflect current state
+
+**Usage:**
+```
+/update-readme chatbot/bowl
+/update-readme tools/toolcore
+```
+
+**Output:** Creates `{directory_path}/.workflows/package_readme.md`
+
+**Perfect for:**
+- Onboarding new developers
+- Understanding complex packages
+- Maintaining up-to-date documentation
+- API design reviews
+- Architecture documentation
+
+---
+
+#### `/analyze-package` - Deep Code Quality Analysis
+
+Performs comprehensive static analysis to identify code quality issues, performance bottlenecks, dead code, and refactoring opportunities.
+
+**What it does:**
+- 🧮 Calculates cyclomatic complexity for all functions
+- 🔍 Identifies exported but unused functions (dead code)
+- 🚨 Audits error handling patterns and missing checks
+- ⚠️ Detects concurrency risks (race conditions, deadlocks)
+- 📈 Identifies performance concerns (allocations, lock contention)
+- 🔄 Finds duplicate logic and god functions
+- 📊 Cross-references with benchmark data if available
+- 🎯 Prioritizes issues by severity
+
+**Prerequisites:**
+- Requires `package_readme.md` to exist (run `/update-readme` first)
+
+**Usage:**
+```
+/analyze-package chatbot/bowl
+/analyze-package core/db
+```
+
+**Output:** Creates `{directory_path}/.workflows/analysis_report.md`
+
+**Perfect for:**
+- Code review preparation
+- Identifying technical debt
+- Performance optimization planning
+- Refactoring prioritization
+- Catching bugs before production
+
+---
+
+#### `/update-todos` - Intelligent Task Tracking
+
+Maintains a comprehensive, automatically-updated task list for each package based on git changes, code analysis, and existing documentation.
+
+**What it does:**
+- 📝 Tracks completed, added, and ongoing tasks
+- 🔍 Analyzes git commits to identify changes
+- 🐛 Extracts TODO/FIXME/HACK comments from code
+- 📊 Imports issues from analysis_report.md
+- 🏷️ Assigns priority levels (P0-P4) based on severity
+- ⏰ Timestamps all changes with commit references
+- 📦 Maintains task history and archives
+- 🔄 Tracks task lifecycle from identification to completion
+
+**Prerequisites:**
+- Requires `package_readme.md` to exist (run `/update-readme` first)
+- Enhanced with `analysis_report.md` if available
+
+**Usage:**
+
+**During active session (after making changes):**
+```
+/update-todos chatbot/bowl
+```
+
+**After commits (retroactive update):**
+```
+/update-todos chatbot/bowl --since=abc123f
+/update-todos chatbot/bowl --since=HEAD~5
+```
+
+**Initial setup:**
+```
+/update-todos chatbot/bowl --init
+```
+
+**Output:** Creates/updates `{directory_path}/.workflows/todos.md`
+
+**Perfect for:**
+- Sprint planning and tracking
+- Bug tracking and prioritization
+- Refactoring task management
+- Team coordination
+- Project status visibility
+
+---
+
+## 🔄 Package Documentation Workflow
+
+The package documentation commands work together in a specific sequence to provide comprehensive package analysis:
+
+### 1️⃣ Initial Setup Workflow
+
+For a new package or first-time documentation:
+
+```bash
+# Step 1: Generate package documentation
+/update-readme chatbot/bowl
+
+# Step 2: Perform deep analysis
+/analyze-package chatbot/bowl
+
+# Step 3: Initialize task tracking
+/update-todos chatbot/bowl --init
+```
+
+**Result:** Complete documentation suite in `chatbot/bowl/.workflows/`:
+- `package_readme.md` - Technical documentation
+- `analysis_report.md` - Code quality analysis
+- `todos.md` - Task tracking
+
+---
+
+### 2️⃣ Active Development Workflow
+
+During a coding session when making changes:
+
+```bash
+# Make your code changes
+# ... coding ...
+
+# Update task tracker with what you did
+/update-todos chatbot/bowl
+
+# If you made significant changes, update docs
+/update-readme chatbot/bowl
+```
+
+---
+
+### 3️⃣ Post-Commit Workflow
+
+After pushing changes to remote:
+
+```bash
+# Update todos based on recent commits
+/update-todos chatbot/bowl --since=HEAD~3
+
+# Regenerate analysis if major refactoring occurred
+/analyze-package chatbot/bowl
+
+# Update documentation if API changed
+/update-readme chatbot/bowl
+```
+
+---
+
+### 4️⃣ Maintenance Workflow
+
+Periodic maintenance (weekly/monthly):
+
+```bash
+# Regenerate analysis to catch accumulated issues
+/analyze-package chatbot/bowl
+
+# Update todos based on new analysis findings
+/update-todos chatbot/bowl
+
+# Verify documentation is current
+/update-readme chatbot/bowl
+```
+
+---
+
+### 5️⃣ Code Review Workflow
+
+Before submitting PR or during code review:
+
+```bash
+# Get fresh analysis report
+/analyze-package chatbot/bowl
+
+# Review critical issues in analysis_report.md
+# Address P0/P1 issues identified
+
+# Update todos with review findings
+/update-todos chatbot/bowl
+
+# Ensure documentation reflects changes
+/update-readme chatbot/bowl
+```
+
+---
+
 ## 🎯 Why Use These Commands?
 
+### Git Commands
 - **🤖 AI-Powered**: Leverages Claude's intelligence to understand your code changes
 - **⚡ Time-Saving**: Eliminates repetitive git operations
 - **📐 Consistent**: Enforces best practices and conventional formats
 - **🔍 Insightful**: Provides detailed analysis of what changed and why
+
+### Documentation Commands
+- **📚 Comprehensive**: Generates complete package documentation automatically
+- **🔍 Deep Analysis**: Identifies issues static analysis tools miss
+- **🎯 Actionable**: Prioritizes tasks and issues by severity
+- **🔄 Living Documentation**: Keeps docs in sync with code changes
+- **🏗️ Architecture Aware**: Understands package relationships and dependencies
+- **📊 Data-Driven**: Uses benchmark data to validate performance concerns
+
+### All Commands
 - **🛡️ Safe**: Includes comprehensive error handling and validation
 - **🔄 Workflow-Aware**: Designed for real development workflows
+- **⚙️ Customizable**: Easy to modify for your project's needs
+
+---
+
+## 📁 Project Structure
+
+After using package documentation commands, your project will have this structure:
+
+```
+your-project/
+├── chatbot/
+│   └── bowl/
+│       ├── .workflows/
+│       │   ├── package_readme.md       # Technical documentation
+│       │   ├── analysis_report.md      # Code quality analysis
+│       │   ├── todos.md                # Task tracking
+│       │   ├── unittest_guide.md       # (if exists) Test documentation
+│       │   └── benchmark_analysis.md   # (if exists) Performance data
+│       ├── bowl.go
+│       ├── manager.go
+│       └── ...
+└── ...
+```
+
+The `.workflows/` directory keeps all package-level documentation organized and separate from source code.
+
+---
+
+## 💡 Best Practices
+
+### For Git Commands
+- Use `/push` for routine commits
+- Use `/up-version` only when ready to release
+- Review generated commit messages before they're pushed
+
+### For Package Documentation
+- Run `/update-readme` after significant API changes
+- Run `/analyze-package` before code reviews and releases
+- Run `/update-todos` after every coding session
+- Use `--init` only once per package or when starting fresh
+- Keep `package_readme.md` as the source of truth for package purpose
+- Address P0/P1 issues from `analysis_report.md` immediately
+- Archive completed tasks regularly in `todos.md`
+
+---
 
 ## 🤝 Contributing
 
@@ -100,9 +372,13 @@ Found a bug or have an idea for a new command? Contributions are welcome!
 5. Push to the branch (`git push origin feature/amazing-command`)
 6. Open a Pull Request
 
+---
+
 ## 📄 License
 
 This project is open source and available under the [MIT License](LICENSE).
+
+---
 
 ## 🙏 Acknowledgments
 
