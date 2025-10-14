@@ -94,8 +94,31 @@ After execution:
      - **Method**: {brief description of what was done}
      - **Files Modified**: {list of files changed}
    ```
-3. **Move to Archive**: If archive section exists, move completed task there
-4. **Update Quick Stats**: Recalculate task counts
+3. **CRITICAL: Move to Completed Tasks Section**:
+   - Check if `## Completed Tasks` section exists in todos.md
+   - If **NOT exists**, create the section:
+     ```markdown
+     ## Completed Tasks
+
+     ### Recently Completed
+     - [x] **{TaskID}** {task_description}
+       - **Completed**: {YYYY-MM-DD HH:MM:SS}
+       - **Method**: {brief description of what was done}
+       - **Files Modified**: {list of files changed}
+
+     ### This Week
+
+     ### This Month
+     ```
+   - If **exists**, move completed task to appropriate time-based subsection:
+     - Completed today → "Recently Completed"
+     - Completed within 7 days → "This Week"
+     - Completed within 30 days → "This Month"
+     - Older than 30 days → Archive section (if exists)
+   - **ENSURE**: Completed task is REMOVED from Active Tasks section
+   - **VERIFY**: No completed tasks remain in Active Tasks section
+
+4. **Update Quick Stats**: Recalculate task counts including completion metrics
 
 ### Step 7: Update Related Files
 Based on task type, update other .workflows files:
@@ -159,6 +182,8 @@ Use regex to validate TaskID format before search:
 📝 Fixed race condition in Manager.Start()
 📄 Modified: manager.go (lines 45-67)
 📄 Updated: todos.md, analysis_report.md
+📋 Task moved to Completed Tasks section
+📊 Quick Stats updated with completion metrics
 ```
 
 ### Progress Messages:

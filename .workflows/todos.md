@@ -4,7 +4,7 @@
 
 **Package Code**: CL
 
-**Last Updated**: 2025-01-14 20:00:00
+**Last Updated**: 2025-01-14 20:15:00
 
 **Total Active Tasks**: 0
 
@@ -15,9 +15,9 @@
 - P3 Low: 0
 - P4 Backlog: 0
 - Blocked: 0
-- Completed Today: 5
-- Completed This Week: 5
-- Completed This Month: 6
+- Completed Today: 6
+- Completed This Week: 6
+- Completed This Month: 7
 
 ---
 
@@ -30,6 +30,12 @@
 ## Completed Tasks
 
 ### Recently Completed
+- [x] **P2-CL-A010** Update do.md to move completed tasks to Completed Tasks section
+  - **Completed**: 2025-01-14 20:15:00
+  - **Method**: Enhanced do.md Step 6 with critical requirement to move completed tasks to Completed Tasks section, create section if missing, and verify clean separation
+  - **Files Modified**: do.md (Step 6, Success Messages)
+  - **Impact**: Users get automatic task organization after /do execution, maintaining clean separation between active and completed work
+
 - [x] **P2-CL-A009** Update README.md to document reorganize-todos command and troubleshooting guidance
   - **Completed**: 2025-01-14 20:00:00
   - **Method**: Added comprehensive reorganize-todos command documentation and troubleshooting section in README.md
