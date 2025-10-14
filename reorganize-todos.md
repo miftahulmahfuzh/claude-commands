@@ -93,19 +93,26 @@ Look for:
 ### This Month
 ```
 
-#### 4.3 Move All Completed Tasks
-1. **Find ALL completed tasks** (tasks with `- [x]`)
-2. **Move from Active Tasks** to appropriate time section:
+#### 4.3 Move ALL Completed Tasks from Active Tasks Section
+1. **Find ALL completed tasks** (tasks with `- [x]`) **anywhere in the file**
+2. **CRITICAL: Scan the ENTIRE Active Tasks section** for ANY checkmarked tasks:
+   - Search EVERY line in Active Tasks section for `- [x]` pattern
+   - NO checkmarked task should remain in Active Tasks section
+   - MOVE ALL checkmarked tasks without exception
+
+3. **Move ALL found completed tasks** from Active Tasks to appropriate time section:
    - Completed today → "Recently Completed"
    - Completed within 7 days → "This Week"
    - Completed within 30 days → "This Month"
    - Older than 30 days → Archive section
 
-3. **Add completion details**:
+4. **Add completion details**:
    - **Completed**: Current timestamp
    - **Method**: "Task reorganization"
    - **Files Modified**: "todos.md"
    - **Impact**: "Added TaskID and proper organization"
+
+5. **VERIFICATION**: After moving, double-check that **ZERO checkmarked tasks remain** in Active Tasks section
 
 ### Step 5: Update Quick Stats
 Recalculate and update:
@@ -122,9 +129,10 @@ Recalculate and update:
 - **ALL TaskIDs** must be unique
 
 #### 6.2 Organization Validation
-- **ZERO completed tasks** in Active Tasks section
-- **ALL completed tasks** in Completed Tasks section
+- **ZERO completed tasks** in Active Tasks section - **MUST VERIFY NO CHECKMARKED TASKS REMAIN**
+- **ALL completed tasks** in Completed Tasks section - no orphaned completed tasks
 - Proper time-based organization
+- **CRITICAL**: Active Tasks section must contain ONLY `- [ ]` (unchecked) tasks
 
 #### 6.3 Format Validation
 - Checkboxes properly formatted: `- [ ]` or `- [x]`

@@ -4,7 +4,7 @@
 
 **Package Code**: CL
 
-**Last Updated**: 2025-01-14 19:30:00
+**Last Updated**: 2025-01-14 20:00:00
 
 **Total Active Tasks**: 0
 
@@ -15,9 +15,9 @@
 - P3 Low: 0
 - P4 Backlog: 0
 - Blocked: 0
-- Completed Today: 4
-- Completed This Week: 4
-- Completed This Month: 5
+- Completed Today: 5
+- Completed This Week: 5
+- Completed This Month: 6
 
 ---
 
@@ -30,6 +30,12 @@
 ## Completed Tasks
 
 ### Recently Completed
+- [x] **P2-CL-A009** Update README.md to document reorganize-todos command and troubleshooting guidance
+  - **Completed**: 2025-01-14 20:00:00
+  - **Method**: Added comprehensive reorganize-todos command documentation and troubleshooting section in README.md
+  - **Files Modified**: README.md (lines 228-280, reorganize-todos command section and troubleshooting guidance)
+  - **Impact**: Users now understand when and how to use reorganize-todos command for TaskID and organization cleanup
+
 - [x] **P2-CL-A007** Fix update-todos command: TaskID generation and completed tasks movement
   - **Completed**: 2025-01-14 19:30:00
   - **Method**: Strengthened update-todos.md instructions with critical TaskID coverage and organization requirements

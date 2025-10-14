@@ -225,6 +225,59 @@ Maintains a comprehensive, automatically-updated task list for each package base
 - Project status visibility
 - Maintaining clean separation between active and completed work
 
+**Troubleshooting:**
+- If `/update-todos` fails to generate TaskIDs for existing tasks
+- If `/update-todos` doesn't move completed tasks to Completed Tasks section
+- Run `/reorganize-todos <package-dir>` to clean up TaskID coverage and organization
+
+---
+
+#### `/reorganize-todos` - TaskID and Organization Cleanup
+
+Cleans up and reorganizes existing todos.md by ensuring complete TaskID coverage and proper task organization.
+
+**What it does:**
+- 🏷️ **TaskID Coverage**: Ensures EVERY task (active and completed) has a unique TaskID
+- 📋 **Task Organization**: Properly separates active and completed tasks
+- 🔍 **Deep Scan**: Scans ENTIRE Active Tasks section for ANY checkmarked tasks
+- ✅ **Complete Migration**: Moves ALL checkmarked tasks to Completed Tasks section
+- 📊 **Stats Update**: Recalculates and updates Quick Stats with completion metrics
+- 🧹 **Clean Validation**: Verifies ZERO checkmarked tasks remain in Active Tasks section
+
+**Usage:**
+```bash
+/reorganize-todos chatbot/bowl
+/reorganize-todos core/db
+```
+
+**Prerequisites:**
+- Requires existing `.workflows/todos.md` file
+- Run `/update-todos <package> --init` if todos.md doesn't exist
+- Complete some tasks before running reorganize-todos
+
+**Perfect for:**
+- Cleaning up tasks missing TaskIDs
+- Moving completed tasks that accumulated in Active Tasks section
+- Fixing task organization issues
+- Periodic maintenance (weekly/monthly)
+- Pre-task-execution cleanup
+
+**Key Features:**
+- **Focused Responsibility**: Only handles TaskID generation and organization cleanup
+- **No Analysis**: Doesn't analyze code or git changes - just reorganizes existing content
+- **Simple and Reliable**: Clear, predictable behavior every time
+- **Complete Coverage**: Ensures ALL tasks have TaskIDs, no exceptions
+- **Clean Separation**: Guarantees Active Tasks only contains incomplete work
+
+**Output Messages:**
+```
+✅ Reorganized todos.md successfully
+  - {N} tasks received new TaskIDs
+  - {N} completed tasks moved to Completed Tasks section
+  - Active Tasks now contains only {count} active tasks
+  - Quick Stats updated with completion metrics
+```
+
 ---
 
 ### Task Execution Commands
