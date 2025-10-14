@@ -69,6 +69,32 @@ ELSE:
     ABORT: "No changes detected. Nothing to update."
 ```
 
+### Step 1.1: Generate Package Code
+For each package, generate a unique 2-3 letter code:
+- Extract from package name (last part of path)
+- `db` → `DB`
+- `chatbot/bowl` → `CB` (from Chatbot Bowl)
+- `core/cache` → `CC` (from Core Cache)
+- `tools/processor` → `TP` (from Tools Processor)
+- If conflict exists across packages, use longer code or add number suffix
+
+### Step 1.2: TaskID Generation System
+Format: `Priority-PackageCode-4CharID`
+
+**Generation Logic:**
+1. Get all existing TaskIDs in current todos.md
+2. Extract used 4CharIDs for this package
+3. Generate next available 4CharID in sequence:
+   - Start with `A000`, `A001`, ..., `A999`
+   - Then `B000`, `B001`, ..., `B999`
+   - Continue through `Z999`
+4. Combine: `[Priority]-[PackageCode]-[4CharID]`
+
+**Example:**
+- Package `db` has existing tasks: `P1-DB-A236`, `P0-DB-A237`
+- Next task with P1 priority → `P1-DB-A238`
+- Next task with P0 priority → `P0-DB-A238`
+
 ### Step 2: Load Context Files
 
 Read in order:
@@ -234,6 +260,7 @@ Assign priority tags:
 # Todos: {package_name}
 
 **Package Path**: `{directory_path}`
+**Package Code**: {PACKAGE_CODE}
 **Last Updated**: {YYYY-MM-DD HH:MM:SS}
 **Total Active Tasks**: {count}
 
@@ -242,6 +269,7 @@ Assign priority tags:
 - P1 High: {count}
 - P2 Medium: {count}
 - P3 Low: {count}
+- P4 Backlog: {count}
 - Blocked: {count}
 
 ---
@@ -249,29 +277,35 @@ Assign priority tags:
 ## Active Tasks
 
 ### [P0] Critical
-- [ ] {Task description} `{file:line if from code comment}`
+- [ ] **{TaskID}** {Task description} `{file:line if from code comment}`
   - **Context**: {Why this is critical}
   - **Identified**: {date or commit}
+  - **Status**: {active|in_progress|blocked}
 
 ### [P1] High
-- [ ] {Task description}
+- [ ] **{TaskID}** {Task description}
   - **Context**: {Why this matters}
   - **Identified**: {date or commit}
   - **Related**: {link to analysis_report.md section if applicable}
+  - **Status**: {active|in_progress|blocked}
 
 ### [P2] Medium
-- [ ] {Task description}
+- [ ] **{TaskID}** {Task description}
+  - **Status**: {active|in_progress|blocked}
 
 ### [P3] Low
-- [ ] {Task description}
+- [ ] **{TaskID}** {Task description}
+  - **Status**: {active|in_progress|blocked}
 
 ### [P4] Backlog
-- [ ] {Task description}
+- [ ] **{TaskID}** {Task description}
+  - **Status**: {active|in_progress|blocked}
 
 ### 🚫 Blocked
-- [ ] {Task description}
+- [ ] **{TaskID}** {Task description}
   - **Blocked by**: {What's blocking this}
   - **Identified**: {date}
+  - **Status**: blocked
 
 ---
 
@@ -280,38 +314,43 @@ Assign priority tags:
 ### [{YYYY-MM-DD HH:MM}] - Commit: {short_hash} (or "Session Update")
 
 #### Completed ✓
-- [P1] Fixed race condition in Manager.Start() - added mutex protection
+- [x] **P1-DB-A236** Fixed race condition in Manager.Start() - added mutex protection
   - **Files**: manager.go:45-67
   - **Commit**: abc123f
   - **Impact**: Eliminated crash under high concurrency
 
-- [P2] Refactored bowl creation logic into separate function
+- [x] **P2-DB-A237** Refactored bowl creation logic into separate function
   - **Files**: bowl.go:120-145
   - **Why**: Reduced complexity from 15→8, improved readability
 
 #### Added 📝
-- [P1] Implement graceful shutdown for background workers
+- [ ] **P1-DB-A238** Implement graceful shutdown for background workers
   - **Reason**: New goroutines added in abc123f need cleanup
   - **Files**: manager.go:89
+  - **Status**: active
 
-- [P2] Document new WithTimeout option in package_readme.md
+- [ ] **P2-DB-A239** Document new WithTimeout option in package_readme.md
   - **Reason**: New public API added but not documented
+  - **Status**: active
 
 #### Identified 🔍
-- [P1] Potential memory leak in bowl recycling
+- [ ] **P1-DB-A240** Potential memory leak in bowl recycling
   - **Location**: bowl.go:234
   - **Evidence**: TODO comment added during debugging
   - **Next**: Profile memory usage under load
+  - **Status**: active
 
-- [P2] Duplicate error handling in 3 functions
+- [ ] **P2-DB-A241** Duplicate error handling in 3 functions
   - **Locations**: manager.go:156, manager.go:298, bowl.go:67
   - **Suggestion**: Extract common error wrapper
+  - **Status**: active
 
 #### Ongoing 🔄
-- [P1] Multi-stage bowl processing pipeline
+- [ ] **P1-DB-A242** Multi-stage bowl processing pipeline
   - **Status**: 2 of 4 stages implemented
   - **Commits**: abc123f, def456a
   - **Next**: Implement validation stage
+  - **Status**: in_progress
 
 ---
 
@@ -344,13 +383,24 @@ Assign priority tags:
 {Ideas for major refactoring or features requiring design}
 ```
 
-### Step 7: Task Deduplication
+### Step 7: Task Deduplication and TaskID Management
 
 Before adding new tasks:
 1. Check if identical task exists in Active Tasks
 2. Check if similar task exists (>80% text similarity)
-3. If duplicate: merge contexts and update priority
-4. If similar: link them with "Related to: {task_id}"
+3. If duplicate: merge contexts and update priority, keep existing TaskID
+4. If similar: link them with "Related to: {TaskID}"
+
+### TaskID Assignment Rules:
+1. **New tasks**: Always generate new TaskID using priority + package code + next sequence
+2. **Priority changes**: Keep same TaskID, update priority prefix
+3. **Merged tasks**: Keep TaskID of higher priority task
+4. **Split tasks**: Generate new TaskIDs for split tasks, mark original as completed
+
+### TaskID Tracking:
+- Maintain index of all TaskIDs in project for quick lookup
+- When searching for tasks: search by TaskID first, then by description
+- When referencing tasks in other commands: always use TaskID format
 
 ### Step 8: Archive Maintenance
 
@@ -437,6 +487,12 @@ Before saving todos.md:
 4. Verify all file references use relative paths from project root
 5. Verify all commit hashes are 7 characters
 6. Verify no duplicate tasks in Active Tasks section
+7. **TaskID Validation**:
+   - All tasks have TaskID in format: `P[0-4]-[A-Z]{2,3}-[A-Z0-9]{4}`
+   - All TaskIDs in Active Tasks are unique
+   - TaskID priority prefix matches task section priority
+   - TaskID package code matches package code in header
+   - No TaskID conflicts with archived tasks
 
 ## Output Messages
 

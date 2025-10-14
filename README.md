@@ -199,9 +199,58 @@ Maintains a comprehensive, automatically-updated task list for each package base
 
 ---
 
+### Task Execution Commands
+
+#### `/do` - Execute Tasks by TaskID
+
+Execute tasks from any package's todos.md using unique TaskID without needing to specify package paths.
+
+**TaskID Format**: `Priority-PackageCode-4CharID` (e.g., `P0-DB-A236`, `P1-CB-B789`)
+
+**How TaskIDs are Generated:**
+- Automatically assigned when you run `/update-todos` on a package
+- Priority levels (P0-P4) are assigned based on issue severity:
+  - **P0**: Critical bugs, security issues, blocking failures
+  - **P1**: High priority bugs, important features
+  - **P2**: Medium priority tasks, documentation updates
+  - **P3**: Low priority improvements, nice-to-haves
+  - **P4**: Backlog tasks, future considerations
+- Package codes are 2-3 letter identifiers (e.g., DB=Database, CB=Chatbot Bowl, CC=Core Commands)
+- 4CharID is a unique alphanumeric identifier within the package
+
+**Usage:**
+```bash
+# Execute specific task
+/do P0-DB-A236
+
+# Execute with additional instructions
+/do P1-CB-B789 --note="Add support for bulk operations"
+
+# Execute all P0 tasks across all packages
+/do --all-p0
+
+# Execute all tasks for specific package
+/do --package=chatbot/bowl --all
+```
+
+**What it does:**
+- 🔍 Locates tasks across all packages using TaskID
+- 📋 Loads task context and relevant documentation
+- 🔧 Implements the solution automatically
+- 📝 Updates all .workflows files and marks task complete
+- ✅ Moves completed tasks to archive section
+
+**Perfect for:**
+- Quick task execution without path specification
+- Streamlined workflow with automatic documentation updates
+- Coordinated task management across packages
+- Tracking task completion across multiple packages
+
+---
+
 ## 🔄 Package Documentation Workflow
 
-The package documentation commands work together in a specific sequence to provide comprehensive package analysis:
+The package documentation commands work together in a specific sequence to provide comprehensive package analysis with automated TaskID tracking:
 
 ### 1️⃣ Initial Setup Workflow
 
@@ -214,14 +263,14 @@ For a new package or first-time documentation:
 # Step 2: Perform deep analysis
 /analyze-package chatbot/bowl
 
-# Step 3: Initialize task tracking
+# Step 3: Initialize task tracking with automatic TaskID generation
 /update-todos chatbot/bowl --init
 ```
 
 **Result:** Complete documentation suite in `chatbot/bowl/.workflows/`:
 - `package_readme.md` - Technical documentation
 - `analysis_report.md` - Code quality analysis
-- `todos.md` - Task tracking
+- `todos.md` - Task tracking with generated TaskIDs (e.g., P1-CB-A123, P0-CB-A124)
 
 ---
 
@@ -233,8 +282,12 @@ During a coding session when making changes:
 # Make your code changes
 # ... coding ...
 
-# Update task tracker with what you did
+# Update task tracker with what you did (generates new TaskIDs)
 /update-todos chatbot/bowl
+
+# Execute specific tasks using TaskIDs (no path needed!)
+/do P1-CB-A234  # Fix the race condition found in analysis
+/do P2-CB-A235  # Update documentation for new API
 
 # If you made significant changes, update docs
 /update-readme chatbot/bowl
@@ -247,8 +300,12 @@ During a coding session when making changes:
 After pushing changes to remote:
 
 ```bash
-# Update todos based on recent commits
+# Update todos based on recent commits (generates new TaskIDs for discovered issues)
 /update-todos chatbot/bowl --since=HEAD~3
+
+# Execute newly identified tasks using TaskIDs
+/do P0-CB-A456  # Fix critical issues found in post-commit analysis
+/do P1-CB-A457  # Address high priority tasks
 
 # Regenerate analysis if major refactoring occurred
 /analyze-package chatbot/bowl
@@ -267,11 +324,18 @@ Periodic maintenance (weekly/monthly):
 # Regenerate analysis to catch accumulated issues
 /analyze-package chatbot/bowl
 
-# Update todos based on new analysis findings
+# Update todos based on new analysis findings (generates maintenance TaskIDs)
 /update-todos chatbot/bowl
+
+# Execute maintenance tasks using TaskIDs
+/do P2-CB-B123  # Fix medium priority issues found in maintenance
+/do P3-CB-B124  # Address low priority improvements
 
 # Verify documentation is current
 /update-readme chatbot/bowl
+
+# Clean up completed tasks and update stats
+/update-todos chatbot/bowl --archive-completed
 ```
 
 ---
@@ -285,14 +349,62 @@ Before submitting PR or during code review:
 /analyze-package chatbot/bowl
 
 # Review critical issues in analysis_report.md
-# Address P0/P1 issues identified
+# Address P0/P1 issues identified using TaskIDs
+/do P0-CB-X001  # Fix critical race condition
+/do P0-CB-X002  # Address security vulnerability
 
-# Update todos with review findings
+# Update todos with review findings (generates review-related TaskIDs)
 /update-todos chatbot/bowl
+
+# Execute review cleanup tasks
+/do P2-CB-X003  # Add missing error handling
+/do P3-CB-X004  # Improve code comments
 
 # Ensure documentation reflects changes
 /update-readme chatbot/bowl
 ```
+
+---
+
+### 6️⃣ Complete TaskID Workflow Example
+
+Here's a complete example of how the TaskID workflow system works in practice:
+
+```bash
+# Step 1: Initial analysis of your package
+/update-todos mypackage --init
+
+# Output: Generated TaskIDs like P1-MP-A001, P2-MP-A002, P0-MP-A003
+
+# Step 2: Review generated tasks in mypackage/.workflows/todos.md
+# You'll see tasks like:
+# - P0-MP-A003: Fix critical race condition in manager.go
+# - P1-MP-A001: Add missing error handling in client.go
+# - P2-MP-A002: Update documentation for new API endpoints
+
+# Step 3: Execute tasks using TaskIDs (no package path needed!)
+/do P0-MP-A003                    # Fix the critical race condition
+/do P1-MP-A001 --note="Add timeout support"
+/do P2-MP-A002                    # Update the documentation
+
+# Step 4: Each /do command automatically:
+# - Loads the task context
+# - Implements the solution
+# - Updates relevant documentation
+# - Marks the task as completed in todos.md
+# - Moves completed tasks to archive section
+
+# Step 5: Continue working and generate new TaskIDs as needed
+/update-todos mypackage           # Generate new TaskIDs for recent changes
+/do P1-MP-A004                    # Execute the new high-priority task
+```
+
+**Key Benefits of TaskID Workflow:**
+- **No Path Required**: Execute tasks from anywhere using just the TaskID
+- **Automatic Tracking**: Task completion and documentation updates happen automatically
+- **Cross-Package**: Execute tasks across multiple packages without context switching
+- **Priority-Based**: Focus on P0/P1 tasks first, then work through lower priorities
+- **Archive Management**: Completed tasks are automatically archived for reference
 
 ---
 
@@ -311,6 +423,14 @@ Before submitting PR or during code review:
 - **🔄 Living Documentation**: Keeps docs in sync with code changes
 - **🏗️ Architecture Aware**: Understands package relationships and dependencies
 - **📊 Data-Driven**: Uses benchmark data to validate performance concerns
+
+### Task Management Commands
+- **🎯 Precise**: Execute tasks using unique TaskID without path specification
+- **🔄 Automated**: Updates documentation and task status automatically
+- **📋 Context-Aware**: Loads all relevant information for task execution
+- **⚡ Efficient**: No need to manually locate tasks or update multiple files
+- **🆔 TaskID System**: Automatic unique ID generation with priority-based ordering
+- **📊 Statistics Tracking**: Real-time task counts and completion metrics
 
 ### All Commands
 - **🛡️ Safe**: Includes comprehensive error handling and validation
