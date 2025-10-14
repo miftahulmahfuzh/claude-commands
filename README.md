@@ -208,7 +208,6 @@ Maintains a comprehensive, automatically-updated task list for each package base
   - Maintains task priorities and 4CharID identifiers
   - Updates all cross-references and links
 - **Example**: Changes `P1-OLD-A123` → `P1-NEW-A123` for all tasks
-```
 
 **Output:** Creates/updates `{directory_path}/.workflows/todos.md` with organized structure:
 
