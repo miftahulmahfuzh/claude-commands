@@ -165,6 +165,7 @@ Maintains a comprehensive, automatically-updated task list for each package base
 - ⏰ Timestamps all changes with commit references
 - 📦 Maintains task history and archives
 - 🔄 Tracks task lifecycle from identification to completion
+- 🔄 **Package Code Override**: Change package codes and migrate all TaskIDs automatically
 
 **Prerequisites:**
 - Requires `package_readme.md` to exist (run `/update-readme` first)
@@ -186,6 +187,25 @@ Maintains a comprehensive, automatically-updated task list for each package base
 **Initial setup:**
 ```
 /update-todos chatbot/bowl --init
+```
+
+**Package code override (change package code and migrate TaskIDs):**
+```
+/update-todos chatbot/bowl --package-code=CB
+```
+
+**Package Code Override Feature:**
+- **Purpose**: Change the package code and automatically migrate all existing TaskIDs
+- **Use Cases**:
+  - Fixing incorrect package codes
+  - Standardizing package codes across projects
+  - Resolving package code conflicts
+- **Behavior**:
+  - Updates Package Code in todos.md header
+  - Migrates all existing TaskIDs to use new package code
+  - Maintains task priorities and 4CharID identifiers
+  - Updates all cross-references and links
+- **Example**: Changes `P1-OLD-A123` → `P1-NEW-A123` for all tasks
 ```
 
 **Output:** Creates/updates `{directory_path}/.workflows/todos.md`
@@ -217,6 +237,7 @@ Execute tasks from any package's todos.md using unique TaskID without needing to
   - **P4**: Backlog tasks, future considerations
 - Package codes are 2-3 letter identifiers (e.g., DB=Database, CB=Chatbot Bowl, CC=Core Commands)
 - 4CharID is a unique alphanumeric identifier within the package
+- Package codes can be changed using `/update-todos --package-code=<NEW_CODE>` with automatic TaskID migration
 
 **Usage:**
 ```bash
@@ -265,6 +286,9 @@ For a new package or first-time documentation:
 
 # Step 3: Initialize task tracking with automatic TaskID generation
 /update-todos chatbot/bowl --init
+
+# Optional: Change package code and migrate all TaskIDs
+/update-todos chatbot/bowl --package-code=CB
 ```
 
 **Result:** Complete documentation suite in `chatbot/bowl/.workflows/`:

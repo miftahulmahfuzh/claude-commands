@@ -6,6 +6,7 @@ Update `{directory_path}/.workflows/todos.md` based on git changes, code analysi
 - Required: `{directory_path}` (e.g., `chatbot/bowl`)
 - Optional: `--since=<commit_hash>` (default: `HEAD~1`)
 - Optional: `--init` (force initialization mode even if todos.md exists)
+- Optional: `--package-code=<CODE>` (override package code and migrate all TaskIDs)
 
 ## Execution Modes
 
@@ -25,7 +26,16 @@ Use:
 - Commit messages
 - Changed files analysis
 
-### Mode 3: Initialization (When --init or todos.md doesn't exist)
+### Mode 3: Package Code Override (When --package-code provided)
+User wants to change the package code and migrate all existing TaskIDs.
+
+Use:
+- Current todos.md file
+- All existing TaskIDs need migration
+- Update Package Code in header
+- Rebuild TaskIDs with new package code
+
+### Mode 4: Initialization (When --init or todos.md doesn't exist)
 User wants to create initial todos.md or regenerate it.
 
 Use:
@@ -59,7 +69,9 @@ Use:
 ### Step 1: Determine Execution Mode
 
 ```
-IF --init flag present OR todos.md doesn't exist:
+IF --package-code flag present:
+    MODE = Package Code Override
+ELSE IF --init flag present OR todos.md doesn't exist:
     MODE = Initialization
 ELSE IF conversation context has code changes OR git has uncommitted changes:
     MODE = Active Session Update
@@ -95,7 +107,41 @@ Format: `Priority-PackageCode-4CharID`
 - Next task with P1 priority → `P1-DB-A238`
 - Next task with P0 priority → `P0-DB-A238`
 
-### Step 2: Load Context Files
+### Step 2: Package Code Override Process (When --package-code provided)
+
+1. **Validate New Package Code**:
+   - Check format: 2-3 uppercase letters (A-Z)
+   - Verify no conflicts with existing package codes in project
+   - Ensure it's different from current package code
+
+2. **Load Current todos.md**:
+   - Read all existing tasks and their TaskIDs
+   - Extract current package code from header
+   - Build migration map of old TaskID → new TaskID
+
+3. **Generate TaskID Migration Map**:
+   ```
+   Old TaskID: P1-OLD-A123 → New TaskID: P1-NEW-A123
+   Old TaskID: P0-OLD-B456 → New TaskID: P0-NEW-B456
+   ```
+   - Keep same priority and 4CharID
+   - Only change the package code portion
+
+4. **Update Header**:
+   - Change "Package Code: OLD" to "Package Code: NEW"
+
+5. **Migrate All TaskIDs**:
+   - Update TaskIDs in Active Tasks section
+   - Update TaskIDs in Recent Activity section
+   - Update TaskIDs in Archive section
+   - Update all task references and cross-links
+
+6. **Validate Migration**:
+   - Ensure no duplicate TaskIDs after migration
+   - Verify all TaskIDs use new package code
+   - Check Quick Stats still match
+
+### Step 3: Load Context Files (Other Modes)
 
 Read in order:
 1. `package_readme.md` - understand package structure
@@ -103,7 +149,7 @@ Read in order:
 3. `unittest_guide.md` (if exists) - check test documentation
 4. `todos.md` (if exists) - get existing tasks
 
-### Step 3: Gather Change Data
+### Step 4: Gather Change Data
 
 #### For Active Session Update:
 1. Parse conversation history for:
@@ -178,7 +224,7 @@ Read in order:
    - If package is heavily used but missing documentation → P1 doc task
    - If exported functions never used → P2 consider unexporting
 
-### Step 4: Classify Changes
+### Step 5: Classify Changes
 
 #### Completed Tasks ✓
 - Removed TODO comments from code
@@ -213,7 +259,7 @@ Read in order:
 - Tasks requiring design decisions
 - Tasks blocked by other packages
 
-### Step 5: Priority Assignment
+### Step 6: Priority Assignment
 
 Assign priority tags:
 
@@ -252,7 +298,7 @@ Assign priority tags:
 - Experimental ideas
 - Tech debt without immediate impact
 
-### Step 6: Generate/Update todos.md
+### Step 7: Generate/Update todos.md
 
 #### Format Structure:
 
@@ -383,7 +429,7 @@ Assign priority tags:
 {Ideas for major refactoring or features requiring design}
 ```
 
-### Step 7: Task Deduplication and TaskID Management
+### Step 8: Task Deduplication and TaskID Management
 
 Before adding new tasks:
 1. Check if identical task exists in Active Tasks
@@ -402,7 +448,7 @@ Before adding new tasks:
 - When searching for tasks: search by TaskID first, then by description
 - When referencing tasks in other commands: always use TaskID format
 
-### Step 8: Archive Maintenance
+### Step 9: Archive Maintenance
 
 When completing tasks:
 1. Move from Active Tasks to current month in Archive
@@ -494,6 +540,12 @@ Before saving todos.md:
    - TaskID package code matches package code in header
    - No TaskID conflicts with archived tasks
 
+8. **Package Code Validation** (when --package-code used):
+   - New package code is 2-3 uppercase letters
+   - No conflicts with existing package codes in project
+   - All TaskIDs successfully migrated to new package code
+   - Migration map is valid (no duplicate TaskIDs)
+
 ## Output Messages
 
 ### Success Messages:
@@ -503,6 +555,11 @@ Before saving todos.md:
   - {N} new tasks added
   - {N} issues identified
   - {N} tasks moved to archive
+
+✓ Package code updated successfully
+  - Old code: {OLD_CODE} → New code: {NEW_CODE}
+  - {N} TaskIDs migrated
+  - All references updated
 ```
 
 ### Warning Messages:
@@ -522,6 +579,18 @@ Before saving todos.md:
 
 ✗ Error: Invalid commit hash: {hash}
   Use: git log --oneline to find valid commits
+
+✗ Error: Invalid package code: {code}
+  Expected format: 2-3 uppercase letters (A-Z)
+
+✗ Error: Package code conflict: {code}
+  Already used by: {existing_package_path}
+
+✗ Error: Package code {code} is same as current
+  No migration needed
+
+✗ Error: TaskID migration failed
+  Duplicate TaskID detected: {taskid}
 ```
 
 ## Do NOT
