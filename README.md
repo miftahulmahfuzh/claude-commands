@@ -165,6 +165,8 @@ Maintains a comprehensive, automatically-updated task list for each package base
 - ⏰ Timestamps all changes with commit references
 - 📦 Maintains task history and archives
 - 🔄 Tracks task lifecycle from identification to completion
+- 🔍 **TaskID Coverage Enforcement**: Ensures ALL existing tasks (active, completed, and archived) have TaskIDs
+- 📋 **Completed Tasks Separation**: Organizes completed tasks in time-based sections (Recently Completed, This Week, This Month)
 - 🔄 **Package Code Override**: Change package codes and migrate all TaskIDs automatically
 
 **Prerequisites:**
@@ -208,7 +210,12 @@ Maintains a comprehensive, automatically-updated task list for each package base
 - **Example**: Changes `P1-OLD-A123` → `P1-NEW-A123` for all tasks
 ```
 
-**Output:** Creates/updates `{directory_path}/.workflows/todos.md`
+**Output:** Creates/updates `{directory_path}/.workflows/todos.md` with organized structure:
+
+- **Active Tasks**: Only incomplete tasks, organized by priority (P0-P4)
+- **Completed Tasks**: Time-based sections (Recently Completed, This Week, This Month)
+- **Quick Stats**: Task counts including completed tasks metrics
+- **Recent Activity**: Detailed log of recent changes and completions
 
 **Perfect for:**
 - Sprint planning and tracking
@@ -216,6 +223,7 @@ Maintains a comprehensive, automatically-updated task list for each package base
 - Refactoring task management
 - Team coordination
 - Project status visibility
+- Maintaining clean separation between active and completed work
 
 ---
 
@@ -259,7 +267,8 @@ Execute tasks from any package's todos.md using unique TaskID without needing to
 - 📋 Loads task context and relevant documentation
 - 🔧 Implements the solution automatically
 - 📝 Updates all .workflows files and marks task complete
-- ✅ Moves completed tasks to archive section
+- ✅ Moves completed tasks to appropriate time-based section in todos.md
+- 📊 Updates task statistics and completion metrics
 
 **Perfect for:**
 - Quick task execution without path specification
@@ -294,7 +303,10 @@ For a new package or first-time documentation:
 **Result:** Complete documentation suite in `chatbot/bowl/.workflows/`:
 - `package_readme.md` - Technical documentation
 - `analysis_report.md` - Code quality analysis
-- `todos.md` - Task tracking with generated TaskIDs (e.g., P1-CB-A123, P0-CB-A124)
+- `todos.md` - Task tracking with generated TaskIDs and organized sections:
+  - Active Tasks (P0-P4 priorities)
+  - Completed Tasks (time-based organization)
+  - Quick Stats with completion metrics
 
 ---
 
@@ -416,7 +428,8 @@ Here's a complete example of how the TaskID workflow system works in practice:
 # - Implements the solution
 # - Updates relevant documentation
 # - Marks the task as completed in todos.md
-# - Moves completed tasks to archive section
+# - Moves completed tasks to appropriate time-based section (Recently Completed, This Week, This Month)
+# - Updates Quick Stats with completion metrics
 
 # Step 5: Continue working and generate new TaskIDs as needed
 /update-todos mypackage           # Generate new TaskIDs for recent changes
@@ -428,7 +441,9 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **Automatic Tracking**: Task completion and documentation updates happen automatically
 - **Cross-Package**: Execute tasks across multiple packages without context switching
 - **Priority-Based**: Focus on P0/P1 tasks first, then work through lower priorities
-- **Archive Management**: Completed tasks are automatically archived for reference
+- **Clean Organization**: Active Tasks only shows incomplete work, completed tasks organized by time
+- **Complete Coverage**: TaskID enforcement ensures all tasks are tracked, no missing items
+- **Statistics Tracking**: Real-time metrics on both active and completed tasks
 
 ---
 
@@ -455,6 +470,8 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **⚡ Efficient**: No need to manually locate tasks or update multiple files
 - **🆔 TaskID System**: Automatic unique ID generation with priority-based ordering
 - **📊 Statistics Tracking**: Real-time task counts and completion metrics
+- **🔍 Coverage Enforcement**: Ensures all tasks have TaskIDs, preventing lost work
+- **📋 Clean Organization**: Separates active from completed tasks with time-based organization
 
 ### All Commands
 - **🛡️ Safe**: Includes comprehensive error handling and validation
@@ -501,7 +518,8 @@ The `.workflows/` directory keeps all package-level documentation organized and 
 - Use `--init` only once per package or when starting fresh
 - Keep `package_readme.md` as the source of truth for package purpose
 - Address P0/P1 issues from `analysis_report.md` immediately
-- Archive completed tasks regularly in `todos.md`
+- Let `/update-todos` automatically handle completed tasks organization
+- Active Tasks section will only show incomplete work, completed tasks are moved automatically
 
 ---
 

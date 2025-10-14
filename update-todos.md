@@ -151,6 +151,14 @@ Read in order:
 
 ### Step 4: Gather Change Data
 
+#### Important: Check ALL Existing Tasks for TaskIDs
+Before processing any changes, scan the entire todos.md file to ensure ALL tasks (both active and completed) have TaskIDs:
+1. Search for any task entries without TaskIDs in format: `- [ ] **{TaskID}**` or `- [x] **{TaskID}**`
+2. Look for tasks with plain text descriptions without TaskID prefixes
+3. Check Active Tasks, Recent Activity, and Archive sections
+4. Assign TaskIDs to any tasks missing them using the TaskID generation system in Step 1.2
+5. This ensures backward compatibility and complete TaskID coverage
+
 #### For Active Session Update:
 1. Parse conversation history for:
    - Bug descriptions and fixes
@@ -317,6 +325,9 @@ Assign priority tags:
 - P3 Low: {count}
 - P4 Backlog: {count}
 - Blocked: {count}
+- Completed Today: {count}
+- Completed This Week: {count}
+- Completed This Month: {count}
 
 ---
 
@@ -352,6 +363,29 @@ Assign priority tags:
   - **Blocked by**: {What's blocking this}
   - **Identified**: {date}
   - **Status**: blocked
+
+---
+
+## Completed Tasks
+
+### Recently Completed
+- [x] **{TaskID}** {Task description}
+  - **Completed**: {YYYY-MM-DD HH:MM:SS}
+  - **Method**: {brief description of what was done}
+  - **Files Modified**: {list of files changed}
+  - **Impact**: {summary of impact}
+
+### This Week
+- [x] **{TaskID}** {Task description}
+  - **Completed**: {YYYY-MM-DD HH:MM:SS}
+  - **Method**: {brief description of what was done}
+  - **Files Modified**: {list of files changed}
+
+### This Month
+- [x] **{TaskID}** {Task description}
+  - **Completed**: {YYYY-MM-DD HH:MM:SS}
+  - **Method**: {brief description of what was done}
+  - **Files Modified**: {list of files changed}
 
 ---
 
@@ -432,33 +466,52 @@ Assign priority tags:
 ### Step 8: Task Deduplication and TaskID Management
 
 Before adding new tasks:
-1. Check if identical task exists in Active Tasks
-2. Check if similar task exists (>80% text similarity)
-3. If duplicate: merge contexts and update priority, keep existing TaskID
-4. If similar: link them with "Related to: {TaskID}"
+1. **Check ALL existing tasks for TaskIDs**: Scan Active Tasks, Recent Activity, and Archive sections
+2. Assign TaskIDs to any existing tasks missing them using current package code and next available sequence
+3. Check if identical task exists in Active Tasks
+4. Check if similar task exists (>80% text similarity)
+5. If duplicate: merge contexts and update priority, keep existing TaskID
+6. If similar: link them with "Related to: {TaskID}"
 
 ### TaskID Assignment Rules:
-1. **New tasks**: Always generate new TaskID using priority + package code + next sequence
-2. **Priority changes**: Keep same TaskID, update priority prefix
-3. **Merged tasks**: Keep TaskID of higher priority task
-4. **Split tasks**: Generate new TaskIDs for split tasks, mark original as completed
+1. **Existing tasks without TaskIDs**: Assign TaskIDs using current package code and appropriate priority based on content
+2. **New tasks**: Always generate new TaskID using priority + package code + next sequence
+3. **Priority changes**: Keep same TaskID, update priority prefix
+4. **Merged tasks**: Keep TaskID of higher priority task
+5. **Split tasks**: Generate new TaskIDs for split tasks, mark original as completed
 
 ### TaskID Tracking:
 - Maintain index of all TaskIDs in project for quick lookup
 - When searching for tasks: search by TaskID first, then by description
 - When referencing tasks in other commands: always use TaskID format
+- Ensure complete TaskID coverage across all task sections
 
-### Step 9: Archive Maintenance
+### Step 9: Task Completion and Archive Management
 
+#### Task Completion Process:
 When completing tasks:
-1. Move from Active Tasks to current month in Archive
-2. Keep full context (files, commits, impact)
-3. If Archive > 6 months old, create separate archive file
+1. **Move to Completed Tasks**: Move from Active Tasks to appropriate time section in "Completed Tasks"
+   - Completed today → "Recently Completed"
+   - Completed within 7 days → "This Week"
+   - Completed within 30 days → "This Month"
+2. **Add Completion Details**: Include completion timestamp, method, files modified, and impact
+3. **Update Quick Stats**: Recalculate active and completed task counts
 
+#### Completed Tasks Maintenance:
+Every week:
+- Move tasks from "This Week" to "This Month" if older than 7 days
+- Move tasks from "Recently Completed" to "This Week" if older than 24 hours
+
+Every month:
+- Move tasks from "This Month" to Archive section if older than 30 days
+- Create monthly archive entries with summary
+
+#### Archive Maintenance:
 Every 3 months:
 - Reassess P3/P4 tasks - delete if no longer relevant
 - Review blocked tasks - unblock or delete
 - Update Quick Stats
+- If Archive > 6 months old, create separate archive file
 
 ## Special Handling
 
@@ -529,16 +582,21 @@ If unittest_guide.md exists but shows low coverage:
 Before saving todos.md:
 1. Verify all task checkboxes are properly formatted: `- [ ]` or `- [x]`
 2. Verify all P0 tasks have context explaining criticality
-3. Verify Quick Stats match actual task counts
+3. Verify Quick Stats match actual task counts (including completed tasks)
 4. Verify all file references use relative paths from project root
 5. Verify all commit hashes are 7 characters
 6. Verify no duplicate tasks in Active Tasks section
-7. **TaskID Validation**:
-   - All tasks have TaskID in format: `P[0-4]-[A-Z]{2,3}-[A-Z0-9]{4}`
+7. Verify completed tasks are in appropriate time-based sections (Recently Completed, This Week, This Month)
+8. Verify no completed tasks remain in Active Tasks section
+9. **TaskID Validation**:
+   - **ALL tasks** (active, completed, and archived) have TaskID in format: `P[0-4]-[A-Z]{2,3}-[A-Z0-9]{4}`
+   - No task entries exist without TaskID prefixes
    - All TaskIDs in Active Tasks are unique
    - TaskID priority prefix matches task section priority
    - TaskID package code matches package code in header
    - No TaskID conflicts with archived tasks
+   - Check Recent Activity section for completed tasks missing TaskIDs
+   - Check Archive section for historical tasks missing TaskIDs
 
 8. **Package Code Validation** (when --package-code used):
    - New package code is 2-3 uppercase letters
@@ -601,7 +659,7 @@ Before saving todos.md:
 - Add tasks for every minor code style issue
 - Create tasks that are too vague ("improve performance", "refactor code")
 - Add tasks without context (always explain WHY it matters)
-- Keep completed tasks in Active section (move to Archive immediately)
-- Create separate task for each TODO if they're related (group them)
+- Keep completed tasks in Active Tasks section (move to Completed Tasks immediately)
+- Mix completed and active tasks in the same section
 - Add tasks that should be in other packages' todos
 - Speculate about bugs without evidence from code or reports
