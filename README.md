@@ -326,9 +326,13 @@ All tasks include a **Difficulty field** (EASY/NORMAL/HARD) that determines exec
    - Current state assessment and risk analysis
    - Step-by-step implementation phases
    - Rollback strategy with safe rollback points
-3. 🤔 **User Confirmation**: Presents plan and waits for explicit approval
-4. 🔧 **Implementation**: Executes task on dedicated branch with enhanced documentation
-5. 🔀 **Branch Management**: Branch ready for review and merge after completion
+3. 💾 **Plan Persistence**: Automatically saves detailed plan to `.workflows/{TaskID}-plan.md` for:
+   - Permanent documentation and reference
+   - Consistency during implementation
+   - Review and audit trail
+4. 🤔 **User Confirmation**: Presents plan and waits for explicit approval
+5. 🔧 **Implementation**: Executes task on dedicated branch following the saved plan
+6. 🔀 **Branch Management**: Branch ready for review and merge after completion
 
 **Difficulty Assessment Criteria:**
 - **Impact Scope**: How many parts of codebase are affected?
@@ -555,7 +559,7 @@ Here's a complete example of how the TaskID workflow system works in practice:
 #
 # 🤔 Ready to implement HARD task P0-MP-A003
 # 📋 Branch: feature/fix-race-condition-P0-MP-A003
-# 📄 Plan: [detailed plan prepared]
+# 📄 Plan saved to: .workflows/P0-MP-A003-plan.md
 #
 # Continue with implementation? [y/N]
 
@@ -597,11 +601,13 @@ Here's a complete example of how the TaskID workflow system works in practice:
 /do P0-MP-A003  # Fix race condition
 🔒 Creating branch: feature/fix-race-condition-P0-MP-A003
 📋 Generated detailed implementation plan...
+📄 Plan saved to: .workflows/P0-MP-A003-plan.md
 🤔 User confirmation received
 🔧 Implementing HARD task solution...
 ✅ HARD Task Completed: P0-MP-A003
 📝 Fixed critical race condition with comprehensive refactoring
 🌿 Branch: feature/fix-race-condition-P0-MP-A003 (ready for merge)
+📄 Plan saved to: .workflows/P0-MP-A003-plan.md
 📄 Modified: manager.go, client.go, tests/race_test.go
 ```
 
@@ -609,6 +615,7 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **No Path Required**: Execute tasks from anywhere using just the TaskID
 - **Difficulty-Aware Execution**: Adapts workflow based on task complexity
 - **Automatic Risk Management**: HARD tasks get branch isolation and detailed planning
+- **Plan Persistence**: HARD task implementation plans are saved permanently for reference and audit
 - **Automatic Tracking**: Task completion and documentation updates happen automatically
 - **Cross-Package**: Execute tasks across multiple packages without context switching
 - **Priority-Based**: Focus on P0/P1 tasks first, then work through lower priorities
@@ -644,6 +651,7 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **🔧 Difficulty-Aware**: Adapts execution workflow based on task complexity (EASY/NORMAL/HARD)
 - **🌿 Branch Management**: Automatic branch creation for HARD tasks with isolation
 - **📋 Detailed Planning**: Comprehensive implementation plans for complex changes
+- **💾 Plan Persistence**: HARD task plans automatically saved to `.workflows/{TaskID}-plan.md` files
 - **🤔 User Confirmation**: Safety checkpoints for high-impact modifications
 - **📊 Statistics Tracking**: Real-time task counts and completion metrics
 - **🔍 Coverage Enforcement**: Ensures all tasks have TaskIDs, preventing lost work
