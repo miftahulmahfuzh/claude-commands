@@ -300,6 +300,44 @@ Execute tasks from any package's todos.md using unique TaskID without needing to
 - 4CharID is a unique alphanumeric identifier within the package
 - Package codes can be changed using `/update-todos --package-code=<NEW_CODE>` with automatic TaskID migration
 
+**🔧 Difficulty Classification System:**
+
+All tasks include a **Difficulty field** (EASY/NORMAL/HARD) that determines execution workflow:
+
+- **EASY**: Simple, isolated changes with minimal impact and low error risk
+  - Example: Fix typos, simple validation, small documentation updates
+  - Workflow: Direct execution on current branch
+
+- **NORMAL**: Moderate complexity changes with limited scope
+  - Example: Feature additions, API changes with backward compatibility
+  - Workflow: Standard execution with context loading
+
+- **HARD**: Complex, high-impact changes requiring extensive planning
+  - Example: Major refactoring, breaking API changes, architecture redesign
+  - Workflow: Automatic branch creation + detailed planning + user confirmation
+
+**HARD Task Special Workflow:**
+```bash
+/do P1-BC-A123  # If Difficulty: HARD
+```
+
+**Automatic HARD Task Process:**
+1. 🔒 **Branch Creation**: Automatically creates `feature/{task-description-slug}-{TaskID}`
+2. 📋 **Detailed Planning**: Generates comprehensive implementation plan with:
+   - Current state assessment and risk analysis
+   - Step-by-step implementation phases
+   - Rollback strategy with safe rollback points
+3. 🤔 **User Confirmation**: Presents plan and waits for explicit approval
+4. 🔧 **Implementation**: Executes task on dedicated branch with enhanced documentation
+5. 🔀 **Branch Management**: Branch ready for review and merge after completion
+
+**Difficulty Assessment Criteria:**
+- **Impact Scope**: How many parts of codebase are affected?
+- **Change Complexity**: Algorithm complexity and implementation difficulty
+- **Error Susceptibility**: Risk level and criticality of potential failures
+- **External Dependencies**: Impact on code that calls this package
+- **Testing Requirements**: Level of testing needed (unit/integration/regression)
+
 **Usage:**
 ```bash
 # Execute specific task
@@ -307,6 +345,9 @@ Execute tasks from any package's todos.md using unique TaskID without needing to
 
 # Execute with additional instructions
 /do P1-CB-B789 --note="Add support for bulk operations"
+
+# Execute HARD task (automatic branch creation + planning)
+/do P1-BC-A123
 
 # Execute all P0 tasks across all packages
 /do --all-p0
@@ -318,16 +359,18 @@ Execute tasks from any package's todos.md using unique TaskID without needing to
 **What it does:**
 - 🔍 Locates tasks across all packages using TaskID
 - 📋 Loads task context and relevant documentation
-- 🔧 Implements the solution automatically
+- 🔧 **Difficulty-based execution**: Adapts workflow based on task complexity
+- 🌿 **HARD task branch management**: Automatic branch creation and isolation
 - 📝 Updates all .workflows files and marks task complete
 - ✅ Moves completed tasks to appropriate time-based section in todos.md
 - 📊 Updates task statistics and completion metrics
 
 **Perfect for:**
 - Quick task execution without path specification
+- **Safe handling of complex changes** with automatic branching
 - Streamlined workflow with automatic documentation updates
 - Coordinated task management across packages
-- Tracking task completion across multiple packages
+- **Risk-aware development** with difficulty-based workflows
 
 ---
 
@@ -463,40 +506,117 @@ Here's a complete example of how the TaskID workflow system works in practice:
 # Step 1: Initial analysis of your package
 /update-todos mypackage --init
 
-# Output: Generated TaskIDs like P1-MP-A001, P2-MP-A002, P0-MP-A003
+# Output: Generated TaskIDs with Difficulty fields like:
+# - P0-MP-A003 (HARD): Fix critical race condition in manager.go
+# - P1-MP-A001 (NORMAL): Add missing error handling in client.go
+# - P2-MP-A002 (EASY): Update documentation for new API endpoints
 
 # Step 2: Review generated tasks in mypackage/.workflows/todos.md
-# You'll see tasks like:
-# - P0-MP-A003: Fix critical race condition in manager.go
-# - P1-MP-A001: Add missing error handling in client.go
-# - P2-MP-A002: Update documentation for new API endpoints
+# You'll see tasks with Difficulty assignments:
+# - [ ] **P0-MP-A003** Fix critical race condition in manager.go
+#   - **Difficulty**: HARD
+#   - **Context**: Complex concurrency issue affecting external API
+# - [ ] **P1-MP-A001** Add missing error handling in client.go
+#   - **Difficulty**: NORMAL
+#   - **Context**: Moderate complexity, affects multiple code paths
+# - [ ] **P2-MP-A002** Update documentation for new API endpoints
+#   - **Difficulty**: EASY
+#   - **Context**: Simple documentation update with no functional impact
 
 # Step 3: Execute tasks using TaskIDs (no package path needed!)
-/do P0-MP-A003                    # Fix the critical race condition
-/do P1-MP-A001 --note="Add timeout support"
-/do P2-MP-A002                    # Update the documentation
+/do P2-MP-A002                    # EASY: Direct execution, documentation updated
+/do P1-MP-A001 --note="Add timeout support"  # NORMAL: Standard execution
+/do P0-MP-A003                    # HARD: Automatic branch + detailed planning
 
-# Step 4: Each /do command automatically:
-# - Loads the task context
-# - Implements the solution
+# Step 4: HARD Task Special Workflow (P0-MP-A003)
+# When executing a HARD task:
+# 🔒 HARD Task Detected - Creating Branch: feature/fix-race-condition-P0-MP-A003
+# 📋 Creating detailed implementation plan...
+#
+# 📋 Detailed Implementation Plan for P0-MP-A003
+# **Task**: Fix critical race condition in manager.go
+# **Difficulty**: HARD
+# **Branch**: feature/fix-race-condition-P0-MP-A003
+#
+# **Analysis Phase**:
+# - Current state: Race condition in goroutine synchronization
+# - Dependencies: manager.go exports to external packages
+# - Risk assessment: Critical - potential data corruption
+# - Testing strategy: Comprehensive race condition testing
+#
+# **Implementation Phases**:
+# - Phase 1: Add mutex protection to critical sections
+# - Phase 2: Implement proper goroutine lifecycle management
+# - Phase 3: Add extensive unit and integration tests
+#
+# **Rollback Strategy**:
+# - Keep original implementation as backup
+# - Test each phase independently
+# - Safe rollback points after each phase
+#
+# 🤔 Ready to implement HARD task P0-MP-A003
+# 📋 Branch: feature/fix-race-condition-P0-MP-A003
+# 📄 Plan: [detailed plan prepared]
+#
+# Continue with implementation? [y/N]
+
+# Step 5: Each /do command automatically:
+# - Loads the task context and Difficulty assessment
+# - **For HARD tasks**: Creates branch, generates plan, gets confirmation
+# - Implements the solution with appropriate safety measures
 # - Updates relevant documentation
 # - Marks the task as completed in todos.md
-# - Moves completed tasks to appropriate time-based section (Recently Completed, This Week, This Month)
+# - Moves completed tasks to appropriate time-based section
 # - Updates Quick Stats with completion metrics
+# - **For HARD tasks**: Branch ready for review and merge
 
-# Step 5: Continue working and generate new TaskIDs as needed
+# Step 6: Continue working and generate new TaskIDs as needed
 /update-todos mypackage           # Generate new TaskIDs for recent changes
 /do P1-MP-A004                    # Execute the new high-priority task
 ```
 
+**Difficulty Examples in Practice:**
+
+**EASY Task Example:**
+```bash
+/do P2-MP-A002  # Update documentation
+✅ Task Completed: P2-MP-A002
+📝 Updated API documentation in package_readme.md
+📄 Modified: package_readme.md (lines 45-67)
+```
+
+**NORMAL Task Example:**
+```bash
+/do P1-MP-A001  # Add error handling
+✅ Task Completed: P1-MP-A001
+📝 Added comprehensive error handling to client.go
+📄 Modified: client.go (lines 23-89), package_readme.md
+```
+
+**HARD Task Example:**
+```bash
+/do P0-MP-A003  # Fix race condition
+🔒 Creating branch: feature/fix-race-condition-P0-MP-A003
+📋 Generated detailed implementation plan...
+🤔 User confirmation received
+🔧 Implementing HARD task solution...
+✅ HARD Task Completed: P0-MP-A003
+📝 Fixed critical race condition with comprehensive refactoring
+🌿 Branch: feature/fix-race-condition-P0-MP-A003 (ready for merge)
+📄 Modified: manager.go, client.go, tests/race_test.go
+```
+
 **Key Benefits of TaskID Workflow:**
 - **No Path Required**: Execute tasks from anywhere using just the TaskID
+- **Difficulty-Aware Execution**: Adapts workflow based on task complexity
+- **Automatic Risk Management**: HARD tasks get branch isolation and detailed planning
 - **Automatic Tracking**: Task completion and documentation updates happen automatically
 - **Cross-Package**: Execute tasks across multiple packages without context switching
 - **Priority-Based**: Focus on P0/P1 tasks first, then work through lower priorities
 - **Clean Organization**: Active Tasks only shows incomplete work, completed tasks organized by time
 - **Complete Coverage**: TaskID enforcement ensures all tasks are tracked, no missing items
 - **Statistics Tracking**: Real-time metrics on both active and completed tasks
+- **Safe Complex Changes**: Automatic branch creation protects main branch during risky changes
 
 ---
 
@@ -522,9 +642,14 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **📋 Context-Aware**: Loads all relevant information for task execution
 - **⚡ Efficient**: No need to manually locate tasks or update multiple files
 - **🆔 TaskID System**: Automatic unique ID generation with priority-based ordering
+- **🔧 Difficulty-Aware**: Adapts execution workflow based on task complexity (EASY/NORMAL/HARD)
+- **🌿 Branch Management**: Automatic branch creation for HARD tasks with isolation
+- **📋 Detailed Planning**: Comprehensive implementation plans for complex changes
+- **🤔 User Confirmation**: Safety checkpoints for high-impact modifications
 - **📊 Statistics Tracking**: Real-time task counts and completion metrics
 - **🔍 Coverage Enforcement**: Ensures all tasks have TaskIDs, preventing lost work
 - **📋 Clean Organization**: Separates active from completed tasks with time-based organization
+- **🛡️ Risk Management**: Different execution strategies based on task difficulty and impact
 
 ### All Commands
 - **🛡️ Safe**: Includes comprehensive error handling and validation
@@ -573,6 +698,15 @@ The `.workflows/` directory keeps all package-level documentation organized and 
 - Address P0/P1 issues from `analysis_report.md` immediately
 - Let `/update-todos` automatically handle completed tasks organization
 - Active Tasks section will only show incomplete work, completed tasks are moved automatically
+
+### For Difficulty Field Management
+- **EASY Tasks**: Quick fixes, documentation updates, simple validation
+- **NORMAL Tasks**: Feature additions, moderate refactoring, API changes with backward compatibility
+- **HARD Tasks**: Major refactoring, breaking changes, architecture redesign, complex bug fixes
+- **Trust the System**: Let `/update-todos` automatically assign Difficulty fields based on analysis
+- **Review HARD Tasks**: Always review the generated implementation plan before confirmation
+- **Branch Safety**: HARD tasks automatically create branches - review changes before merging
+- **Planning Matters**: Use the detailed plans generated for HARD tasks as implementation guides
 
 ---
 
