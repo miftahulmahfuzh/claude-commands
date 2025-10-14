@@ -4,7 +4,7 @@
 
 **Package Code**: CL
 
-**Last Updated**: 2025-01-14 18:00:00
+**Last Updated**: 2025-01-14 19:30:00
 
 **Total Active Tasks**: 0
 
@@ -15,9 +15,9 @@
 - P3 Low: 0
 - P4 Backlog: 0
 - Blocked: 0
-- Completed Today: 2
-- Completed This Week: 2
-- Completed This Month: 3
+- Completed Today: 4
+- Completed This Week: 4
+- Completed This Month: 5
 
 ---
 
@@ -30,6 +30,18 @@
 ## Completed Tasks
 
 ### Recently Completed
+- [x] **P2-CL-A007** Fix update-todos command: TaskID generation and completed tasks movement
+  - **Completed**: 2025-01-14 19:30:00
+  - **Method**: Strengthened update-todos.md instructions with critical TaskID coverage and organization requirements
+  - **Files Modified**: update-todos.md (Step 4, Step 8, Validation, Do NOT sections)
+  - **Impact**: Enhanced update-todos command with mandatory TaskID enforcement and completed tasks handling
+
+- [x] **P2-CL-A008** Create reorganize-todos command for TaskID and organization cleanup
+  - **Completed**: 2025-01-14 19:15:00
+  - **Method**: Designed and implemented focused reorganize-todos.md command specification
+  - **Files Modified**: reorganize-todos.md (complete new command specification)
+  - **Impact**: New focused command for TaskID generation and task organization cleanup
+
 - [x] **P2-CL-A006** Update README.md to reflect current state of /update-todos command
   - **Completed**: 2025-01-14 18:15:00
   - **Method**: Updated README.md to document TaskID coverage enforcement and completed tasks separation features
