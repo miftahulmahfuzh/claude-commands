@@ -98,16 +98,47 @@ For tasks with `**Difficulty**: HARD`:
    - Safe rollback points
    ```
 
-2. **Get User Confirmation**:
+2. **Save Plan to File (MANDATORY)**:
+   ```bash
+   # Save detailed plan to .workflows/{TaskID}-plan.md
+   cat > .workflows/{TaskID}-plan.md << 'EOF'
+   # Implementation Plan: {TaskID}
+
+   **Task**: {task_description}
+   **Difficulty**: HARD
+   **Branch**: feature/{task-description-slug}-{TaskID}
+   **Created**: {YYYY-MM-DD HH:MM:SS}
+
+   ## Analysis Phase
+   {detailed analysis content}
+
+   ## Implementation Phases
+   {implementation phases content}
+
+   ## Rollback Strategy
+   {rollback strategy content}
+
+   ## Success Criteria
+   {measurable success criteria}
+   EOF
+   ```
+
+3. **Confirm Plan Saved**:
+   ```
+   📄 Plan saved to: .workflows/{TaskID}-plan.md
+   📋 Reference available during implementation
+   ```
+
+4. **Get User Confirmation**:
    ```
    🤔 Ready to implement HARD task {TaskID}
    📋 Branch: feature/{task-description-slug}-{TaskID}
-   📄 Plan: [detailed plan prepared]
+   📄 Plan saved to: .workflows/{TaskID}-plan.md
 
    Continue with implementation? [y/N]
    ```
 
-3. **Wait for User Input**: Only proceed with explicit user confirmation
+5. **Wait for User Input**: Only proceed with explicit user confirmation
 
 #### Standard Task Execution Plans
 
@@ -152,9 +183,10 @@ Execute the task following this pattern:
    ```
 
 3. **Load Required Files**: Read source files mentioned in task
-4. **Implement Solution**: Make necessary code changes
-5. **Update Documentation**: Update relevant .workflows files
-6. **Update Task Status**: Mark task as completed in todos.md
+4. **Load Implementation Plan**: Read saved plan from `.workflows/{TaskID}-plan.md` for reference
+5. **Implement Solution**: Make necessary code changes following the detailed plan
+6. **Update Documentation**: Update relevant .workflows files
+7. **Update Task Status**: Mark task as completed in todos.md
 
 ### Step 6: Update Task Status
 After execution:
@@ -267,6 +299,7 @@ Use regex to validate TaskID format before search:
 📝 Refactored InitiateAndManageBroadcast function into smaller methods
 🔧 Difficulty: HARD
 🌿 Branch: feature/refactor-broadcast-manager-P1-BC-A123
+📄 Plan saved to: .workflows/P1-BC-A123-plan.md
 📄 Modified: manager.go, validator.go, connector.go, processor.go
 📄 Updated: todos.md, package_readme.md, analysis_report.md
 📋 Task moved to Completed Tasks section
@@ -291,6 +324,7 @@ Use regex to validate TaskID format before search:
 📋 Loading task context...
 🔒 Creating branch: feature/refactor-broadcast-manager-P1-BC-A123
 📋 Creating detailed implementation plan...
+📄 Saving plan to: .workflows/P1-BC-A123-plan.md
 🤔 User confirmation received for HARD task
 🔧 Implementing HARD task solution...
 📝 Updating documentation...
@@ -308,6 +342,7 @@ Use regex to validate TaskID format before search:
 ```
 ⚠️ Warning: HARD task P1-BC-A123 will create new branch
 ⚠️ Warning: HARD task requires detailed planning before implementation
+⚠️ Warning: HARD task plan will be saved to .workflows/P1-BC-A123-plan.md
 ⚠️ Warning: HARD task affects multiple files - review carefully before merge
 ```
 
@@ -333,6 +368,10 @@ Use regex to validate TaskID format before search:
 ✗ Error: HARD task P1-BC-A123 requires branch creation
   Unable to create branch: {git_error_message}
   Check git status and try again
+
+✗ Error: HARD task P1-BC-A123 requires plan saving
+  Unable to save plan to .workflows/P1-BC-A123-plan.md: {file_error_message}
+  Check directory permissions and try again
 ```
 
 ## Special Cases
@@ -351,24 +390,32 @@ Use regex to validate TaskID format before search:
    - Step-by-step implementation phases
    - Rollback strategy with safe rollback points
 
-3. **User Confirmation Before Implementation**:
+3. **Plan Persistence Requirements**:
+   - Save detailed plan to `.workflows/{TaskID}-plan.md` before implementation
+   - Include analysis, phases, rollback strategy, and success criteria
+   - Reference plan during implementation for consistency
+   - Keep plan file as documentation after task completion
+
+4. **User Confirmation Before Implementation**:
    ```
    🤔 Ready to implement HARD task {TaskID}
    📋 Branch: feature/{task-description-slug}-{TaskID}
-   📄 Plan: [detailed plan prepared]
+   📄 Plan saved to: .workflows/{TaskID}-plan.md
 
    Continue with implementation? [y/N]
    ```
 
-4. **Enhanced Documentation Requirements**:
+5. **Enhanced Documentation Requirements**:
    - Update all affected .workflows files
    - Document breaking changes and migration guides
    - Add comprehensive testing requirements
+   - Reference saved plan file in task completion notes
 
-5. **Branch Management After Completion**:
+6. **Branch Management After Completion**:
    - Task completed on dedicated branch
    - Branch ready for review and merge
    - Merge instructions provided in success message
+   - Plan file remains as implementation documentation
 
 ### Blocked Tasks
 If task status is 'blocked':
@@ -507,9 +554,11 @@ For multiple related tasks:
 - Test each phase independently
 - Safe rollback points after each phase
 
+📄 Plan saved to: .workflows/P1-BC-A123-plan.md
+
 🤔 Ready to implement HARD task P1-BC-A123
 📋 Branch: feature/refactor-broadcast-manager-P1-BC-A123
-📄 Plan: [detailed plan prepared]
+📄 Plan saved to: .workflows/P1-BC-A123-plan.md
 
 Continue with implementation? [y/N]
 ```
