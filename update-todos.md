@@ -197,6 +197,25 @@ After TaskID assignment, check for completed tasks organization:
    - Count active vs completed tasks
    - Update all statistics to reflect new organization
 
+#### ⚠️ CRITICAL: Difficulty Field Assignment and Validation
+After TaskID assignment and completed tasks organization:
+
+1. **Analyze ALL Tasks for Difficulty Assignment**:
+   - **Scan EVERY section**: Active Tasks, Completed Tasks, Recent Activity, Archive, Blocked
+   - **Look for ANY tasks without Difficulty field** - missing `- **Difficulty**: {EASY|NORMAL|HARD}`
+   - **NEVER skip this step** - even if tasks look complete, verify Difficulty exists
+
+2. **Assign Difficulty Based on Assessment Criteria**:
+   - **EASY**: Simple, isolated changes with minimal impact and low error risk
+   - **NORMAL**: Moderate complexity changes with limited scope and some external considerations
+   - **HARD**: Complex, high-impact changes with extensive testing requirements and high error susceptibility
+
+3. **Validate Difficulty Assignment**:
+   - Ensure Difficulty value matches task complexity and impact assessment
+   - HARD tasks must have sufficient context explaining complexity
+   - Difficulty must be exactly one of: EASY, NORMAL, HARD (case-sensitive)
+   - **Do NOT proceed until ALL tasks have valid Difficulty field**
+
 #### For Active Session Update:
 1. Parse conversation history for:
    - Bug descriptions and fixes
@@ -305,7 +324,102 @@ After TaskID assignment, check for completed tasks organization:
 - Tasks requiring design decisions
 - Tasks blocked by other packages
 
-### Step 6: Priority Assignment
+### Step 6: Difficulty Assessment and Priority Assignment
+
+#### Difficulty Assessment (MANDATORY)
+
+**ALL tasks must have a Difficulty field assigned**. Analyze each task and assign one of three difficulty levels:
+
+**[EASY]** - Simple, low-risk changes:
+- Isolated code modifications with minimal dependencies
+- Simple bug fixes with clear reproduction steps
+- Documentation updates that don't affect API behavior
+- Adding or removing non-critical validation
+- Small refactoring of single functions (<30 lines)
+- Changes with limited or no external API impact
+- Low error susceptibility and straightforward testing
+
+**[NORMAL]** - Moderate complexity changes:
+- Refactoring multiple related functions or small modules
+- Adding new features with limited external dependencies
+- Moderate bug fixes affecting multiple code paths
+- API changes that require backward compatibility considerations
+- Performance optimizations with measurable impact
+- Changes affecting multiple files but limited scope
+- Moderate error susceptibility requiring careful testing
+
+**[HARD]** - Complex, high-impact changes:
+- Major architectural refactoring or redesign
+- Breaking API changes requiring migration guides
+- Complex algorithm implementations with high performance requirements
+- Changes affecting core package functionality used by multiple packages
+- Security fixes requiring extensive validation
+- Database schema changes or data migration
+- High error susceptibility with critical failure modes
+- Changes requiring extensive integration and regression testing
+
+#### Difficulty Assessment Examples
+
+**Example 1 - EASY**:
+```markdown
+- [ ] **P2-CL-A001** Fix typo in error message in logger.go:45
+  - **Difficulty**: EASY
+  - **Context**: Simple text correction with no functional impact
+```
+
+**Example 2 - NORMAL**:
+```markdown
+- [ ] **P1-DB-A236** Add input validation to ProcessData function
+  - **Difficulty**: NORMAL
+  - **Context**: Affects multiple code paths but limited to single package
+  - **Files**: manager.go, validator.go
+```
+
+**Example 3 - HARD**:
+```markdown
+- [ ] **P1-BC-A123** Refactor InitiateAndManageBroadcast function into smaller methods
+  - **Difficulty**: HARD
+  - **Context**: 146-line function with cyclomatic complexity of 12, affects external API
+  - **Current State**: Function has cyclomatic complexity of 12 and manages 4 different phases
+  - **Suggested Split**:
+    - `validatePreFlightConditions()`
+    - `waitForClientConnection()`
+    - `acquireLLMSlot()`
+    - `manageBroadcastLoop()`
+  - **Impact**: Improved testability, readability, and maintainability
+  - **Location**: manager.go:98-242
+```
+
+#### Difficulty Assessment Guidelines
+
+**Factors to consider when assigning Difficulty:**
+
+1. **Impact Scope**: How many parts of the codebase are affected?
+   - EASY: Single function or small isolated area
+   - NORMAL: Multiple related functions within a package
+   - HARD: Cross-package changes or external API modifications
+
+2. **Change Complexity**: How complex is the implementation?
+   - EASY: Straightforward logic, clear solution
+   - NORMAL: Moderate complexity, some edge cases to handle
+   - HARD: Complex algorithms, multiple edge cases, significant logic changes
+
+3. **Error Susceptibility**: How likely are errors to occur?
+   - EASY: Low risk, simple validation, easy to test
+   - NORMAL: Moderate risk, requires careful validation
+   - HARD: High risk, critical failure modes, extensive testing needed
+
+4. **External Dependencies**: How does this affect code that calls this package?
+   - EASY: No external API changes
+   - NORMAL: Minor API changes, backward compatible
+   - HARD: Breaking changes or new dependencies required
+
+5. **Testing Requirements**: What level of testing is needed?
+   - EASY: Simple unit tests sufficient
+   - NORMAL: Unit + some integration testing
+   - HARD: Comprehensive unit, integration, and regression testing
+
+#### Priority Assignment
 
 Assign priority tags:
 
@@ -373,12 +487,14 @@ Assign priority tags:
 
 ### [P0] Critical
 - [ ] **{TaskID}** {Task description} `{file:line if from code comment}`
+  - **Difficulty**: {EASY|NORMAL|HARD}
   - **Context**: {Why this is critical}
   - **Identified**: {date or commit}
   - **Status**: {active|in_progress|blocked}
 
 ### [P1] High
 - [ ] **{TaskID}** {Task description}
+  - **Difficulty**: {EASY|NORMAL|HARD}
   - **Context**: {Why this matters}
   - **Identified**: {date or commit}
   - **Related**: {link to analysis_report.md section if applicable}
@@ -386,18 +502,22 @@ Assign priority tags:
 
 ### [P2] Medium
 - [ ] **{TaskID}** {Task description}
+  - **Difficulty**: {EASY|NORMAL|HARD}
   - **Status**: {active|in_progress|blocked}
 
 ### [P3] Low
 - [ ] **{TaskID}** {Task description}
+  - **Difficulty**: {EASY|NORMAL|HARD}
   - **Status**: {active|in_progress|blocked}
 
 ### [P4] Backlog
 - [ ] **{TaskID}** {Task description}
+  - **Difficulty**: {EASY|NORMAL|HARD}
   - **Status**: {active|in_progress|blocked}
 
 ### 🚫 Blocked
 - [ ] **{TaskID}** {Task description}
+  - **Difficulty**: {EASY|NORMAL|HARD}
   - **Blocked by**: {What's blocking this}
   - **Identified**: {date}
   - **Status**: blocked
@@ -637,13 +757,19 @@ Before saving todos.md:
    - **ALL tasks must have format**: `- [ ] **{TaskID}** {description}` or `- [x] **{TaskID}** {description}`
    - If any task lacks TaskID, STOP and assign TaskIDs before proceeding
 
-2. **Completed Tasks Organization Verification (MANDATORY)**:
+2. **Difficulty Field Coverage Verification (MANDATORY)**:
+   - **Scan EVERY section**: Active Tasks, Completed Tasks, Recent Activity, Archive, Blocked
+   - **Verify NO task exists without Difficulty field** - look for tasks missing `- **Difficulty**: {EASY|NORMAL|HARD}`
+   - **ALL tasks must have a valid Difficulty value**: EASY, NORMAL, or HARD
+   - If any task lacks Difficulty field or has invalid value, STOP and assign proper Difficulty
+
+3. **Completed Tasks Organization Verification (MANDATORY)**:
    - **ZERO completed tasks in Active Tasks section**
    - **ALL `- [x]` tasks must be in Completed Tasks section**
    - Verify Completed Tasks section exists with proper structure
    - Check completed tasks are in correct time-based sections
 
-3. **Standard Validation**:
+4. **Standard Validation**:
    - Verify all task checkboxes are properly formatted: `- [ ]` or `- [x]`
    - Verify all P0 tasks have context explaining criticality
    - Verify Quick Stats match actual task counts (including completed tasks)
@@ -651,19 +777,27 @@ Before saving todos.md:
    - Verify all commit hashes are 7 characters
    - Verify no duplicate tasks in Active Tasks section
 
-4. **TaskID Format Validation**:
+5. **TaskID Format Validation**:
    - **ALL tasks** (active, completed, and archived) have TaskID in format: `P[0-4]-[A-Z]{2,3}-[A-Z0-9]{4}`
    - All TaskIDs in Active Tasks are unique
    - TaskID priority prefix matches task section priority
    - TaskID package code matches package code in header
    - No TaskID conflicts with archived tasks
 
+6. **Difficulty Field Validation**:
+   - **ALL tasks** (active, completed, and archived) have Difficulty field in format: `- **Difficulty**: {EASY|NORMAL|HARD}`
+   - Difficulty values are exactly one of: EASY, NORMAL, HARD (case-sensitive)
+   - Difficulty assignment aligns with task complexity and impact assessment
+   - HARD tasks have sufficient context explaining why they are hard
+
 ### ⚠️ VALIDATION ERRORS TO FIX IMMEDIATELY
 
 - If ANY task lacks TaskID: **STOP** and assign TaskIDs
+- If ANY task lacks Difficulty field: **STOP** and assign proper Difficulty
 - If ANY completed task in Active Tasks: **MOVE** to Completed Tasks section
 - If Completed Tasks section missing: **CREATE** it
 - If TaskID format wrong: **FIX** it immediately
+- If Difficulty value invalid: **FIX** it immediately (must be EASY, NORMAL, or HARD)
 
 5. **Package Code Validation** (when --package-code used):
    - New package code is 2-3 uppercase letters
@@ -737,7 +871,9 @@ Before saving todos.md:
 ## ⚠️ MANDATORY REQUIREMENTS - NEVER SKIP
 
 1. **ALWAYS scan entire todos.md for missing TaskIDs** - even if it looks complete
-2. **ALWAYS move completed tasks to Completed Tasks section** - no exceptions
-3. **ALWAYS create Completed Tasks section if it doesn't exist**
-4. **ALWAYS verify ZERO completed tasks remain in Active Tasks section**
-5. **NEVER proceed to processing changes until ALL tasks have TaskIDs**
+2. **ALWAYS scan entire todos.md for missing Difficulty fields** - even if it looks complete
+3. **ALWAYS move completed tasks to Completed Tasks section** - no exceptions
+4. **ALWAYS create Completed Tasks section if it doesn't exist**
+5. **ALWAYS verify ZERO completed tasks remain in Active Tasks section**
+6. **NEVER proceed to processing changes until ALL tasks have TaskIDs**
+7. **NEVER proceed to processing changes until ALL tasks have valid Difficulty fields**
