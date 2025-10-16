@@ -15,9 +15,9 @@
 - P3 Low: 0
 - P4 Backlog: 0
 - Blocked: 0
-- Completed Today: 10
-- Completed This Week: 10
-- Completed This Month: 11
+- Completed Today: 11
+- Completed This Week: 11
+- Completed This Month: 12
 
 ---
 
@@ -30,6 +30,13 @@
 ## Completed Tasks
 
 ### Recently Completed
+- [x] **P2-CL-A015** Add --ver parameter to up-version command for manual version specification
+  - **Completed**: 2025-01-16 00:00:00
+  - **Method**: Implemented --ver parameter in up-version.md to allow manual version specification while disabling semantic versioning analysis. Added parameter documentation with validation rules, modified workflow steps to support manual version override, updated error handling for version format validation, and preserved existing semantic versioning when parameter not provided
+  - **Files Modified**: up-version.md (Parameters section, Step 2, Step 6, Error Handling, Output Requirements)
+  - **Impact**: Users can now manually specify versions like --ver v0.30.1 while maintaining all existing functionality for automatic semantic versioning
+  - **Key Features**: Backward compatible, robust validation, clear documentation, error prevention
+
 - [x] **P2-CL-A014** Update README.md to document HARD task plan persistence
   - **Completed**: 2025-01-14 21:30:00
   - **Method**: Enhanced README.md with comprehensive HARD task plan persistence documentation. Added Plan Persistence step to Automatic HARD Task Process, updated workflow examples, enhanced Task Management benefits, and added plan file references to success messages
@@ -144,6 +151,7 @@
 ### 2025-01
 
 #### Completed This Month
+- [x] **P2-CL-A015** Add --ver parameter to up-version command for manual version specification - 2025-01-16
 - [x] **P2-CL-A014** Update README.md to document HARD task plan persistence - 2025-01-14
 - [x] **P1-CL-A013** Enhance do.md for HARD task detailed plan saving functionality - 2025-01-14
 - [x] **P2-CL-A012** Document Difficulty classification and handling pipeline in README.md - 2025-01-14
