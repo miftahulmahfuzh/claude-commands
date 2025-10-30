@@ -100,8 +100,8 @@ For tasks with `**Difficulty**: HARD`:
 
 2. **Save Plan to File (MANDATORY)**:
    ```bash
-   # Save detailed plan to .workflows/{TaskID}-plan.md
-   cat > .workflows/{TaskID}-plan.md << 'EOF'
+   # Save detailed plan to .workflows/plan/{TaskID}-plan.md
+   cat > .workflows/plan/{TaskID}-plan.md << 'EOF'
    # Implementation Plan: {TaskID}
 
    **Task**: {task_description}
@@ -125,7 +125,7 @@ For tasks with `**Difficulty**: HARD`:
 
 3. **Confirm Plan Saved**:
    ```
-   📄 Plan saved to: .workflows/{TaskID}-plan.md
+   📄 Plan saved to: .workflows/plan/{TaskID}-plan.md
    📋 Reference available during implementation
    ```
 
@@ -133,14 +133,14 @@ For tasks with `**Difficulty**: HARD`:
    ```
    🤔 Ready to implement HARD task {TaskID}
    📋 Branch: feature/{task-description-slug}-{TaskID}
-   📄 Plan saved to: .workflows/{TaskID}-plan.md
+   📄 Plan saved to: .workflows/plan/{TaskID}-plan.md
 
    Continue with implementation? [y/N]
    ```
 
 5. **Wait for User Input**: Only proceed with explicit user confirmation
 
-#### Standard Task Execution Plans
+#### Standard Task Execution plan
 
 ##### Bug Fix Tasks
 - Analyze error context and reproduction steps
@@ -183,7 +183,7 @@ Execute the task following this pattern:
    ```
 
 3. **Load Required Files**: Read source files mentioned in task
-4. **Load Implementation Plan**: Read saved plan from `.workflows/{TaskID}-plan.md` for reference
+4. **Load Implementation Plan**: Read saved plan from `.workflows/plan/{TaskID}-plan.md` for reference
 5. **Implement Solution**: Make necessary code changes following the detailed plan
 6. **Update Documentation**: Update relevant .workflows files
 7. **Update Task Status**: Mark task as completed in todos.md
@@ -299,7 +299,7 @@ Use regex to validate TaskID format before search:
 📝 Refactored InitiateAndManageBroadcast function into smaller methods
 🔧 Difficulty: HARD
 🌿 Branch: feature/refactor-broadcast-manager-P1-BC-A123
-📄 Plan saved to: .workflows/P1-BC-A123-plan.md
+📄 Plan saved to: .workflows/plan/P1-BC-A123-plan.md
 📄 Modified: manager.go, validator.go, connector.go, processor.go
 📄 Updated: todos.md, package_readme.md, analysis_report.md
 📋 Task moved to Completed Tasks section
@@ -324,7 +324,7 @@ Use regex to validate TaskID format before search:
 📋 Loading task context...
 🔒 Creating branch: feature/refactor-broadcast-manager-P1-BC-A123
 📋 Creating detailed implementation plan...
-📄 Saving plan to: .workflows/P1-BC-A123-plan.md
+📄 Saving plan to: .workflows/plan/P1-BC-A123-plan.md
 🤔 User confirmation received for HARD task
 🔧 Implementing HARD task solution...
 📝 Updating documentation...
@@ -342,7 +342,7 @@ Use regex to validate TaskID format before search:
 ```
 ⚠️ Warning: HARD task P1-BC-A123 will create new branch
 ⚠️ Warning: HARD task requires detailed planning before implementation
-⚠️ Warning: HARD task plan will be saved to .workflows/P1-BC-A123-plan.md
+⚠️ Warning: HARD task plan will be saved to .workflows/plan/P1-BC-A123-plan.md
 ⚠️ Warning: HARD task affects multiple files - review carefully before merge
 ```
 
@@ -370,7 +370,7 @@ Use regex to validate TaskID format before search:
   Check git status and try again
 
 ✗ Error: HARD task P1-BC-A123 requires plan saving
-  Unable to save plan to .workflows/P1-BC-A123-plan.md: {file_error_message}
+  Unable to save plan to .workflows/plan/P1-BC-A123-plan.md: {file_error_message}
   Check directory permissions and try again
 ```
 
@@ -391,7 +391,7 @@ Use regex to validate TaskID format before search:
    - Rollback strategy with safe rollback points
 
 3. **Plan Persistence Requirements**:
-   - Save detailed plan to `.workflows/{TaskID}-plan.md` before implementation
+   - Save detailed plan to `.workflows/plan/{TaskID}-plan.md` before implementation
    - Include analysis, phases, rollback strategy, and success criteria
    - Reference plan during implementation for consistency
    - Keep plan file as documentation after task completion
@@ -400,7 +400,7 @@ Use regex to validate TaskID format before search:
    ```
    🤔 Ready to implement HARD task {TaskID}
    📋 Branch: feature/{task-description-slug}-{TaskID}
-   📄 Plan saved to: .workflows/{TaskID}-plan.md
+   📄 Plan saved to: .workflows/plan/{TaskID}-plan.md
 
    Continue with implementation? [y/N]
    ```
@@ -554,11 +554,11 @@ For multiple related tasks:
 - Test each phase independently
 - Safe rollback points after each phase
 
-📄 Plan saved to: .workflows/P1-BC-A123-plan.md
+📄 Plan saved to: .workflows/plan/P1-BC-A123-plan.md
 
 🤔 Ready to implement HARD task P1-BC-A123
 📋 Branch: feature/refactor-broadcast-manager-P1-BC-A123
-📄 Plan saved to: .workflows/P1-BC-A123-plan.md
+📄 Plan saved to: .workflows/plan/P1-BC-A123-plan.md
 
 Continue with implementation? [y/N]
 ```
