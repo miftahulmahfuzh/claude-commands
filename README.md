@@ -279,6 +279,60 @@ Cleans up and reorganizes existing todos.md by ensuring complete TaskID coverage
 
 ---
 
+#### `/postmortem` - Session Problem Documentation
+
+Generate detailed postmortem reports for bugs/errors encountered during Claude Code sessions, with automatic TaskID detection and Go-inspired structured documentation.
+
+**What it does:**
+- 🔍 **Session Analysis**: Automatically analyzes current Claude Code session for problems and solutions
+- 🆔 **TaskID Detection**: Detects TaskID from session or creates new task with user confirmation
+- 📝 **Go-Inspired Reports**: Generates comprehensive postmortem reports following Go documentation best practices
+- 📁 **Smart Organization**: Creates reports in `.workflows/postmortem/<TaskID>.md` with proper directory structure
+- 🔄 **Update Logic**: Handles existing postmortem files (updates for recurring issues)
+- 🎯 **Direct Mode**: Supports `--id` parameter for explicit TaskID specification
+- 🔗 **Cross-Reference Integration**: Links with existing todos.md and .workflows documentation
+
+**Usage:**
+```bash
+# Automatic session analysis and TaskID detection
+/postmortem
+
+# Document specific task solution
+/postmortem --id=P1-CL-A017
+
+# With additional context
+/postmortem --id=P2-DB-A236 --note="Race condition in goroutine synchronization"
+```
+
+**Output:** Creates/updates `{package_path}/.workflows/postmortem/{TaskID}.md`
+
+**Go-Inspired Postmortem Structure:**
+- **Executive Summary**: Problem overview and resolution summary
+- **Timeline**: Discovery, investigation, and resolution timestamps
+- **Problem Analysis**: Root cause analysis with technical details
+- **Impact Assessment**: Severity and scope evaluation
+- **Resolution Details**: Implementation with code examples and test cases
+- **Prevention Measures**: Immediate and long-term prevention strategies
+- **Lessons Learned**: Technical and process insights
+- **Follow-up Actions**: Actionable next steps with tracking
+
+**Perfect for:**
+- Documenting bug fixes after vibecoding sessions
+- Knowledge management and team learning
+- Root cause analysis and prevention planning
+- Recurring issue tracking and pattern identification
+- Building comprehensive problem-solving documentation
+
+**Key Features:**
+- **Automatic TaskID Detection**: Finds TaskID from session context or creates new tasks
+- **Interactive Task Creation**: Proposes task location when no TaskID exists
+- **Uniqueness Validation**: Ensures TaskID uniqueness across entire codebase
+- **Recurring Issue Handling**: Updates existing postmortems for repeated problems
+- **Multi-Package Support**: Handles issues affecting multiple packages
+- **Go Best Practices**: Follows Go documentation patterns and conventions
+
+---
+
 ### Task Execution Commands
 
 #### `/do` - Execute Tasks by TaskID
@@ -442,6 +496,10 @@ After pushing changes to remote:
 /do P0-CB-A456  # Fix critical issues found in post-commit analysis
 /do P1-CB-A457  # Address high priority tasks
 
+# Document the bug fixes with postmortem reports
+/postmortem --id=P0-CB-A456 --note="Critical race condition fix"
+/postmortem --id=P1-CB-A457
+
 # Regenerate analysis if major refactoring occurred
 /analyze-package chatbot/bowl
 
@@ -465,6 +523,10 @@ Periodic maintenance (weekly/monthly):
 # Execute maintenance tasks using TaskIDs
 /do P2-CB-B123  # Fix medium priority issues found in maintenance
 /do P3-CB-B124  # Address low priority improvements
+
+# Document maintenance fixes for knowledge sharing
+/postmortem --id=P2-CB-B123 --note="Maintenance performance optimization"
+/postmortem --id=P3-CB-B124 --note="Code quality improvement"
 
 # Verify documentation is current
 /update-readme chatbot/bowl
@@ -494,6 +556,10 @@ Before submitting PR or during code review:
 # Execute review cleanup tasks
 /do P2-CB-X003  # Add missing error handling
 /do P3-CB-X004  # Improve code comments
+
+# Document code review findings and fixes
+/postmortem --id=P2-CB-X003 --note="Code review error handling improvements"
+/postmortem --id=P3-CB-X004 --note="Code review documentation enhancements"
 
 # Ensure documentation reflects changes
 /update-readme chatbot/bowl
@@ -576,6 +642,11 @@ Here's a complete example of how the TaskID workflow system works in practice:
 # Step 6: Continue working and generate new TaskIDs as needed
 /update-todos mypackage           # Generate new TaskIDs for recent changes
 /do P1-MP-A004                    # Execute the new high-priority task
+
+# Step 7: Document completed tasks with postmortem reports
+/postmortem --id=P2-MP-A002       # Document API documentation updates
+/postmortem --id=P1-MP-A001       # Document error handling implementation
+/postmortem --id=P0-MP-A003       # Document complex race condition fix
 ```
 
 **Difficulty Examples in Practice:**
@@ -623,6 +694,7 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **Complete Coverage**: TaskID enforcement ensures all tasks are tracked, no missing items
 - **Statistics Tracking**: Real-time metrics on both active and completed tasks
 - **Safe Complex Changes**: Automatic branch creation protects main branch during risky changes
+- **Knowledge Management**: Postmortem documentation preserves problem-solving insights and prevention strategies
 
 ---
 
@@ -657,6 +729,10 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **🔍 Coverage Enforcement**: Ensures all tasks have TaskIDs, preventing lost work
 - **📋 Clean Organization**: Separates active from completed tasks with time-based organization
 - **🛡️ Risk Management**: Different execution strategies based on task difficulty and impact
+- **📝 Knowledge Preservation**: Postmortem documentation captures problem-solving insights and prevention strategies
+- **🔍 Session Analysis**: Automatic detection of TaskIDs and problem context from coding sessions
+- **📚 Go-Inspired Documentation**: Structured postmortem reports following Go best practices
+- **🔄 Recurring Issue Tracking**: Updates existing postmortems for repeated problems with pattern analysis
 
 ### All Commands
 - **🛡️ Safe**: Includes comprehensive error handling and validation
@@ -677,6 +753,10 @@ your-project/
 │       │   ├── package_readme.md       # Technical documentation
 │       │   ├── analysis_report.md      # Code quality analysis
 │       │   ├── todos.md                # Task tracking
+│       │   ├── postmortem/             # Problem documentation
+│       │   │   ├── P1-CB-A123.md       # Postmortem for specific bug fix
+│       │   │   ├── P0-CB-A456.md       # Postmortem for critical issue
+│       │   │   └── P2-CB-B789.md       # Postmortem for feature implementation
 │       │   ├── unittest_guide.md       # (if exists) Test documentation
 │       │   └── benchmark_analysis.md   # (if exists) Performance data
 │       ├── bowl.go
