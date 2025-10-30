@@ -280,10 +280,15 @@ func TestFixedBehavior(t *testing.T) {
 ## Metadata
 
 **Postmortem ID**: {TaskID}
+
 **Created**: {YYYY-MM-DD HH:MM:SS}
+
 **Session Context**: {Claude Code session}
+
 **Last Updated**: {YYYY-MM-DD HH:MM:SS}
+
 **Review Date**: {suggested review date}
+
 **Tags**: {problem-type, bug-category, technology}
 
 ---
