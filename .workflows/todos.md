@@ -6,11 +6,11 @@
 
 **Last Updated**: 2025-01-16 00:15:00
 
-**Total Active Tasks**: 0
+**Total Active Tasks**: 1
 
 ## Quick Stats
 - P0 Critical: 0
-- P1 High: 0
+- P1 High: 1
 - P2 Medium: 0
 - P3 Low: 0
 - P4 Backlog: 0
@@ -23,7 +23,19 @@
 
 ## Active Tasks
 
-*None identified - package is in excellent condition with no critical issues.*
+- [ ] **P1-CL-A017** Design and implement /postmortem command for session problem documentation
+  - **Created**: 2025-01-30 12:00:00
+  - **Priority**: P1 (High) - Essential for knowledge management and bug tracking
+  - **Difficulty**: HARD (complex session analysis, file system operations, Go-inspired documentation structure)
+  - **Context**: Need robust command to document bugs/errors encountered during Claude Code sessions, with automatic TaskID detection, postmortem report generation, and integration with existing .workflows system
+  - **Requirements**:
+    - Analyze current session for TaskID or propose new task with user confirmation
+    - Generate/update structured postmortem reports in .workflows/postmortem/<TaskID>.md
+    - Support --id parameter for explicit TaskID specification
+    - Ensure TaskID uniqueness across codebase
+    - Go-inspired documentation structure
+    - Handle existing postmortem file updates
+    - Integration with existing todos.md workflow
 
 ---
 
