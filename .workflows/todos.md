@@ -15,9 +15,9 @@
 - P3 Low: 0
 - P4 Backlog: 0
 - Blocked: 0
-- Completed Today: 13
-- Completed This Week: 13
-- Completed This Month: 14
+- Completed Today: 14
+- Completed This Week: 14
+- Completed This Month: 15
 
 ---
 
@@ -30,6 +30,13 @@
 ## Completed Tasks
 
 ### Recently Completed
+- [x] **P2-CL-A018** Update postmortem.md with clear persistent file output documentation
+  - **Completed**: 2025-01-30 13:00:00
+  - **Method**: Enhanced postmortem.md with comprehensive documentation about persistent file creation requirements. Added new "Purpose" and "Persistent File Output" sections emphasizing that command MUST create physical markdown files, not just print analysis. Included specific file path examples like chatbot/processing/.workflows/postmortem/P0-PR-A001.md. Updated all success message templates to emphasize file creation and persistent documentation. Added best practices for verifying file creation and understanding persistent nature of postmortem files
+  - **Files Modified**: postmortem.md (Purpose section, Persistent File Output section, Success Messages, Best Practices)
+  - **Impact**: Postmortem command documentation now clearly specifies requirement to create persistent .md files in .workflows/postmortem/ directories, addressing issue where agents only printed analysis instead of creating files
+  - **Key Features**: Explicit file creation requirements, concrete path examples, enhanced success messaging, verification best practices
+
 - [x] **P1-CL-A017** Design and implement /postmortem command for session problem documentation
   - **Completed**: 2025-01-30 12:30:00
   - **Method**: Created comprehensive postmortem.md command specification with session analysis, TaskID detection, Go-inspired documentation structure, and full integration with existing .workflows system. Updated README.md with complete documentation including workflow examples, project structure, and best practices. Command supports automatic session analysis, manual TaskID specification, new task creation with user confirmation, and recurring issue handling

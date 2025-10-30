@@ -2,6 +2,30 @@
 
 Generate detailed postmortem reports for bugs/errors encountered during Claude Code sessions, with automatic TaskID detection and structured documentation.
 
+## Purpose
+
+The `/postmortem` command creates **persistent documentation files** that capture problem-solving insights from Claude Code sessions. Unlike temporary chat outputs, postmortem reports are saved as permanent markdown files in the appropriate `.workflows/postmortem/` directory for future reference, team knowledge sharing, and historical analysis.
+
+## Persistent File Output
+
+**Important**: The `/postmortem` command **MUST** create a physical markdown file in the appropriate `.workflows/postmortem/` directory. The command should NOT merely print analysis to the Claude Code session - it must generate persistent documentation.
+
+**File Output Examples**:
+```
+chatbot/processing/.workflows/postmortem/P0-PR-A001.md
+chatbot/cancellation/.workflows/postmortem/P1-CL-B011.md
+cache/.workflows/postmortem/P2-CA-A045.md
+system/.workflows/postmortem/P0-SY-S001.md
+./.workflows/postmortem/P1-CL-A017.md
+```
+
+**Key Requirements**:
+- **Physical File Creation**: Always create a `.md` file in the appropriate directory
+- **Persistent Storage**: File remains after session ends for future reference
+- **Proper Organization**: Files stored in `{package_path}/.workflows/postmortem/` directory
+- **Unique Naming**: Use TaskID as filename: `{TaskID}.md`
+- **Complete Documentation**: File contains full Go-inspired postmortem structure
+
 ## Arguments
 - **Optional**: `--id={TaskID}` (e.g., `--id=P2-PR-A021`) - Specify TaskID explicitly
 - **Optional**: `--note="{additional context}"` - Provide extra context about the problem
@@ -400,14 +424,15 @@ When `--id={TaskID}` is provided:
 📋 TaskID detected: P1-CL-A017
 📁 Found in: ./.workflows/todos.md
 📝 Generating postmortem report...
-📄 Postmortem created: ./.workflows/postmortem/P1-CL-A017.md
-✅ Postmortem documentation completed successfully
+📄 Postmortem file created: ./.workflows/postmortem/P1-CL-A017.md
+✅ Persistent postmortem documentation completed successfully
 
 📊 Summary:
 - Problem: {problem description}
 - Solution: {solution approach}
 - Files: {count} files documented
 - Duration: {session duration}
+- 📁 Persistent file: ./.workflows/postmortem/P1-CL-A017.md
 ```
 
 ### New Task Creation Messages:
@@ -422,7 +447,7 @@ todos file: claude-commands/.workflows/todos.md
 
 ✅ Task created: P1-CL-A017
 📝 Generating postmortem report...
-📄 Postmortem created: ./.workflows/postmortem/P1-CL-A017.md
+📄 Persistent postmortem file created: ./.workflows/postmortem/P1-CL-A017.md
 ```
 
 ### --id Parameter Success Messages:
@@ -430,8 +455,8 @@ todos file: claude-commands/.workflows/todos.md
 🔍 Using specified TaskID: P2-PR-A021
 📁 Located in: chatbot/processing/.workflows/todos.md
 📝 Generating postmortem report...
-📄 Postmortem updated: chatbot/processing/.workflows/postmortem/P2-PR-A021.md
-✅ Postmortem documentation completed successfully
+📄 Persistent postmortem file updated: chatbot/processing/.workflows/postmortem/P2-PR-A021.md
+✅ Persistent postmortem documentation completed successfully
 ```
 
 ### Update Messages (Existing Postmortem):
@@ -439,10 +464,10 @@ todos file: claude-commands/.workflows/todos.md
 🔍 Analyzing session context...
 📋 TaskID detected: P1-DB-A236
 📁 Found in: db/.workflows/todos.md
-📄 Existing postmortem found: db/.workflows/postmortem/P1-DB-A236.md
-🔄 Updating existing postmortem with new occurrence...
-📝 Postmortem updated with recurrence information
-✅ Postmortem update completed successfully
+📄 Existing postmortem file found: db/.workflows/postmortem/P1-DB-A236.md
+🔄 Updating existing postmortem file with new occurrence...
+📝 Persistent postmortem file updated with recurrence information
+✅ Persistent postmortem file update completed successfully
 ```
 
 ### Progress Messages:
@@ -451,8 +476,8 @@ todos file: claude-commands/.workflows/todos.md
 📋 Extracting technical details...
 📁 Locating appropriate todos.md file...
 📝 Generating Go-inspired postmortem structure...
-📄 Writing comprehensive documentation...
-✅ Postmortem generation complete
+📄 Writing comprehensive documentation to persistent file...
+✅ Persistent postmortem file generation complete
 ```
 
 ### Warning Messages:
@@ -539,6 +564,8 @@ For security-related problems:
 2. **Provide Context**: Use `--note` for additional technical details
 3. **Review Generated Content**: Ensure technical accuracy and completeness
 4. **Link to Tasks**: Use `--id` when documenting specific task solutions
+5. **Verify File Creation**: Always check that the postmortem `.md` file was actually created in the appropriate `.workflows/postmortem/` directory
+6. **Persistent Documentation**: Remember that postmortem creates permanent files, not temporary chat output
 
 ### For Postmortem Quality
 1. **Technical Depth**: Include sufficient technical details for Go developers
