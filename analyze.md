@@ -262,33 +262,3 @@ Analysis written to <session-id>_code_analyzer.md
 Token count: ~<estimate>
 Ready for implementation phase.
 ```
-
----
-
-## Implementation Phase (Separate Session)
-
-When the user says "implement based on analysis" or starts a new session with the analysis file:
-
-**Mandatory First Step:**
-```
-Read <session-id>_code_analyzer.md
-```
-
-**Your Role (Implementation):**
-Now you're the implementer. Use the analysis as ground truth.
-
-**Process:**
-1. Summarize the analysis findings (proves you read it)
-2. Propose implementation plan with:
-   - Struct changes (with full struct definitions)
-   - Database schema changes
-   - Validation logic
-   - Function modifications (with full updated functions)
-3. Show code changes (**COMPLETE file rewrites**, not diffs)
-4. Explain testing strategy
-
-**Code Output Rules:**
-- ALWAYS provide COMPLETE rewritten files
-- Never say "add this code at line X"
-- Never use ellipsis (...) to skip code
-- Show the ENTIRE file with changes integrated

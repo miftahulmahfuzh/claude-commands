@@ -181,6 +181,88 @@ Write to <session-id>_code_analyzer.md
 
 ---
 
+#### `/implement` - Implementation from Analysis
+
+Execute implementation based on `/analyze` output. Creates task, generates plan, and implements changes in one streamlined workflow.
+
+**What it does:**
+- 📖 **Reads analysis file** from `/analyze` as ground truth
+- 🎯 **Creates new task** in appropriate `.workflows/todos.md`
+- 📋 **Generates implementation plan** with complete code changes (no placeholders)
+- 🔧 **Executes implementation** following the plan
+- 📝 **Updates documentation** and marks task complete
+- 📊 **Auto-detects path** from analysis if not specified
+
+**Usage:**
+```bash
+/implement -f <code_analyzer.md> [-p <path>] [-note <additional note>]
+```
+
+**Arguments:**
+- `-f`: Path to `<session-id>_code_analyzer.md` (required)
+- `-p`: Path to directory containing `.workflows/` (optional - auto-detected from analysis)
+- `-note`: Additional context/notes (optional)
+
+**Example:**
+```bash
+/implement -f 20250108-164512-A3F7_code_analyzer.md -p tools/toolcore -note keep in mind query_user_portfolio has different output than stock_analysis
+```
+
+**Output:** Creates task in `{path}/.workflows/todos.md` + plan in `{path}/.workflows/plan/{TaskID}.md` + implements changes
+
+**Perfect for:**
+- **Implementing features** after `/analyze` gap analysis
+- **Fixing bugs** after `/analyze` dataflow investigation
+- **Token-efficient workflow**: analyze once, implement from condensed analysis
+- **Bridging analysis to execution**: seamless handoff from investigation to implementation
+
+**Key Features:**
+- **Ground Truth Approach**: Trusts analysis completely - no redundant re-analysis
+- **Complete Code Blocks**: Plans contain full functions/structs - NO placeholders
+- **Auto-Path Detection**: Finds best `.workflows/` location from analysis file paths
+- **User Notes Override**: Additional context takes precedence over analysis assumptions
+- **Concise Plans**: Token-efficient - focuses on code changes, not verbose explanations
+
+**Relationship with `/analyze`:**
+```
+/analyze → generates code_analyzer.md → /implement → reads analysis, creates task, implements
+```
+
+1. **`/analyze`** (Session 1): Explores codebase, documents dataflow, identifies gaps
+2. **`/implement`** (Session 2): Reads analysis, creates task+plan, implements
+3. **Benefit**: Analysis tokens thrown away after Session 1, Session 2 only pays for implementation
+
+**Prerequisites:**
+- Requires `{path}/.workflows/todos.md` to exist
+- If missing: Run `/update-todos {path} --init` first
+
+**vs `/do` Command:**
+- **`/implement`**: For NEW implementations based on `/analyze` output
+  - Creates new task entry in todos.md
+  - Generates implementation plan from scratch
+  - Reads from code_analyzer.md file
+  - Use when: Starting new feature/bug fix after analysis
+
+- **`/do`**: For executing EXISTING tasks from todos.md
+  - Tasks already exist with TaskIDs
+  - Direct execution of predefined work
+  - Uses TaskID to locate tasks
+  - Use when: Task already tracked in todos.md
+
+**Workflow Comparison:**
+```bash
+# Workflow 1: New feature from analysis (use /implement)
+/analyze my_feature feature         # Session 1: Analyze
+# (session ends - save tokens)
+/implement -f 20250108-164512-A3F7_code_analyzer.md  # Session 2: Implement
+
+# Workflow 2: Existing task execution (use /do)
+/update-todos mypackage --init      # Generate tasks
+/do P1-MP-A236                      # Execute specific task
+```
+
+---
+
 ### Package Documentation Commands
 
 These commands provide comprehensive package analysis and documentation for Go projects, creating a complete picture of your codebase architecture, quality, and task tracking.
@@ -532,10 +614,11 @@ All tasks include a **Difficulty field** (EASY/NORMAL/HARD) that determines exec
 
 ## 🔄 Development Workflows
 
-### Bug Investigation Workflow with `/analyze`
+### Bug Investigation Workflow with `/analyze` + `/implement`
 
 When you encounter a bug and need to understand the dataflow before fixing:
 
+**Session 1: Analysis**
 ```bash
 # Step 1: Run code analysis to understand the bug
 /analyze aggregation_mode bug
@@ -554,26 +637,29 @@ Write to <session-id>_code_analyzer.md
 # Output: Analysis written to 20250108-164512-A3F7_code_analyzer.md
 # Token count: ~8500
 # Ready for implementation phase.
+```
 
-# Step 2: Review the analysis document
-# The analysis shows:
-# - Entry point: chatbot/processing/executor.go:245
-# - Data transformation: modes.go:312 wraps response WITHOUT citations
-# - Root cause identified: formatToolOutputAsJSONMap doesn't include citations
+**Session 2: Implementation**
+```bash
+# Step 2: Implement the fix using /implement
+/implement -f 20250108-164512-A3F7_code_analyzer.md -p chatbot/processing
 
-# Step 3: Fix the bug based on analysis
-# Make code changes...
+# Automatically:
+# - Creates task in chatbot/processing/.workflows/todos.md
+# - Generates plan in chatbot/processing/.workflows/plan/{TaskID}.md
+# - Implements the fix based on analysis
 
-# Step 4: Document the fix
+# Step 3: Document the fix
 /postmortem --id=P1-PE-A234 --note="Citation wrapping fix in aggregation mode"
 ```
 
 ---
 
-### Feature Implementation Workflow with `/analyze`
+### Feature Implementation Workflow with `/analyze` + `/implement`
 
 When implementing a new feature and need to map impact before coding:
 
+**Session 1: Analysis**
 ```bash
 # Step 1: Analyze current implementation
 /analyze query_user_portfolio feature
@@ -599,21 +685,23 @@ Write to <session-id>_code_analyzer.md
 # Output: Analysis written to 20250108-171234-B8F2_code_analyzer.md
 # Token count: ~12000
 # Ready for implementation phase.
+```
 
-# Step 2: Review gap analysis in the document
-# The analysis shows:
-# - Current: query_user_portfolio returns UserPortfolio struct
-# - Missing: Expander in tools/sourceops/expanders.go
-# - Missing: Extractor in tools/stockops/extractors.go
-# - Impact: 3 files need changes (expanders.go, extractors.go, registry.go)
+**Session 2: Implementation**
+```bash
+# Step 2: Implement the feature using /implement
+/implement -f 20250108-171234-B8F2_code_analyzer.md
 
-# Step 3: Implement the feature
-# Make code changes based on impact analysis...
+# Automatically:
+# - Creates task in tools/toolcore/.workflows/todos.md
+# - Generates plan with complete code changes
+# - Implements the stock extractor
+# - Updates all affected files
 
-# Step 4: Test and validate
+# Step 3: Test and validate
 # Run tests, verify stock codes are extracted...
 
-# Step 5: Document the implementation
+# Step 4: Document the implementation
 /postmortem --id=P2-TC-A456 --note="Stock extractor for query_user_portfolio"
 ```
 
@@ -621,7 +709,7 @@ Write to <session-id>_code_analyzer.md
 
 ### Multi-Session Workflow (Token Management)
 
-For complex features, split analysis and implementation across sessions:
+For complex features, split analysis and implementation across sessions for maximum token efficiency:
 
 **Session 1: Analysis (Code Archaeology)**
 ```bash
@@ -641,26 +729,24 @@ Write to <session-id>_code_analyzer.md
 **Session terminates after analysis.**
 - Tokens used: ~15,000 (exploration, documentation)
 - Output: `20250108-173045-C1D3_code_analyzer.md`
+- **Analysis tokens discarded - save costs**
 
-**Session 2: Implementation (Main Agent)**
+**Session 2: Implementation (using `/implement`)**
 ```bash
-# Start new session with condensed analysis as input
-Read 20250108-173045-C1D3_code_analyzer.md
-```
+# Start new session - condensed analysis as input
+/implement -f 20250108-173045-C1D3_code_analyzer.md
 
-**Session 2 continues...**
-```bash
-# Now implement based on analysis
 # The agent has complete context from analysis without exploration cost
 # Tokens used: ~8,000 (implementation only)
 # Total: ~23,000 tokens vs ~30,000+ for single session
 ```
 
-**Why This Works:**
-- Session 1 tokens: Used for exploration, thrown away after
+**Key Benefits:**
+- Session 1 tokens: Used for exploration, **thrown away** after
 - Session 2 tokens: Used for implementation, with condensed analysis as input
-- Total tokens < single session doing both analysis + implementation
-- Clean separation of concerns (archaeology vs implementation)
+- **Total tokens < single session** doing both analysis + implementation
+- Clean separation: archaeology vs implementation
+- `/implement` bridges the gap automatically
 
 ---
 
@@ -698,6 +784,88 @@ Write to <session-id>_code_analyzer.md
 # Step 5: Verify behavior hasn't changed
 # Use analysis as "before" reference
 ```
+
+---
+
+## 🆚 `/implement` vs `/do`: When to Use Which
+
+### Quick Decision Tree
+
+```
+Need to implement something?
+│
+├─ Is this a NEW feature/bug fix from `/analyze`?
+│  └─ YES → Use `/implement -f <analysis_file>`
+│           - Creates new task in todos.md
+│           - Generates implementation plan
+│           - Executes implementation
+│
+└─ Is the task ALREADY in todos.md with TaskID?
+   └─ YES → Use `/do <TaskID>`
+            - Executes existing task
+            - Task already documented and planned
+```
+
+### Detailed Comparison
+
+| Aspect | `/implement` | `/do` |
+|--------|-------------|-------|
+| **Input** | `<code_analyzer.md>` file | `<TaskID>` from todos.md |
+| **Creates Task?** | ✅ YES - creates new task entry | ❌ NO - task already exists |
+| **Creates Plan?** | ✅ YES - generates plan from analysis | ✅ YES - for HARD tasks only |
+| **Use Case** | New implementations from analysis | Executing existing tasks |
+| **Prerequisites** | Requires `todos.md` to exist | Requires task to exist in todos.md |
+| **Session Flow** | After `/analyze` completes | After `/update-todos` creates tasks |
+| **Path Detection** | Auto-detects from analysis | Searches all todos.md files |
+| **User Notes** | Optional `-note` parameter | Optional `--note` parameter |
+
+### Workflow Examples
+
+**Example 1: New Feature (Use `/implement`)**
+```bash
+# Session 1: Analyze
+/analyze stock_extractor feature
+# Output: 20250108-164512-A3F7_code_analyzer.md
+
+# Session 2: Implement
+/implement -f 20250108-164512-A3F7_code_analyzer.md
+# ✅ Creates new task P2-TC-A123 in todos.md
+# ✅ Generates plan in .workflows/plan/P2-TC-A123.md
+# ✅ Implements the feature
+```
+
+**Example 2: Existing Task (Use `/do`)**
+```bash
+# Task already exists from previous /update-todos
+/do P2-TC-A123
+# ✅ Finds task in todos.md
+# ✅ Loads existing context
+# ✅ Executes the task
+# ✅ Marks as completed
+```
+
+**Example 3: After Analysis, Choose Wisely**
+```bash
+# Scenario: You ran /analyze and got the analysis file
+/implement -f 20250108-164512-A3F7_code_analyzer.md
+# ✅ Correct! This creates task + plan + implements
+
+# Scenario: Someone already created the task in todos.md
+/do P1-TC-A456
+# ✅ Correct! Just execute the existing task
+
+# ❌ WRONG: Using /do when you should use /implement
+/do P1-TC-A999  # Task doesn't exist yet!
+# ✅ RIGHT: Use /implement to create the task first
+/implement -f 20250108-164512-A3F7_code_analyzer.md
+```
+
+### Key Takeaway
+
+- **`/implement`**: For **NEW** work that needs task creation + planning + implementation
+- **`/do`**: For **EXISTING** tasks that are already tracked and planned
+
+When in doubt: Check if the task exists in todos.md first. If yes → `/do`. If no → `/implement`.
 
 ---
 
@@ -976,7 +1144,10 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **🎯 Ground Truth for Implementation**: Analysis serves as foundation for bug fixes and features
 - **💰 Token Efficient**: Multi-session workflow separates analysis from implementation
 - **🏗️ Architecture Awareness**: Documents implicit dependencies (config, environment, schema)
-- **🔄 Multi-Session Support**: Analysis in one session, implementation in another saves tokens
+- **🔄 Multi-Session Support**: Analysis in one session, `/implement` in another saves tokens
+- **🌉 Seamless Bridge**: `/implement` automatically creates tasks and plans from analysis output
+- **📋 Complete Code Blocks**: Implementation plans contain full functions - NO placeholders
+- **🎯 Trust the Analysis**: `/implement` uses analysis as ground truth - no redundant work
 
 ### Git Commands
 - **🤖 AI-Powered**: Leverages Claude's intelligence to understand your code changes
