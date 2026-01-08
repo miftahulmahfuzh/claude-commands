@@ -82,6 +82,105 @@ Automates the entire version release process with intelligent semantic versionin
 
 ---
 
+### Code Analysis Commands
+
+#### `/analyze` - Code Archaeology & Dataflow Tracing
+
+Perform comprehensive code archaeology and dataflow tracing for bug investigation or feature implementation. Generates detailed analysis documents that serve as ground truth for implementation.
+
+**What it does:**
+- 🔍 **Traces dataflow** from entry points to exit points across entire codebase
+- 📖 **Documents data transformations** at each step of processing
+- 🗺️ **Maps dependency chains** by following function calls and struct definitions
+- 🏗️ **Identifies implicit dependencies** (config, environment, database schema)
+- 📊 **Generates structured analysis** with complete dataflow documentation
+- 🎯 **Supports bug investigation** and feature implementation analysis
+- 🔄 **Enables multi-session workflow** - analysis in one session, implementation in another
+
+**Usage:**
+```bash
+/analyze <target> [bug|feature]
+
+Context: <optional context or description>
+Error: <optional error logs for bug investigation>
+
+Files:
+@file1.go
+@file2.go
+
+Explore related files as you trace the dataflow.
+Write to <session-id>_code_analyzer.md
+```
+
+**Example - Bug Investigation:**
+```bash
+/analyze aggregation_mode bug
+
+Context: Citations missing in aggregated responses
+Error: 2025-01-08 10:23:45 ERROR citation not found in response
+
+Files:
+@chatbot/processing/.workflows/analysis/citation_for_aggregation_mode.md
+@tools/toolcore/caller.go
+@tools/toolcore/pipeline/execution/modes.go
+
+Explore related files as you trace the dataflow.
+Write to <session-id>_code_analyzer.md
+```
+
+**Example - Feature Implementation:**
+```bash
+/analyze query_user_portfolio feature
+
+Context: I want to implement stock extractor for query_user_portfolio tool.
+The output format is different than concept_sector_search - it has stock codes
+in Holding Stock array instead of items.stock_codes.
+
+Current payload:
+{
+  "Holding Stock": [
+    {"Stock Code": "BBRI", "Stock Average Price": 5000, ...},
+    {"Stock Code": "BBCA", "Stock Average Price": 10000, ...}
+  ]
+}
+
+New requirement: Extract stock codes from Holding Stock array.
+
+Files:
+@tools/toolcore/.workflows/plan/P2-TC-A063.md
+@tools/toolbe/query_user_portfolio.go
+@tools/toolutils/query_user_portfolio.go
+
+Explore related files as you trace the dataflow.
+Write to <session-id>_code_analyzer.md
+```
+
+**Output:** Creates `<session-id>_code_analyzer.md` with:
+- **Analysis Scope**: Explicitly mentioned files + discovered related files
+- **Current Dataflow**: Entry points → Processing chain → Exit points
+- **Key Data Structures**: Struct definitions with locations and usage
+- **Dependencies**: Configuration, environment, external services
+- **Gap Analysis** (for features): What exists vs what's missing
+- **Impact Points**: Files that will need changes
+
+**Perfect for:**
+- **Bug Investigation**: Understanding dataflow to diagnose issues before fixing
+- **Feature Implementation**: Mapping impact before making changes
+- **Code Onboarding**: Learning how complex systems work
+- **Architecture Reviews**: Documenting current state before refactoring
+- **Multi-Session Work**: Analysis in one session, implementation in another (saves tokens)
+
+**Key Features:**
+- **Objective Observer Mode**: Does NOT suggest improvements or propose implementations
+- **Recursive Exploration**: Follows function calls, struct definitions, imports automatically
+- **Complete Documentation**: Shows actual line numbers and file paths
+- **No Opinions**: Pure documentation of what exists, not what should be
+- **Token Efficient**: Analysis tokens thrown away after, implementation uses condensed analysis
+
+**Session ID Format:** `YYYYMMDD-HHMMSS-A3F7` (timestamp + 4-char random suffix)
+
+---
+
 ### Package Documentation Commands
 
 These commands provide comprehensive package analysis and documentation for Go projects, creating a complete picture of your codebase architecture, quality, and task tracking.
@@ -431,6 +530,177 @@ All tasks include a **Difficulty field** (EASY/NORMAL/HARD) that determines exec
 
 ---
 
+## 🔄 Development Workflows
+
+### Bug Investigation Workflow with `/analyze`
+
+When you encounter a bug and need to understand the dataflow before fixing:
+
+```bash
+# Step 1: Run code analysis to understand the bug
+/analyze aggregation_mode bug
+
+Context: Citations missing in aggregated responses
+Error: <paste error logs here>
+
+Files:
+@chatbot/processing/.workflows/analysis/citation_for_aggregation_mode.md
+@tools/toolcore/caller.go
+@tools/toolcore/pipeline/execution/modes.go
+
+Explore related files as you trace the dataflow.
+Write to <session-id>_code_analyzer.md
+
+# Output: Analysis written to 20250108-164512-A3F7_code_analyzer.md
+# Token count: ~8500
+# Ready for implementation phase.
+
+# Step 2: Review the analysis document
+# The analysis shows:
+# - Entry point: chatbot/processing/executor.go:245
+# - Data transformation: modes.go:312 wraps response WITHOUT citations
+# - Root cause identified: formatToolOutputAsJSONMap doesn't include citations
+
+# Step 3: Fix the bug based on analysis
+# Make code changes...
+
+# Step 4: Document the fix
+/postmortem --id=P1-PE-A234 --note="Citation wrapping fix in aggregation mode"
+```
+
+---
+
+### Feature Implementation Workflow with `/analyze`
+
+When implementing a new feature and need to map impact before coding:
+
+```bash
+# Step 1: Analyze current implementation
+/analyze query_user_portfolio feature
+
+Context: I want to implement stock extractor for query_user_portfolio tool.
+The output format is different than concept_sector_search.
+
+Current payload:
+{
+  "Holding Stock": [
+    {"Stock Code": "BBRI", "Stock Average Price": 5000, ...}
+  ]
+}
+
+Files:
+@tools/toolcore/.workflows/plan/P2-TC-A063.md
+@tools/toolbe/query_user_portfolio.go
+@tools/toolutils/query_user_portfolio.go
+
+Explore related files as you trace the dataflow.
+Write to <session-id>_code_analyzer.md
+
+# Output: Analysis written to 20250108-171234-B8F2_code_analyzer.md
+# Token count: ~12000
+# Ready for implementation phase.
+
+# Step 2: Review gap analysis in the document
+# The analysis shows:
+# - Current: query_user_portfolio returns UserPortfolio struct
+# - Missing: Expander in tools/sourceops/expanders.go
+# - Missing: Extractor in tools/stockops/extractors.go
+# - Impact: 3 files need changes (expanders.go, extractors.go, registry.go)
+
+# Step 3: Implement the feature
+# Make code changes based on impact analysis...
+
+# Step 4: Test and validate
+# Run tests, verify stock codes are extracted...
+
+# Step 5: Document the implementation
+/postmortem --id=P2-TC-A456 --note="Stock extractor for query_user_portfolio"
+```
+
+---
+
+### Multi-Session Workflow (Token Management)
+
+For complex features, split analysis and implementation across sessions:
+
+**Session 1: Analysis (Code Archaeology)**
+```bash
+/analyze stock_selection feature
+
+Context: Need to add fast-path stock extraction for stock_selection tool.
+
+Files:
+@tools/toolcore/.workflows/plan/P2-TC-A063.md
+@tools/nonbe/stock_selection.go
+@tools/toolcore/pipeline/execution/tool.go
+
+Explore related files as you trace the dataflow.
+Write to <session-id>_code_analyzer.md
+```
+
+**Session terminates after analysis.**
+- Tokens used: ~15,000 (exploration, documentation)
+- Output: `20250108-173045-C1D3_code_analyzer.md`
+
+**Session 2: Implementation (Main Agent)**
+```bash
+# Start new session with condensed analysis as input
+Read 20250108-173045-C1D3_code_analyzer.md
+```
+
+**Session 2 continues...**
+```bash
+# Now implement based on analysis
+# The agent has complete context from analysis without exploration cost
+# Tokens used: ~8,000 (implementation only)
+# Total: ~23,000 tokens vs ~30,000+ for single session
+```
+
+**Why This Works:**
+- Session 1 tokens: Used for exploration, thrown away after
+- Session 2 tokens: Used for implementation, with condensed analysis as input
+- Total tokens < single session doing both analysis + implementation
+- Clean separation of concerns (archaeology vs implementation)
+
+---
+
+### Before Refactoring Workflow
+
+Use `/analyze` to document current state before making changes:
+
+```bash
+# Step 1: Document current architecture
+/analyze pipeline_execution feature
+
+Context: Planning to refactor pipeline execution for better performance.
+Need to document current state before changes.
+
+Files:
+@tools/toolcore/pipeline/execution/tool.go
+@tools/toolcore/pipeline/execution/step.go
+@tools/toolcore/pipeline/execution/modes.go
+
+Explore related files as you trace the dataflow.
+Write to <session-id>_code_analyzer.md
+
+# Step 2: Review analysis to understand:
+# - Current dataflow through pipeline
+# - Dependencies between components
+# - Implicit dependencies (config, environment)
+# - Impact points for refactoring
+
+# Step 3: Create refactoring plan
+# Based on complete understanding from analysis...
+
+# Step 4: Implement refactoring
+# Make changes...
+
+# Step 5: Verify behavior hasn't changed
+# Use analysis as "before" reference
+```
+
+---
+
 ## 🔄 Package Documentation Workflow
 
 The package documentation commands work together in a specific sequence to provide comprehensive package analysis with automated TaskID tracking:
@@ -700,6 +970,14 @@ Here's a complete example of how the TaskID workflow system works in practice:
 
 ## 🎯 Why Use These Commands?
 
+### Code Analysis Commands
+- **🔍 Objective Documentation**: Pure dataflow documentation without suggestions or opinions
+- **📚 Complete Understanding**: Recursive exploration follows all dependencies automatically
+- **🎯 Ground Truth for Implementation**: Analysis serves as foundation for bug fixes and features
+- **💰 Token Efficient**: Multi-session workflow separates analysis from implementation
+- **🏗️ Architecture Awareness**: Documents implicit dependencies (config, environment, schema)
+- **🔄 Multi-Session Support**: Analysis in one session, implementation in another saves tokens
+
 ### Git Commands
 - **🤖 AI-Powered**: Leverages Claude's intelligence to understand your code changes
 - **⚡ Time-Saving**: Eliminates repetitive git operations
@@ -762,14 +1040,25 @@ your-project/
 │       ├── bowl.go
 │       ├── manager.go
 │       └── ...
+├── 20250108-164512-A3F7_code_analyzer.md    # Code archaeology analysis
+├── 20250108-171234-B8F2_code_analyzer.md    # Another analysis session
 └── ...
 ```
 
-The `.workflows/` directory keeps all package-level documentation organized and separate from source code.
+The `.workflows/` directory keeps all package-level documentation organized and separate from source code. The `*_code_analyzer.md` files are generated by `/analyze` and can be stored at project root or in a dedicated analysis directory.
 
 ---
 
 ## 💡 Best Practices
+
+### For Code Analysis (`/analyze`)
+- **Before Fixing Bugs**: Always run `/analyze` to understand dataflow before making changes
+- **Before Features**: Use `/analyze` for gap analysis to map impact points
+- **Multi-Session Work**: Split complex tasks - analyze in Session 1, implement in Session 2
+- **Objective Mode**: Remember that `/analyze` documents WHAT exists, not WHAT SHOULD BE
+- **File Management**: Keep `*_code_analyzer.md` files organized - project root or dedicated `/analysis` directory
+- **Review First**: Always review the analysis document before starting implementation
+- **Archive Old**: Archive or delete analysis documents after implementation to avoid confusion
 
 ### For Git Commands
 - Use `/push` for routine commits
