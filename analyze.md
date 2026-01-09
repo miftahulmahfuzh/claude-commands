@@ -139,7 +139,7 @@ Create `<session-id>_code_analyzer.md` with the following structure:
 ## User Input
 
 ### Original User Request
-```
+```bash
 <Exact copy of user's prompt after "!analyze <target>">
 ```
 
@@ -295,7 +295,6 @@ type StructName struct {
 ---
 
 **Analysis complete. No implementation proposed.**
-```
 
 ---
 
@@ -340,7 +339,7 @@ Generate a unique session ID using:
 
 After writing the analysis file, output ONLY:
 
-```
+```bash
 Analysis written to <session-id>_code_analyzer.md
 Token count: ~<estimate>
 Ready for implementation phase.
