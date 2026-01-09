@@ -99,10 +99,11 @@ Perform comprehensive code archaeology and dataflow tracing for bug investigatio
 
 **Usage:**
 ```bash
-/analyze <target> [bug|feature]
+/analyze <target> [bug|feature|update|refactor]
 
 Context: <optional context or description>
 Error: <optional error logs for bug investigation>
+Note: <optional additional notes or constraints>
 
 Files:
 @file1.go
@@ -111,6 +112,12 @@ Files:
 Explore related files as you trace the dataflow.
 Write to <session-id>_code_analyzer.md
 ```
+
+**Analysis Types:**
+- `bug`: Bug investigation (errors, wrong behavior)
+- `feature`: New requirements (new module, architecture, features)
+- `update`: Feature update (struct changes, API breaking changes)
+- `refactor`: Refactoring (major/minor changes, renaming, consolidation)
 
 **Example - Bug Investigation:**
 ```bash
@@ -156,6 +163,8 @@ Write to <session-id>_code_analyzer.md
 ```
 
 **Output:** Creates `<session-id>_code_analyzer.md` with:
+- **User Input**: Your original request, context, errors, and notes (preserved verbatim)
+- **Detailed Requirements Understanding**: Claude's technical interpretation of your problem/requirements
 - **Analysis Scope**: Explicitly mentioned files + discovered related files
 - **Current Dataflow**: Entry points → Processing chain → Exit points
 - **Key Data Structures**: Struct definitions with locations and usage
@@ -187,11 +196,12 @@ Execute implementation based on `/analyze` output. Creates task, generates plan,
 
 **What it does:**
 - 📖 **Reads analysis file** from `/analyze` as ground truth
-- 🎯 **Creates new task** in appropriate `.workflows/todos.md`
+- 🎯 **Creates new task** in appropriate `.workflows/todos.md` with Type field
 - 📋 **Generates implementation plan** with complete code changes (no placeholders)
 - 🔧 **Executes implementation** following the plan
 - 📝 **Updates documentation** and marks task complete
 - 📊 **Auto-detects path** from analysis if not specified
+- 🔄 **Preserves user context** from analysis (original request, requirements understanding)
 
 **Usage:**
 ```bash
@@ -222,6 +232,8 @@ Execute implementation based on `/analyze` output. Creates task, generates plan,
 - **Auto-Path Detection**: Finds best `.workflows/` location from analysis file paths
 - **User Notes Override**: Additional context takes precedence over analysis assumptions
 - **Concise Plans**: Token-efficient - focuses on code changes, not verbose explanations
+- **User Context Preservation**: Carries forward original request and technical understanding
+- **Type-Aware Tasks**: Creates tasks with proper type classification (Bug/Feature/Update/Refactor)
 
 **Relationship with `/analyze`:**
 ```
@@ -1148,6 +1160,8 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **🌉 Seamless Bridge**: `/implement` automatically creates tasks and plans from analysis output
 - **📋 Complete Code Blocks**: Implementation plans contain full functions - NO placeholders
 - **🎯 Trust the Analysis**: `/implement` uses analysis as ground truth - no redundant work
+- **📝 User Context Preservation**: Original request and technical understanding carried forward
+- **🏷️ Type-Aware Analysis**: Supports bug, feature, update, and refactor analysis types
 
 ### Git Commands
 - **🤖 AI-Powered**: Leverages Claude's intelligence to understand your code changes
@@ -1225,10 +1239,14 @@ The `.workflows/` directory keeps all package-level documentation organized and 
 ### For Code Analysis (`/analyze`)
 - **Before Fixing Bugs**: Always run `/analyze` to understand dataflow before making changes
 - **Before Features**: Use `/analyze` for gap analysis to map impact points
+- **Before Updates**: Use `/analyze` for feature updates when API or struct changes are needed
+- **Before Refactoring**: Use `/analyze` to document current state before restructuring
+- **Choose Right Type**: Select appropriate analysis type (bug|feature|update|refactor) for best focus
 - **Multi-Session Work**: Split complex tasks - analyze in Session 1, implement in Session 2
 - **Objective Mode**: Remember that `/analyze` documents WHAT exists, not WHAT SHOULD BE
+- **Provide Context**: Include error messages, notes, and constraints for better analysis
 - **File Management**: Keep `*_code_analyzer.md` files organized - project root or dedicated `/analysis` directory
-- **Review First**: Always review the analysis document before starting implementation
+- **Review First**: Always review the "Detailed Requirements Understanding" section before starting implementation
 - **Archive Old**: Archive or delete analysis documents after implementation to avoid confusion
 
 ### For Git Commands
