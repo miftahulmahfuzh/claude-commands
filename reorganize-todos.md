@@ -7,9 +7,10 @@ Reorganizes and cleans up existing `{directory_path}/.workflows/todos.md` by ens
 
 ## Purpose
 
-A focused command that handles two critical cleanup operations:
+A focused command that handles three critical cleanup operations:
 1. **TaskID Coverage**: Ensures every task (active and completed) has a unique TaskID
 2. **Task Organization**: Properly separates active and completed tasks
+3. **Archive Management**: Compresses 80% of oldest completed tasks and removes related workflow files
 
 ## Process Flow
 
@@ -114,27 +115,96 @@ Look for:
 
 5. **VERIFICATION**: After moving, double-check that **ZERO checkmarked tasks remain** in Active Tasks section
 
-### Step 5: Update Quick Stats
+### Step 5: Compress and Archive Old Completed Tasks
+
+#### 5.1 Calculate Archive Target (80% Rule)
+- Count total completed tasks across all time sections
+- Calculate 80% threshold: `archive_count = total_completed * 0.8`
+- Keep the most recent 20% visible, archive the oldest 80%
+
+#### 5.2 Identify Tasks to Archive
+- Sort completed tasks by completion date (oldest first)
+- Select the oldest 80% for archiving
+- Keep the most recent 20% in their current time sections
+
+#### 5.3 Move Tasks to Archives Section
+1. **Create Archives section if missing** (at the end, after "This Month"):
+```markdown
+### Archives
+<!-- Compressed format: one line per task -->
+```
+
+2. **Compress each archived task to single line**:
+```markdown
+# Before (in Completed Tasks):
+- [x] **P2-DB-A123** Add validation for empty input
+  - **Completed**: 2025-01-10 14:30:00
+  - **Method**: Implemented validation logic
+  - **Files Modified**: src/validate.go
+  - **Impact**: Improved error handling
+
+# After (in Archives):
+P2-DB-A123: Add validation for empty input
+```
+
+3. **Trace and Remove Relevant Workflow Files**:
+   - Search all `.workflows/` directories for markdown files containing the TaskID as substring
+   - Look for patterns like:
+     - `{task-id}.md`
+     - `plan-{task-id}.md`
+     - `analysis-{task-id}.md`
+     - `postmortem-{task-id}.md`
+     - `{task-id}-*.md`
+     - `*-{task-id}.md`
+   - Remove these files to clean up workspace
+   - Skip removal if file doesn't exist
+
+4. **Bash command pattern** for finding related workflow files:
+```bash
+# Find all .md files in any .workflows folder containing the TaskID
+find . -type d -name ".workflows" -exec find {} -name "*{task-id}*.md" \; 2>/dev/null
+```
+
+#### 5.4 Update Archives Section Format
+- **Single-line format only**: `{TaskID}: {task description}`
+- **Sort by TaskID** for easy reference
+- **No completion metadata** (date, method, files, impact)
+- **No checkboxes** (tasks are completed and archived)
+
+### Step 6: Update Quick Stats
 Recalculate and update:
 - Total Active Tasks
 - P0-P4 task counts
 - Blocked tasks count
 - Completed tasks counts (Today, This Week, This Month)
+- Archived tasks count
 
-### Step 6: Validation
+### Step 7: Validation
 
-#### 6.1 TaskID Coverage Validation
+#### 7.1 TaskID Coverage Validation
 - **EVERY task** must have TaskID format: `P[0-4]-[A-Z]{2,3}-[A-Z0-9]{4}`
 - **NO tasks** should have plain text descriptions without TaskID
 - **ALL TaskIDs** must be unique
 
-#### 6.2 Organization Validation
+#### 7.2 Organization Validation
 - **ZERO completed tasks** in Active Tasks section - **MUST VERIFY NO CHECKMARKED TASKS REMAIN**
 - **ALL completed tasks** in Completed Tasks section - no orphaned completed tasks
 - Proper time-based organization
 - **CRITICAL**: Active Tasks section must contain ONLY `- [ ]` (unchecked) tasks
 
-#### 6.3 Format Validation
+#### 7.3 Archive Validation
+- **Archives section exists** with single-line format only
+- **Approximately 80%** of completed tasks are archived
+- **Approximately 20%** most recent tasks remain visible
+- **All archived tasks** have compressed format: `{TaskID}: {description}`
+- **No checkboxes** in Archives section
+
+#### 7.4 Workflow Files Cleanup Validation
+- Verify workflow files for archived tasks are removed
+- Check `.workflows/` directories for orphaned files
+- Confirm no broken references remain
+
+#### 7.5 Format Validation
 - Checkboxes properly formatted: `- [ ]` or `- [x]`
 - TaskIDs in bold format: `**{TaskID}**`
 - No duplicate tasks
@@ -146,8 +216,10 @@ Recalculate and update:
 ✅ Reorganized todos.md successfully
   - {N} tasks received new TaskIDs
   - {N} completed tasks moved to Completed Tasks section
+  - {N} tasks archived (80% rule applied)
+  - {N} workflow files cleaned up
   - Active Tasks now contains only {count} active tasks
-  - Quick Stats updated with completion metrics
+  - Quick Stats updated with completion and archive metrics
 ```
 
 ### Warning Messages:
@@ -155,6 +227,8 @@ Recalculate and update:
 ⚠️ Warning: Found {N} tasks without TaskIDs - assigned automatically
 ⚠️ Warning: Created Completed Tasks section - {N} tasks moved
 ⚠️ Warning: Found {N} completed tasks in Active Tasks section - moved
+⚠️ Warning: Archived {N} old tasks (80% rule) - {N} workflow files removed
+⚠️ Warning: Some workflow files not found for archived tasks
 ```
 
 ### Error Messages:
@@ -229,6 +303,48 @@ Recalculate and update:
   - **Impact**: Added TaskID and proper organization
 ```
 
+### When there are many completed tasks (80% archiving):
+```bash
+# Input todos.md has 10 completed tasks across time sections:
+## Completed Tasks
+### Recently Completed
+- [x] **P2-CB-A120** Recent task 1
+- [x] **P1-CB-A119** Recent task 2
+### This Week
+- [x] **P2-CB-A118** Task from 3 days ago
+- [x] **P3-CB-A117** Task from 5 days ago
+- [x] **P1-CB-A116** Task from 6 days ago
+### This Month
+- [x] **P2-CB-A115** Task from 2 weeks ago
+- [x] **P3-CB-A114** Task from 3 weeks ago
+- [x] **P1-CB-A113** Task from 4 weeks ago
+- [x] **P2-CB-A112** Old task from last month
+
+# Output todos.md (80% = 8 tasks archived, 20% = 2 tasks visible):
+## Completed Tasks
+### Recently Completed
+- [x] **P2-CB-A120** Recent task 1
+  - **Completed**: 2025-01-14 19:00:00
+  - **Method**: ...
+- [x] **P1-CB-A119** Recent task 2
+  - **Completed**: 2025-01-14 18:00:00
+  - **Method**: ...
+
+### Archives
+P1-CB-A112: Old task from last month
+P1-CB-A113: Task from 4 weeks ago
+P3-CB-A114: Task from 3 weeks ago
+P2-CB-A115: Task from 2 weeks ago
+P1-CB-A116: Task from 6 days ago
+P3-CB-A117: Task from 5 days ago
+P2-CB-A118: Task from 3 days ago
+
+# Workflow files removed:
+# - .workflows/plan-P1-CB-A112.md
+# - .workflows/postmortem-P3-CB-A114.md
+# - (etc. for all archived tasks)
+```
+
 ## Best Practices
 
 ### When to Use:
@@ -236,7 +352,7 @@ Recalculate and update:
 - When you notice tasks without TaskIDs
 - When completed tasks accumulate in Active Tasks section
 - Before major task management operations
-- Periodic maintenance (weekly/monthly)
+- Periodic maintenance (weekly/monthly) to archive old tasks and clean up workflow files
 
 ### Before Running:
 - Ensure todos.md exists (run `/update-todos --init` if needed)
@@ -245,7 +361,9 @@ Recalculate and update:
 
 ### After Running:
 - Verify Active Tasks only contains incomplete work
-- Check Completed Tasks section for proper organization
+- Check Completed Tasks section for proper organization (20% most recent visible)
+- Review Archives section for compressed old tasks
+- Confirm workflow files for archived tasks are cleaned up
 - Use `/do {TaskID}` to execute tasks with proper TaskIDs
 
 ## Integration with Other Commands
@@ -280,14 +398,14 @@ Recalculate and update:
 ## Design Philosophy
 
 ### Focused Responsibility:
-- **Single Purpose**: Only handles TaskID and organization cleanup
+- **Single Purpose**: Handles TaskID coverage, organization cleanup, and archive management
 - **No Analysis**: Doesn't analyze code or git changes
-- **No Content Generation**: Only reorganizes existing content
-- **Simple and Reliable**: Clear, predictable behavior
+- **No Content Generation**: Only reorganizes and compresses existing content
+- **Simple and Reliable**: Clear, predictable behavior with 80/20 rule for archiving
 
 ### Complementary to update-todos:
 - `update-todos` → Content analysis and new task generation
-- `reorganize-todos` → TaskID coverage and organization cleanup
+- `reorganize-todos` → TaskID coverage, organization cleanup, and archive management
 - `do` → Task execution using TaskIDs
 
 This separation ensures each command has a clear, focused responsibility and reduces complexity.

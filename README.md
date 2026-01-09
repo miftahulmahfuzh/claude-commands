@@ -415,17 +415,20 @@ Maintains a comprehensive, automatically-updated task list for each package base
 
 ---
 
-#### `/reorganize-todos` - TaskID and Organization Cleanup
+#### `/reorganize-todos` - TaskID, Organization & Archive Cleanup
 
-Cleans up and reorganizes existing todos.md by ensuring complete TaskID coverage and proper task organization.
+Cleans up and reorganizes existing todos.md by ensuring complete TaskID coverage, proper task organization, and archive management.
 
 **What it does:**
 - 🏷️ **TaskID Coverage**: Ensures EVERY task (active and completed) has a unique TaskID
 - 📋 **Task Organization**: Properly separates active and completed tasks
 - 🔍 **Deep Scan**: Scans ENTIRE Active Tasks section for ANY checkmarked tasks
 - ✅ **Complete Migration**: Moves ALL checkmarked tasks to Completed Tasks section
-- 📊 **Stats Update**: Recalculates and updates Quick Stats with completion metrics
-- 🧹 **Clean Validation**: Verifies ZERO checkmarked tasks remain in Active Tasks section
+- 📦 **80% Archive Rule**: Compresses oldest 80% of completed tasks to Archives section
+- 🗜️ **Single-Line Format**: Archives tasks as `{TaskID}: {description}` for compact display
+- 🧹 **Workflow Files Cleanup**: Removes related plan/analysis/postmortem files for archived tasks
+- 📊 **Stats Update**: Recalculates and updates Quick Stats with completion and archive metrics
+- 🔍 **Clean Validation**: Verifies ZERO checkmarked tasks remain in Active Tasks section
 
 **Usage:**
 ```bash
@@ -441,24 +444,35 @@ Cleans up and reorganizes existing todos.md by ensuring complete TaskID coverage
 **Perfect for:**
 - Cleaning up tasks missing TaskIDs
 - Moving completed tasks that accumulated in Active Tasks section
-- Fixing task organization issues
-- Periodic maintenance (weekly/monthly)
+- Periodic maintenance (weekly/monthly) to archive old tasks
+- Cleaning up workflow files for completed work
 - Pre-task-execution cleanup
+- Keeping todos.md file clean and readable
 
 **Key Features:**
-- **Focused Responsibility**: Only handles TaskID generation and organization cleanup
+- **Focused Responsibility**: Handles TaskID generation, organization cleanup, and archive management
 - **No Analysis**: Doesn't analyze code or git changes - just reorganizes existing content
 - **Simple and Reliable**: Clear, predictable behavior every time
 - **Complete Coverage**: Ensures ALL tasks have TaskIDs, no exceptions
 - **Clean Separation**: Guarantees Active Tasks only contains incomplete work
+- **80/20 Rule**: Archives section contains 80% oldest tasks, Completed Tasks shows 20% most recent
+- **Automatic Cleanup**: Finds and removes workflow files matching archived TaskIDs
+
+**Archive Behavior:**
+- Searches all `.workflows/` directories for markdown files containing archived TaskIDs
+- Removes files like: `plan-{task-id}.md`, `analysis-{task-id}.md`, `postmortem-{task-id}.md`
+- Compresses archived tasks to single-line format: `{TaskID}: {description}`
+- Keeps most recent 20% of completed tasks visible with full metadata
 
 **Output Messages:**
 ```
 ✅ Reorganized todos.md successfully
   - {N} tasks received new TaskIDs
   - {N} completed tasks moved to Completed Tasks section
+  - {N} tasks archived (80% rule applied)
+  - {N} workflow files cleaned up
   - Active Tasks now contains only {count} active tasks
-  - Quick Stats updated with completion metrics
+  - Quick Stats updated with completion and archive metrics
 ```
 
 ---
@@ -960,8 +974,8 @@ Periodic maintenance (weekly/monthly):
 # Verify documentation is current
 /update-readme chatbot/bowl
 
-# Clean up completed tasks and update stats
-/update-todos chatbot/bowl --archive-completed
+# Clean up and archive old completed tasks (80% rule + workflow files cleanup)
+/reorganize-todos chatbot/bowl
 ```
 
 ---
@@ -1242,6 +1256,8 @@ The `.workflows/` directory keeps all package-level documentation organized and 
 - Address P0/P1 issues from `analysis_report.md` immediately
 - Let `/update-todos` automatically handle completed tasks organization
 - Active Tasks section will only show incomplete work, completed tasks are moved automatically
+- Run `/reorganize-todos` periodically (weekly/monthly) to archive old tasks and clean up workflow files
+- Archives section keeps todos.md clean with 80/20 split - only most recent 20% visible
 
 ### For Difficulty Field Management
 - **EASY Tasks**: Quick fixes, documentation updates, simple validation
