@@ -108,9 +108,6 @@ Note: <optional additional notes or constraints>
 Files:
 @file1.go
 @file2.go
-
-Explore related files as you trace the dataflow.
-Write to <session-id>_code_analyzer.md
 ```
 
 **Analysis Types:**
@@ -130,9 +127,6 @@ Files:
 @chatbot/processing/.workflows/analysis/citation_for_aggregation_mode.md
 @tools/toolcore/caller.go
 @tools/toolcore/pipeline/execution/modes.go
-
-Explore related files as you trace the dataflow.
-Write to <session-id>_code_analyzer.md
 ```
 
 **Example - Feature Implementation:**
@@ -157,9 +151,6 @@ Files:
 @tools/toolcore/.workflows/plan/P2-TC-A063.md
 @tools/toolbe/query_user_portfolio.go
 @tools/toolutils/query_user_portfolio.go
-
-Explore related files as you trace the dataflow.
-Write to <session-id>_code_analyzer.md
 ```
 
 **Output:** Creates `<session-id>_code_analyzer.md` with:
@@ -643,9 +634,6 @@ Files:
 @tools/toolcore/caller.go
 @tools/toolcore/pipeline/execution/modes.go
 
-Explore related files as you trace the dataflow.
-Write to <session-id>_code_analyzer.md
-
 # Output: Analysis written to 20250108-164512-A3F7_code_analyzer.md
 # Token count: ~8500
 # Ready for implementation phase.
@@ -691,9 +679,6 @@ Files:
 @tools/toolbe/query_user_portfolio.go
 @tools/toolutils/query_user_portfolio.go
 
-Explore related files as you trace the dataflow.
-Write to <session-id>_code_analyzer.md
-
 # Output: Analysis written to 20250108-171234-B8F2_code_analyzer.md
 # Token count: ~12000
 # Ready for implementation phase.
@@ -733,9 +718,6 @@ Files:
 @tools/toolcore/.workflows/plan/P2-TC-A063.md
 @tools/nonbe/stock_selection.go
 @tools/toolcore/pipeline/execution/tool.go
-
-Explore related files as you trace the dataflow.
-Write to <session-id>_code_analyzer.md
 ```
 
 **Session terminates after analysis.**
@@ -777,9 +759,6 @@ Files:
 @tools/toolcore/pipeline/execution/tool.go
 @tools/toolcore/pipeline/execution/step.go
 @tools/toolcore/pipeline/execution/modes.go
-
-Explore related files as you trace the dataflow.
-Write to <session-id>_code_analyzer.md
 
 # Step 2: Review analysis to understand:
 # - Current dataflow through pipeline
