@@ -180,6 +180,50 @@ Plan: .workflows/plan/{TaskID}.md
 Run: /update-todos {path} --init
 ```
 
+## Handling Confusion
+
+### During Implementation Plan Creation (Step 5)
+
+If any aspect of the analysis is unclear, ambiguous, or has multiple valid approaches:
+
+1. **STOP** and ask clarifying questions using the `AskUserQuestion` tool
+2. **Provide your own recommendation** with rationale for each option
+3. **Wait for user response** before proceeding
+
+**Common scenarios requiring clarification:**
+- Multiple ways to implement a feature
+- Ambiguous error handling requirements
+- Conflicting signals in the analysis
+- Breaking changes that affect other code
+- Performance vs simplicity trade-offs
+
+**Example question format:**
+```
+Question: How should we handle X?
+Options:
+- Option A (Recommended): Do Y because Z
+- Option B: Do Q because R
+```
+
+### During Code Implementation (Step 6)
+
+If issues arise during actual code changes:
+
+1. **STOP** and identify the confusion
+2. **Ask clarifying questions** using `AskUserQuestion` tool
+3. **Provide your own recommendation** based on:
+   - Code consistency with existing patterns
+   - Best practices for the language/framework
+   - Minimal changes principle
+4. **Wait for user response** before making changes
+
+**Common scenarios requiring clarification:**
+- Actual code structure differs from analysis
+- Unexpected dependencies or side effects
+- Missing information in the analysis
+- Conflicts with other files not in scope
+- Need for additional refactoring discovered during implementation
+
 ## Notes
 
 - Keep implementation plan CONCISE - focus on code changes
@@ -189,3 +233,4 @@ Run: /update-todos {path} --init
 - **Requirements Understanding** section is your technical blueprint
 - If `-note` provided, it supplements (not replaces) the analysis
 - Success Criteria from Requirements Understanding should drive testing plan
+- **When in doubt, ask - never guess and proceed**

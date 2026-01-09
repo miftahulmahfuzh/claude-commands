@@ -225,6 +225,7 @@ Execute implementation based on `/analyze` output. Creates task, generates plan,
 - **Concise Plans**: Token-efficient - focuses on code changes, not verbose explanations
 - **User Context Preservation**: Carries forward original request and technical understanding
 - **Type-Aware Tasks**: Creates tasks with proper type classification (Bug/Feature/Update/Refactor)
+- **Interactive Clarification**: Asks clarifying questions with recommendations when confused during plan creation or implementation - never guesses
 
 **Relationship with `/analyze`:**
 ```
@@ -1237,6 +1238,7 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **🎯 Trust the Analysis**: `/implement` uses analysis as ground truth - no redundant work
 - **📝 User Context Preservation**: Original request and technical understanding carried forward
 - **🏷️ Type-Aware Analysis**: Supports bug, feature, update, and refactor analysis types
+- **❓ Interactive Clarification**: `/implement` asks questions with recommendations when confused - never guesses and proceeds
 
 ### Git Commands
 - **🤖 AI-Powered**: Leverages Claude's intelligence to understand your code changes
