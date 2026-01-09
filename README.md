@@ -350,7 +350,8 @@ Maintains a comprehensive, automatically-updated task list for each package base
 - 📦 Maintains task history and archives
 - 🔄 Tracks task lifecycle from identification to completion
 - 🔍 **TaskID Coverage Enforcement**: Ensures ALL existing tasks (active, completed, and archived) have TaskIDs
-- 📋 **Completed Tasks Separation**: Organizes completed tasks in time-based sections (Recently Completed, This Week, This Month)
+- 📋 **Completed Tasks Separation**: Organizes completed tasks in simple list (no time divisions)
+- 📦 **Archive Management**: Maintains Archive section in single-line compressed format
 - 🔄 **Package Code Override**: Change package codes and migrate all TaskIDs automatically
 
 **Prerequisites:**
@@ -396,7 +397,8 @@ Maintains a comprehensive, automatically-updated task list for each package base
 **Output:** Creates/updates `{directory_path}/.workflows/todos.md` with organized structure:
 
 - **Active Tasks**: Only incomplete tasks, organized by priority (P0-P4)
-- **Completed Tasks**: Time-based sections (Recently Completed, This Week, This Month)
+- **Completed Tasks**: Simple list of completed tasks (no time divisions)
+- **Archive**: Single-line compressed format `{TaskID}: {description}`
 - **Quick Stats**: Task counts including completed tasks metrics
 - **Recent Activity**: Detailed log of recent changes and completions
 
@@ -617,7 +619,7 @@ All tasks include a **Difficulty field** (EASY/NORMAL/HARD) that determines exec
 - 🔧 **Difficulty-based execution**: Adapts workflow based on task complexity
 - 🌿 **HARD task branch management**: Automatic branch creation and isolation
 - 📝 Updates all .workflows files and marks task complete
-- ✅ Moves completed tasks to appropriate time-based section in todos.md
+- ✅ Moves completed tasks to Completed Tasks section in todos.md
 - 📊 Updates task statistics and completion metrics
 
 **Perfect for:**
@@ -901,7 +903,8 @@ For a new package or first-time documentation:
 - `analysis_report.md` - Code quality analysis
 - `todos.md` - Task tracking with generated TaskIDs and organized sections:
   - Active Tasks (P0-P4 priorities)
-  - Completed Tasks (time-based organization)
+  - Completed Tasks (simple list)
+  - Archive (single-line compressed format)
   - Quick Stats with completion metrics
 
 ---
@@ -1078,7 +1081,7 @@ Here's a complete example of how the TaskID workflow system works in practice:
 # - Implements the solution with appropriate safety measures
 # - Updates relevant documentation
 # - Marks the task as completed in todos.md
-# - Moves completed tasks to appropriate time-based section
+# - Moves completed tasks to Completed Tasks section
 # - Updates Quick Stats with completion metrics
 # - **For HARD tasks**: Branch ready for review and merge
 
@@ -1133,7 +1136,7 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **Automatic Tracking**: Task completion and documentation updates happen automatically
 - **Cross-Package**: Execute tasks across multiple packages without context switching
 - **Priority-Based**: Focus on P0/P1 tasks first, then work through lower priorities
-- **Clean Organization**: Active Tasks only shows incomplete work, completed tasks organized by time
+- **Clean Organization**: Active Tasks only shows incomplete work, completed tasks in simple list, Archive compressed
 - **Complete Coverage**: TaskID enforcement ensures all tasks are tracked, no missing items
 - **Statistics Tracking**: Real-time metrics on both active and completed tasks
 - **Safe Complex Changes**: Automatic branch creation protects main branch during risky changes
@@ -1183,7 +1186,7 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **🤔 User Confirmation**: Safety checkpoints for high-impact modifications
 - **📊 Statistics Tracking**: Real-time task counts and completion metrics
 - **🔍 Coverage Enforcement**: Ensures all tasks have TaskIDs, preventing lost work
-- **📋 Clean Organization**: Separates active from completed tasks with time-based organization
+- **📋 Clean Organization**: Separates active from completed tasks with simple list and compressed Archive
 - **🛡️ Risk Management**: Different execution strategies based on task difficulty and impact
 - **📝 Knowledge Preservation**: Postmortem documentation captures problem-solving insights and prevention strategies
 - **🔍 Session Analysis**: Automatic detection of TaskIDs and problem context from coding sessions

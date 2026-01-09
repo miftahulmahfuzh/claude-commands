@@ -171,29 +171,42 @@ After TaskID assignment, check for completed tasks organization:
 
 1. **Verify Completed Tasks Section Exists**:
    - If `## Completed Tasks` section doesn't exist, CREATE IT
-   - Use this exact structure:
+   - Use this exact structure (simple list, no time divisions):
      ```markdown
      ## Completed Tasks
 
-     ### Recently Completed
      - [x] **{TaskID}** {Task description}
        - **Completed**: {YYYY-MM-DD HH:MM:SS}
        - **Method**: {brief description}
        - **Files Modified**: {list of files}
        - **Impact**: {summary}
 
-     ### This Week
-
-     ### This Month
+     - [x] **{TaskID}** {Task description}
+       - **Completed**: {YYYY-MM-DD HH:MM:SS}
+       - **Method**: {brief description}
+       - **Files Modified**: {list of files}
      ```
 
 2. **Move ALL Checkmarked Tasks**:
    - Find ALL tasks with `- [x]` format
-   - Move them from Active Tasks to appropriate time section in Completed Tasks
+   - Move them from Active Tasks to Completed Tasks section (simple list, newest first)
    - Add completion details (timestamp, method, files, impact)
    - **Do NOT leave any completed tasks in Active Tasks section**
 
-3. **Update Quick Stats**:
+3. **Respect Archive Section Structure**:
+   - Archive section exists as single-line format: `{TaskID}: {description}`
+   - Example:
+     ```markdown
+     ## Archive
+
+     ### {YYYY-MM}
+     P1-CB-A112: Old task from last month
+     P1-CB-A113: Task from 4 weeks ago
+     ```
+   - **NEVER convert Archive items back to full format with checkboxes**
+   - Archive is read-only - items stay compressed
+
+4. **Update Quick Stats**:
    - Count active vs completed tasks
    - Update all statistics to reflect new organization
 
@@ -477,9 +490,7 @@ Assign priority tags:
 - P3 Low: {count}
 - P4 Backlog: {count}
 - Blocked: {count}
-- Completed Today: {count}
-- Completed This Week: {count}
-- Completed This Month: {count}
+- Completed: {count}
 
 ---
 
@@ -526,20 +537,12 @@ Assign priority tags:
 
 ## Completed Tasks
 
-### Recently Completed
 - [x] **{TaskID}** {Task description}
   - **Completed**: {YYYY-MM-DD HH:MM:SS}
   - **Method**: {brief description of what was done}
   - **Files Modified**: {list of files changed}
   - **Impact**: {summary of impact}
 
-### This Week
-- [x] **{TaskID}** {Task description}
-  - **Completed**: {YYYY-MM-DD HH:MM:SS}
-  - **Method**: {brief description of what was done}
-  - **Files Modified**: {list of files changed}
-
-### This Month
 - [x] **{TaskID}** {Task description}
   - **Completed**: {YYYY-MM-DD HH:MM:SS}
   - **Method**: {brief description of what was done}
@@ -599,11 +602,10 @@ Assign priority tags:
 ## Archive
 
 ### {YYYY-MM}
-
-#### Completed This Month
-- [P0] Fixed crash on nil bowl pointer - commit: abc123f (2025-10-01)
-- [P1] Optimized manager allocation - 40% faster - commit: def456a (2025-10-05)
-- [P2] Cleaned up unused helper functions - commit: ghi789b (2025-10-08)
+P1-CB-A112: Old task from last month
+P1-CB-A113: Task from 4 weeks ago
+P3-CB-A114: Task from 3 weeks ago
+P2-CB-A115: Task from 2 weeks ago
 
 ---
 
@@ -632,7 +634,7 @@ Before adding new tasks:
 
 2. **Check for Completed Tasks Organization**:
    - Verify no `- [x]` tasks remain in Active Tasks section
-   - Ensure all completed tasks are in appropriate Completed Tasks time sections
+   - Ensure all completed tasks are in Completed Tasks section (simple list)
    - Create Completed Tasks section if it doesn't exist
 
 3. **Deduplication**:
@@ -658,28 +660,33 @@ Before adding new tasks:
 
 #### Task Completion Process:
 When completing tasks:
-1. **Move to Completed Tasks**: Move from Active Tasks to appropriate time section in "Completed Tasks"
-   - Completed today → "Recently Completed"
-   - Completed within 7 days → "This Week"
-   - Completed within 30 days → "This Month"
+1. **Move to Completed Tasks**: Move from Active Tasks to Completed Tasks section (simple list, newest first)
 2. **Add Completion Details**: Include completion timestamp, method, files modified, and impact
 3. **Update Quick Stats**: Recalculate active and completed task counts
 
-#### Completed Tasks Maintenance:
-Every week:
-- Move tasks from "This Week" to "This Month" if older than 7 days
-- Move tasks from "Recently Completed" to "This Week" if older than 24 hours
-
-Every month:
-- Move tasks from "This Month" to Archive section if older than 30 days
-- Create monthly archive entries with summary
-
 #### Archive Maintenance:
+Periodically (weekly/monthly):
+- Move completed tasks to Archive section when they accumulate
+- Archive format: Single-line compressed `{TaskID}: {description}`
+- Archive is read-only - items stay compressed, never expanded back
+- **Do NOT add checkboxes, completion details, or metadata to Archive items**
+
+Example Archive structure:
+```markdown
+## Archive
+
+### {YYYY-MM}
+P1-CB-A112: Old task from last month
+P1-CB-A113: Task from 4 weeks ago
+P3-CB-A114: Task from 3 weeks ago
+```
+
+#### Archive Cleanup:
 Every 3 months:
 - Reassess P3/P4 tasks - delete if no longer relevant
 - Review blocked tasks - unblock or delete
 - Update Quick Stats
-- If Archive > 6 months old, create separate archive file
+- If Archive section grows large, create separate archive file
 
 ## Special Handling
 
@@ -766,8 +773,8 @@ Before saving todos.md:
 3. **Completed Tasks Organization Verification (MANDATORY)**:
    - **ZERO completed tasks in Active Tasks section**
    - **ALL `- [x]` tasks must be in Completed Tasks section**
-   - Verify Completed Tasks section exists with proper structure
-   - Check completed tasks are in correct time-based sections
+   - Verify Completed Tasks section exists with proper structure (simple list)
+   - Archive section must remain in single-line compressed format
 
 4. **Standard Validation**:
    - Verify all task checkboxes are properly formatted: `- [ ]` or `- [x]`
@@ -776,6 +783,7 @@ Before saving todos.md:
    - Verify all file references use relative paths from project root
    - Verify all commit hashes are 7 characters
    - Verify no duplicate tasks in Active Tasks section
+   - Verify Archive section uses single-line compressed format (no checkboxes or metadata)
 
 5. **TaskID Format Validation**:
    - **ALL tasks** (active, completed, and archived) have TaskID in format: `P[0-4]-[A-Z]{2,3}-[A-Z0-9]{4}`
@@ -795,7 +803,8 @@ Before saving todos.md:
 - If ANY task lacks TaskID: **STOP** and assign TaskIDs
 - If ANY task lacks Difficulty field: **STOP** and assign proper Difficulty
 - If ANY completed task in Active Tasks: **MOVE** to Completed Tasks section
-- If Completed Tasks section missing: **CREATE** it
+- If Completed Tasks section missing: **CREATE** it (simple list, no time divisions)
+- If Archive section not in single-line format: **FIX** it (keep compressed)
 - If TaskID format wrong: **FIX** it immediately
 - If Difficulty value invalid: **FIX** it immediately (must be EASY, NORMAL, or HARD)
 
@@ -865,6 +874,8 @@ Before saving todos.md:
 - **⚠️ Mix completed and active tasks in the same section**
 - **⚠️ Assume existing tasks already have TaskIDs - ALWAYS verify**
 - **⚠️ Create Completed Tasks section only when needed - ALWAYS verify it exists**
+- **⚠️ Expand Archive items back to full format with checkboxes - Archive is read-only**
+- **⚠️ Add time-based subsections to Completed Tasks (Recently, This Week, This Month)**
 - Add tasks that should be in other packages' todos
 - Speculate about bugs without evidence from code or reports
 
@@ -873,7 +884,9 @@ Before saving todos.md:
 1. **ALWAYS scan entire todos.md for missing TaskIDs** - even if it looks complete
 2. **ALWAYS scan entire todos.md for missing Difficulty fields** - even if it looks complete
 3. **ALWAYS move completed tasks to Completed Tasks section** - no exceptions
-4. **ALWAYS create Completed Tasks section if it doesn't exist**
+4. **ALWAYS create Completed Tasks section if it doesn't exist** (simple list, no time divisions)
 5. **ALWAYS verify ZERO completed tasks remain in Active Tasks section**
-6. **NEVER proceed to processing changes until ALL tasks have TaskIDs**
-7. **NEVER proceed to processing changes until ALL tasks have valid Difficulty fields**
+6. **ALWAYS respect Archive section format** - single-line compressed, never expand
+7. **NEVER add time-based subsections to Completed Tasks** (Recently, This Week, This Month)
+8. **NEVER proceed to processing changes until ALL tasks have TaskIDs**
+9. **NEVER proceed to processing changes until ALL tasks have valid Difficulty fields**
