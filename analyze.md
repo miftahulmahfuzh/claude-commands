@@ -29,9 +29,6 @@ Files:
 @chatbot/processing/.workflows/analysis/citation_for_aggregation_mode.md
 @tools/toolcore/caller.go
 @tools/toolcore/pipeline/execution/modes.go
-
-Explore related files as you trace the dataflow.
-Write to <session-id>_code_analyzer.md
 ```
 
 **What happens:**
@@ -286,11 +283,8 @@ type StructName struct {
 1. `file1.go` - Why it needs to change
 2. `file2.go` - Why it needs to change
 
----
-
 **Analysis complete. No implementation proposed.**
 
----
 ```
 
 ## Focus by Analysis Type
@@ -337,7 +331,7 @@ After writing the analysis file, output ONLY:
 ```bash
 Analysis written to <session-id>_code_analyzer.md
 Token count: ~<estimate>
-Ready for implementation phase.
+Ready for implementation phase
 
 Run:
 /implement -f <session-id>_code_analyzer.md
