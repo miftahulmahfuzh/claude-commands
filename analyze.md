@@ -139,9 +139,7 @@ Create `<session-id>_code_analyzer.md` with the following structure:
 ## User Input
 
 ### Original User Request
-```bash
 <Exact copy of user's prompt after "!analyze <target>">
-```
 
 ### User-Provided Context
 <Preserve any additional context, error messages, notes user provided>
@@ -190,11 +188,9 @@ Create `<session-id>_code_analyzer.md` with the following structure:
 **Trigger:** HTTP POST / Function Call / Event
 
 **Input Schema:**
-```json
 {
   "field": "type"
 }
-```
 
 **Validation:** List checks performed
 
@@ -246,12 +242,10 @@ Create `<session-id>_code_analyzer.md` with the following structure:
 **Location:** `path/to/file.go:123`
 
 **Fields:**
-```go
 type StructName struct {
     Field1 string
     Field2 bool
 }
-```
 
 **Used In:**
 - `function1()` - file.go:456
@@ -297,6 +291,7 @@ type StructName struct {
 **Analysis complete. No implementation proposed.**
 
 ---
+```
 
 ## Focus by Analysis Type
 
@@ -343,4 +338,8 @@ After writing the analysis file, output ONLY:
 Analysis written to <session-id>_code_analyzer.md
 Token count: ~<estimate>
 Ready for implementation phase.
+
+Run:
+/implement -f <session-id>_code_analyzer.md
+on the new Claude Code Session
 ```
