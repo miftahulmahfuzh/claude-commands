@@ -24,6 +24,11 @@ Execute implementation based on `/analyze` output. Creates task, generates plan,
 
 Read the code_analyzer.md file from `-f` parameter. This is your ground truth.
 
+**Extract from new sections:**
+- **User Input**: Original user request, context, error messages, notes
+- **Detailed Requirements Understanding**: Claude's technical interpretation
+- **Analysis Type**: Bug | Feature | Update | Refactor (informs implementation approach)
+
 ### Step 2: Determine Path
 
 **If `-p` provided:**
@@ -53,10 +58,13 @@ Use package code from existing todos.md header. Generate next available TaskID:
 ```markdown
 - [ ] **{TaskID}** {Brief title from analysis}
   - **Difficulty**: {EASY|NORMAL|HARD}
-  - **Context**: {Summary from "For Feature Implementation: Gap Analysis" section}
+  - **Type**: {Bug|Feature|Update|Refactor}
+  - **Context**: {Summary from "Detailed Requirements Understanding" section}
   - **Status**: in_progress
   - **Plan**: `.workflows/plan/{TaskID}.md`
 ```
+
+**Tip**: The "Detailed Requirements Understanding" section provides the best context summary - it's already technical and precise.
 
 ### Step 5: Create Implementation Plan
 
@@ -66,15 +74,25 @@ Create `{path}/.workflows/plan/{TaskID}.md`:
 # Implementation Plan: {TaskID}
 
 **TaskID**: {TaskID}
+**Type**: {Bug|Feature|Update|Refactor}
 **Created**: {YYYY-MM-DD HH:MM:SS}
 **Analysis Source**: {code_analyzer.md filename}
-**User Notes**: {-note content if provided}
+
+---
+
+## User Context
+
+<Copy from "User Input" section - preserves original request>
+
+## Requirements Understanding
+
+<Copy from "Detailed Requirements Understanding" section - technical interpretation>
 
 ---
 
 ## Summary
 
-{One-paragraph summary from analysis}
+{One-paragraph technical summary - reference "Detailed Requirements Understanding"}
 
 ## Scope
 
@@ -167,4 +185,7 @@ Run: /update-todos {path} --init
 - Keep implementation plan CONCISE - focus on code changes
 - Token efficiency matters - avoid verbose explanations in plan
 - Trust the analysis - don't re-analyze what's already documented
-- User notes take precedence over analysis assumptions
+- **User Context** section preserves why this work is being done
+- **Requirements Understanding** section is your technical blueprint
+- If `-note` provided, it supplements (not replaces) the analysis
+- Success Criteria from Requirements Understanding should drive testing plan

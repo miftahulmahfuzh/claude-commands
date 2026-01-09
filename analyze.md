@@ -5,12 +5,17 @@ Perform comprehensive code archaeology and dataflow tracing for bug investigatio
 ## Usage
 
 ```bash
-!analyze <target> [bug|feature]
+!analyze <target> [bug|feature|update|refactor]
 ```
 
 **Arguments:**
 - `<target>`: The component, endpoint, or feature to analyze (e.g., "aggregation_mode", "/chat/submit endpoint")
-- `[bug|feature]`: Analysis type - defaults to both if not specified
+- `[bug|feature|update|refactor]`: Analysis type
+  - `bug`: Bug investigation (errors, wrong behavior)
+  - `feature`: New requirements (new module, architecture, features)
+  - `update`: Feature update (struct changes, API breaking changes)
+  - `refactor`: Refactoring (major architecture changes, minor cleanup like renaming)
+  - defaults to comprehensive analysis if not specified
 
 **Example:**
 ```bash
@@ -18,6 +23,7 @@ Perform comprehensive code archaeology and dataflow tracing for bug investigatio
 
 Context: Citations missing in aggregated responses
 Error: <paste logs here>
+Note: Only happens when mode=parallel
 
 Files:
 @chatbot/processing/.workflows/analysis/citation_for_aggregation_mode.md
@@ -28,6 +34,12 @@ Explore related files as you trace the dataflow.
 Write to <session-id>_code_analyzer.md
 ```
 
+**What happens:**
+1. User input is captured verbatim (Context, Error, Note)
+2. Dataflow analysis traces through the files
+3. Detailed requirements understanding is written after analysis
+4. Complete analysis document generated
+
 ## Your Role: Code Archaeology Tool
 
 You are an objective observer. You trace dataflow and document structure. You do **NOT**:
@@ -37,6 +49,21 @@ You are an objective observer. You trace dataflow and document structure. You do
 - Optimize anything
 
 ## Analysis Process
+
+### Step 0: Capture User Context
+
+**CRITICAL**: Before any code exploration, document the user's input exactly as provided:
+
+**User's Raw Input** (exact text from their prompt):
+```
+<Copy the user's entire prompt after "!analyze <target>" - includes context, errors, notes>
+```
+
+**User-Provided Files** (marked with `@` in their request):
+- file1.go
+- file2.go
+
+This ensures the analysis document preserves the original problem statement.
 
 ### Step 1: Read Explicitly Mentioned Files
 
@@ -81,18 +108,64 @@ For each file you encounter, document:
 - Database schema dependencies
 - External service dependencies
 
-### Step 4: Generate Analysis Document
+### Step 4: Generate Detailed Requirements Understanding
+
+**AFTER completing dataflow analysis**, write your detailed understanding of the requirements/problem:
+
+**Requirements Understanding**:
+- What is the actual issue or requirement? (in your own words)
+- What specific behavior needs to change?
+- What are the success criteria?
+- What edge cases or constraints matter?
+- What assumptions are you making?
+
+This bridges the gap between user's raw input and technical implementation.
+
+### Step 5: Generate Analysis Document
 
 Create `<session-id>_code_analyzer.md` with the following structure:
 
 ```markdown
 # Code Analysis: <Target>
 
-**Type:** [Bug Investigation | Feature Implementation]
+**Type:** [Bug Investigation | Feature Implementation | Feature Update | Refactoring]
 
 **Date:** <timestamp>
 
 **Session ID:** <id>
+
+---
+
+## User Input
+
+### Original User Request
+```
+<Exact copy of user's prompt after "!analyze <target>">
+```
+
+### User-Provided Context
+<Preserve any additional context, error messages, notes user provided>
+
+### User-Provided Files
+- file1.go
+- file2.go
+
+---
+
+## Detailed Requirements Understanding
+
+<After completing dataflow analysis, Claude writes its understanding>
+
+**Problem/Requirement Statement**:
+<Clear, technical description of what needs to be addressed>
+
+**Success Criteria**:
+- What does "fixed" or "implemented" look like?
+
+**Key Considerations**:
+- Edge cases identified
+- Constraints or dependencies
+- Assumptions made
 
 ---
 
@@ -226,21 +299,31 @@ type StructName struct {
 
 ---
 
-## For Bug Investigation
+## Focus by Analysis Type
 
-Focus on:
+### Bug Investigation
 - Where does the bug manifest? (symptoms)
 - What data leads to the bug? (inputs)
 - What transformation produces the bug? (logic)
 - Where should validation catch it? (prevention)
 
-## For Feature Implementation
-
-Focus on:
+### Feature Implementation (New)
 - What needs to change? (gap analysis)
 - What are the touch points? (impact analysis)
 - What dependencies exist? (risk assessment)
 - What testing is needed? (validation strategy)
+
+### Feature Update (Modify Existing)
+- What fields/structs are changing?
+- What functions need signature updates?
+- What callers are affected?
+- What backward compatibility breaks exist?
+
+### Refactoring
+- What is the refactoring scope? (major/minor)
+- What are the rename/consolidation targets?
+- What callers need updating?
+- What tests need updating?
 
 ---
 
