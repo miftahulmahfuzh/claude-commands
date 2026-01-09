@@ -5,7 +5,7 @@ Perform comprehensive code archaeology and dataflow tracing for bug investigatio
 ## Usage
 
 ```bash
-!analyze <target> [bug|feature|update|refactor]
+/analyze <target> [bug|feature|update|refactor]
 ```
 
 **Arguments:**
@@ -19,7 +19,7 @@ Perform comprehensive code archaeology and dataflow tracing for bug investigatio
 
 **Example:**
 ```bash
-!analyze aggregation_mode bug
+/analyze aggregation_mode bug
 
 Context: Citations missing in aggregated responses
 Error: <paste logs here>
@@ -56,7 +56,7 @@ You are an objective observer. You trace dataflow and document structure. You do
 
 **User's Raw Input** (exact text from their prompt):
 ```
-<Copy the user's entire prompt after "!analyze <target>" - includes context, errors, notes>
+<Copy the user's entire prompt after "/analyze <target>" - includes context, errors, notes>
 ```
 
 **User-Provided Files** (marked with `@` in their request):
@@ -139,7 +139,7 @@ Create `<session-id>_code_analyzer.md` with the following structure:
 ## User Input
 
 ### Original User Request
-<Exact copy of user's prompt after "!analyze <target>">
+<Exact copy of user's prompt after "/analyze <target>">
 
 ### User-Provided Context
 <Preserve any additional context, error messages, notes user provided>
