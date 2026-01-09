@@ -349,9 +349,11 @@ Maintains a comprehensive, automatically-updated task list for each package base
 - ⏰ Timestamps all changes with commit references
 - 📦 Maintains task history and archives
 - 🔄 Tracks task lifecycle from identification to completion
-- 🔍 **TaskID Coverage Enforcement**: Ensures ALL existing tasks (active, completed, and archived) have TaskIDs
+- 🔴 **TaskID Uniqueness Enforcement**: EVERY TaskID MUST BE UNIQUE - scans entire file and renames duplicates
+- 🔍 **TaskID Coverage**: Ensures ALL existing tasks (active, completed, and archived) have TaskIDs
 - 📋 **Completed Tasks Separation**: Organizes completed tasks in simple list (no time divisions)
 - 📦 **Archive Management**: Maintains Archive section in single-line compressed format
+- 🗂️ **4-Section Structure**: Enforces exactly 4 sections - deletes any extra sections found
 - 🔄 **Package Code Override**: Change package codes and migrate all TaskIDs automatically
 
 **Prerequisites:**
@@ -400,7 +402,57 @@ Maintains a comprehensive, automatically-updated task list for each package base
 - **Completed Tasks**: Simple list of completed tasks (no time divisions)
 - **Archive**: Single-line compressed format `{TaskID}: {description}`
 - **Quick Stats**: Task counts including completed tasks metrics
-- **Recent Activity**: Detailed log of recent changes and completions
+
+**File Structure (Exactly 4 Sections):**
+```markdown
+# Todos: {package_name}
+**Package Path**: `{directory_path}`
+**Package Code**: {PACKAGE_CODE}
+**Last Updated**: {YYYY-MM-DD HH:MM:SS}
+**Total Active Tasks**: {count}
+
+## Quick Stats
+- P0 Critical: {count}
+- P1 High: {count}
+- P2 Medium: {count}
+- P3 Low: {count}
+- P4 Backlog: {count}
+- Blocked: {count}
+- Completed: {count}
+
+---
+
+## Active Tasks
+### [P0] Critical
+### [P1] High
+### [P2] Medium
+### [P3] Low
+### [P4] Backlog
+### 🚫 Blocked
+
+---
+
+## Completed Tasks
+- [x] **{TaskID}** {Task description}
+  - **Completed**: {YYYY-MM-DD HH:MM:SS}
+  - **Method**: {brief description}
+  - **Files Modified**: {list of files}
+  - **Impact**: {summary}
+
+---
+
+## Archive
+### {YYYY-MM}
+P1-CB-A112: Old task from last month
+P1-CB-A113: Task from 4 weeks ago
+```
+
+**Critical Requirements:**
+- 🔴 **TaskID Uniqueness**: EVERY TaskID in the file MUST BE UNIQUE
+- 🔴 **4-Section Structure**: File MUST contain exactly 4 sections (Header+Quick Stats, Active Tasks, Completed Tasks, Archive)
+- 🔴 **Extra Section Deletion**: Any other sections (e.g., "Recent Activity", "Notes") are DELETED
+- 🔴 **Duplicate Handling**: If duplicate TaskIDs found, ALL duplicates are renamed to unique values
+- 🔴 **Missing TaskIDs**: If task has no TaskID, a new unique TaskID is generated
 
 **Perfect for:**
 - Sprint planning and tracking
@@ -413,20 +465,25 @@ Maintains a comprehensive, automatically-updated task list for each package base
 **Troubleshooting:**
 - If `/update-todos` fails to generate TaskIDs for existing tasks
 - If `/update-todos` doesn't move completed tasks to Completed Tasks section
-- Run `/reorganize-todos <package-dir>` to clean up TaskID coverage and organization
+- If duplicate TaskIDs appear in the file
+- If extra sections exist that should be removed
+- Run `/reorganize-todos <package-dir>` to clean up TaskID coverage, uniqueness, and organization
 
 ---
 
-#### `/reorganize-todos` - TaskID, Organization & Archive Cleanup
+#### `/reorganize-todos` - TaskID Uniqueness, Organization & Archive Cleanup
 
-Cleans up and reorganizes existing todos.md by ensuring complete TaskID coverage, proper task organization, and archive management.
+Cleans up and reorganizes existing todos.md by ensuring TaskID uniqueness, complete TaskID coverage, proper task organization, and archive management.
 
 **What it does:**
+- 🔴 **TaskID Uniqueness Verification**: Scans ENTIRE file and ensures EVERY TaskID is unique
+- 🔴 **Duplicate TaskID Handling**: Renames ALL duplicate TaskIDs to new, unique values
 - 🏷️ **TaskID Coverage**: Ensures EVERY task (active and completed) has a unique TaskID
+- 🗂️ **4-Section Structure Enforcement**: Verifies exactly 4 sections exist, DELETES any extra sections
 - 📋 **Task Organization**: Properly separates active and completed tasks
 - 🔍 **Deep Scan**: Scans ENTIRE Active Tasks section for ANY checkmarked tasks
 - ✅ **Complete Migration**: Moves ALL checkmarked tasks to Completed Tasks section
-- 📦 **80% Archive Rule**: Compresses oldest 80% of completed tasks to Archives section
+- 📦 **80% Archive Rule**: Compresses oldest 80% of completed tasks to Archive section
 - 🗜️ **Single-Line Format**: Archives tasks as `{TaskID}: {description}` for compact display
 - 🧹 **Workflow Files Cleanup**: Removes related plan/analysis/postmortem files for archived tasks
 - 📊 **Stats Update**: Recalculates and updates Quick Stats with completion and archive metrics
@@ -444,20 +501,25 @@ Cleans up and reorganizes existing todos.md by ensuring complete TaskID coverage
 - Complete some tasks before running reorganize-todos
 
 **Perfect for:**
+- 🔴 Fixing duplicate TaskIDs in the file
 - Cleaning up tasks missing TaskIDs
+- Enforcing 4-section structure (deleting extra sections like "Recent Activity", "Notes")
 - Moving completed tasks that accumulated in Active Tasks section
-- Periodic maintenance (weekly/monthly) to archive old tasks
-- Cleaning up workflow files for completed work
+- Periodic maintenance (weekly/monthly) to archive old tasks and clean up workflow files
+- Verifying ALL TaskIDs are unique across the file
 - Pre-task-execution cleanup
 - Keeping todos.md file clean and readable
 
 **Key Features:**
-- **Focused Responsibility**: Handles TaskID generation, organization cleanup, and archive management
+- **🔴 TaskID Uniqueness**: Scans entire file and ensures EVERY TaskID is unique - no exceptions
+- **🔴 Duplicate Resolution**: Renames ALL duplicate TaskIDs to new, unique values automatically
+- **🔴 4-Section Enforcement**: Verifies exactly 4 sections exist - DELETES any extra sections found
+- **Focused Responsibility**: Handles TaskID uniqueness verification, TaskID coverage, organization cleanup, and archive management
 - **No Analysis**: Doesn't analyze code or git changes - just reorganizes existing content
 - **Simple and Reliable**: Clear, predictable behavior every time
 - **Complete Coverage**: Ensures ALL tasks have TaskIDs, no exceptions
 - **Clean Separation**: Guarantees Active Tasks only contains incomplete work
-- **80/20 Rule**: Archives section contains 80% oldest tasks, Completed Tasks shows 20% most recent
+- **80/20 Rule**: Archive section contains 80% oldest tasks, Completed Tasks shows 20% most recent
 - **Automatic Cleanup**: Finds and removes workflow files matching archived TaskIDs
 
 **Archive Behavior:**
@@ -466,15 +528,25 @@ Cleans up and reorganizes existing todos.md by ensuring complete TaskID coverage
 - Compresses archived tasks to single-line format: `{TaskID}: {description}`
 - Keeps most recent 20% of completed tasks visible with full metadata
 
+**Critical Validation:**
+- Scans ENTIRE file to verify NO duplicate TaskIDs exist
+- Verifies EXACTLY 4 sections exist (Header+Quick Stats, Active Tasks, Completed Tasks, Archive)
+- DELETES any extra sections found (e.g., "Recent Activity", "Notes", "Recently Completed", "This Week", "This Month")
+- Ensures Completed Tasks is a simple list with NO time-based subsections
+- Verifies ZERO checkmarked tasks remain in Active Tasks section
+
 **Output Messages:**
 ```
 ✅ Reorganized todos.md successfully
   - {N} tasks received new TaskIDs
+  - {N} duplicate TaskIDs fixed and renamed
   - {N} completed tasks moved to Completed Tasks section
   - {N} tasks archived (80% rule applied)
   - {N} workflow files cleaned up
+  - {N} unnecessary sections removed
   - Active Tasks now contains only {count} active tasks
   - Quick Stats updated with completion and archive metrics
+  - File now contains exactly 4 required sections
 ```
 
 ---
@@ -551,6 +623,10 @@ Execute tasks from any package's todos.md using unique TaskID without needing to
   - **P4**: Backlog tasks, future considerations
 - Package codes are 2-3 letter identifiers (e.g., DB=Database, CB=Chatbot Bowl, CC=Core Commands)
 - 4CharID is a unique alphanumeric identifier within the package
+- 🔴 **CRITICAL: TaskID Uniqueness** - EVERY TaskID in the file MUST BE UNIQUE
+  - Before generating ANY new TaskID, the ENTIRE file is scanned and ALL existing TaskIDs are collected
+  - The new TaskID is verified to NOT exist anywhere in the file
+  - If duplicates are found, ALL duplicates are renamed to new, unique values
 - Package codes can be changed using `/update-todos --package-code=<NEW_CODE>` with automatic TaskID migration
 
 **🔧 Difficulty Classification System:**
@@ -901,11 +977,14 @@ For a new package or first-time documentation:
 **Result:** Complete documentation suite in `chatbot/bowl/.workflows/`:
 - `package_readme.md` - Technical documentation
 - `analysis_report.md` - Code quality analysis
-- `todos.md` - Task tracking with generated TaskIDs and organized sections:
+- `todos.md` - Task tracking with generated TaskIDs and organized structure:
+  - 🔴 **TaskID Uniqueness**: EVERY TaskID is unique - duplicates are automatically renamed
+  - 🔴 **4-Section Structure**: Exactly 4 sections (Header+Quick Stats, Active Tasks, Completed Tasks, Archive)
   - Active Tasks (P0-P4 priorities)
-  - Completed Tasks (simple list)
+  - Completed Tasks (simple list, no time divisions)
   - Archive (single-line compressed format)
   - Quick Stats with completion metrics
+  - Extra sections (e.g., "Recent Activity", "Notes") are automatically deleted
 
 ---
 
@@ -1179,6 +1258,7 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **📋 Context-Aware**: Loads all relevant information for task execution
 - **⚡ Efficient**: No need to manually locate tasks or update multiple files
 - **🆔 TaskID System**: Automatic unique ID generation with priority-based ordering
+- **🔴 TaskID Uniqueness**: EVERY TaskID MUST BE UNIQUE - duplicates are automatically renamed
 - **🔧 Difficulty-Aware**: Adapts execution workflow based on task complexity (EASY/NORMAL/HARD)
 - **🌿 Branch Management**: Automatic branch creation for HARD tasks with isolation
 - **📋 Detailed Planning**: Comprehensive implementation plans for complex changes
@@ -1186,6 +1266,7 @@ Here's a complete example of how the TaskID workflow system works in practice:
 - **🤔 User Confirmation**: Safety checkpoints for high-impact modifications
 - **📊 Statistics Tracking**: Real-time task counts and completion metrics
 - **🔍 Coverage Enforcement**: Ensures all tasks have TaskIDs, preventing lost work
+- **🗂️ 4-Section Structure**: Enforces exactly 4 sections in todos.md - deletes extra sections
 - **📋 Clean Organization**: Separates active from completed tasks with simple list and compressed Archive
 - **🛡️ Risk Management**: Different execution strategies based on task difficulty and impact
 - **📝 Knowledge Preservation**: Postmortem documentation captures problem-solving insights and prevention strategies
@@ -1259,8 +1340,12 @@ The `.workflows/` directory keeps all package-level documentation organized and 
 - Address P0/P1 issues from `analysis_report.md` immediately
 - Let `/update-todos` automatically handle completed tasks organization
 - Active Tasks section will only show incomplete work, completed tasks are moved automatically
-- Run `/reorganize-todos` periodically (weekly/monthly) to archive old tasks and clean up workflow files
-- Archives section keeps todos.md clean with 80/20 split - only most recent 20% visible
+- Run `/reorganize-todos` periodically (weekly/monthly) to:
+  - Fix duplicate TaskIDs
+  - Enforce 4-section structure (delete extra sections)
+  - Archive old tasks (80% rule)
+  - Clean up workflow files
+- Archive section keeps todos.md clean with 80/20 split - only most recent 20% visible
 
 ### For Difficulty Field Management
 - **EASY Tasks**: Quick fixes, documentation updates, simple validation

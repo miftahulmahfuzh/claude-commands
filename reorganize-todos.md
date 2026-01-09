@@ -37,7 +37,18 @@ fi
    - `core/cache` → `CC`
    - Use last part of path and create 2-3 letter code
 
-### Step 3: Scan ALL Tasks for Missing TaskIDs
+### Step 3: Scan ALL Tasks for Missing TaskIDs and Uniqueness
+
+#### 🔴 CRITICAL: TaskID Uniqueness Requirement
+
+**EVERY TaskID in the todos.md file MUST BE UNIQUE.**
+
+1. **Before generating ANY new TaskID**: You MUST scan the ENTIRE todos.md file and collect ALL existing TaskIDs
+2. **Verify uniqueness**: The new TaskID you generate MUST NOT exist anywhere in the file
+3. **If duplicate found**: You MUST rename ALL duplicate TaskIDs to new, unique values
+4. **If task has no TaskID**: You MUST generate a new, unique TaskID for that task
+
+**Failure to ensure TaskID uniqueness is a critical error.**
 
 #### 3.1 Find Tasks Without TaskIDs
 Search for patterns:
@@ -51,26 +62,51 @@ Search for patterns:
 
 #### 3.2 Assign TaskIDs to Missing Tasks
 For each task without TaskID:
-1. **Analyze task content** to determine priority:
+1. **Collect ALL existing TaskIDs** from entire file (Active Tasks, Completed Tasks, Archive)
+2. **Analyze task content** to determine priority:
    - Critical issues, security, crashes → P0
    - High priority bugs, important features → P1
    - Medium tasks, documentation → P2
    - Low priority improvements → P3
    - Backlog/future items → P4
 
-2. **Generate next available 4CharID**:
+3. **Generate next available 4CharID**:
    - Get existing TaskIDs: extract all current 4CharIDs
    - Find next in sequence: A000, A001, ..., A999, B000, etc.
 
-3. **Create TaskID**: `{Priority}-{PackageCode}-{4CharID}`
+4. **CRITICAL: Verify TaskID uniqueness**:
+   - Check if generated TaskID already exists in collected TaskIDs
+   - If it exists, generate next available ID until you find a unique one
+   - **Do NOT use any TaskID that already exists in the file**
 
-4. **Update task format**:
+5. **Create TaskID**: `{Priority}-{PackageCode}-{4CharID}`
+
+6. **Update task format**:
    ```markdown
    # Before: - [ ] Add validation for empty input
    # After:  - [ ] **P2-DB-A123** Add validation for empty input
    ```
 
+#### 3.3 Detect and Fix Duplicate TaskIDs
+After collecting all TaskIDs:
+1. Check if ANY TaskID appears more than once
+2. If duplicates found, rename EACH duplicate to a new, unique TaskID
+3. Generate new unique TaskIDs using next available sequence
+4. Update all references to use the new TaskIDs
+5. **Do NOT proceed until all TaskIDs are unique**
+
 ### Step 4: Create/Verify Completed Tasks Section
+
+#### 🔴 CRITICAL: todos.md File Structure - Exactly 4 Sections
+
+**The todos.md file MUST contain exactly these 4 sections:**
+
+1. **Header with Quick Stats** (metadata and statistics)
+2. **Active Tasks** (with P0-P4 subsections)
+3. **Completed Tasks** (simple list)
+4. **Archive** (single-line compressed format)
+
+**IF the file contains ANY other sections (e.g., "Recent Activity", "Notes", "Recently Completed", "This Week", "This Month", etc.), you MUST DELETE those sections entirely.**
 
 #### 4.1 Check if Completed Tasks Section Exists
 Look for:
@@ -82,17 +118,14 @@ Look for:
 ```markdown
 ## Completed Tasks
 
-### Recently Completed
 - [x] **{TaskID}** {Task description}
   - **Completed**: {YYYY-MM-DD HH:MM:SS}
   - **Method**: {brief description of what was done}
   - **Files Modified**: {list of files changed}
   - **Impact**: {summary of impact}
-
-### This Week
-
-### This Month
 ```
+
+**IMPORTANT**: Completed Tasks is a SIMPLE LIST with NO time-based subsections (no "Recently Completed", "This Week", "This Month").
 
 #### 4.3 Move ALL Completed Tasks from Active Tasks Section
 1. **Find ALL completed tasks** (tasks with `- [x]`) **anywhere in the file**
@@ -101,11 +134,9 @@ Look for:
    - NO checkmarked task should remain in Active Tasks section
    - MOVE ALL checkmarked tasks without exception
 
-3. **Move ALL found completed tasks** from Active Tasks to appropriate time section:
-   - Completed today → "Recently Completed"
-   - Completed within 7 days → "This Week"
-   - Completed within 30 days → "This Month"
-   - Older than 30 days → Archive section
+3. **Move ALL found completed tasks** from Active Tasks to Completed Tasks section:
+   - Add to the simple list in Completed Tasks section (newest first)
+   - Older than 30 days → Archive section (see Step 5)
 
 4. **Add completion details**:
    - **Completed**: Current timestamp
@@ -118,19 +149,21 @@ Look for:
 ### Step 5: Compress and Archive Old Completed Tasks
 
 #### 5.1 Calculate Archive Target (80% Rule)
-- Count total completed tasks across all time sections
+- Count total completed tasks in Completed Tasks section
 - Calculate 80% threshold: `archive_count = total_completed * 0.8`
 - Keep the most recent 20% visible, archive the oldest 80%
 
 #### 5.2 Identify Tasks to Archive
 - Sort completed tasks by completion date (oldest first)
 - Select the oldest 80% for archiving
-- Keep the most recent 20% in their current time sections
+- Keep the most recent 20% in Completed Tasks section
 
-#### 5.3 Move Tasks to Archives Section
-1. **Create Archives section if missing** (at the end, after "This Month"):
+#### 5.3 Move Tasks to Archive Section
+1. **Create Archive section if missing** (at the end of file):
 ```markdown
-### Archives
+## Archive
+
+### {YYYY-MM}
 <!-- Compressed format: one line per task -->
 ```
 
@@ -143,7 +176,7 @@ Look for:
   - **Files Modified**: src/validate.go
   - **Impact**: Improved error handling
 
-# After (in Archives):
+# After (in Archive):
 P2-DB-A123: Add validation for empty input
 ```
 
@@ -165,11 +198,12 @@ P2-DB-A123: Add validation for empty input
 find . -type d -name ".workflows" -exec find {} -name "*{task-id}*.md" \; 2>/dev/null
 ```
 
-#### 5.4 Update Archives Section Format
+#### 5.4 Update Archive Section Format
 - **Single-line format only**: `{TaskID}: {task description}`
 - **Sort by TaskID** for easy reference
 - **No completion metadata** (date, method, files, impact)
 - **No checkboxes** (tasks are completed and archived)
+- Archive section is read-only - items stay compressed, never expanded back
 
 ### Step 6: Update Quick Stats
 Recalculate and update:
@@ -181,30 +215,41 @@ Recalculate and update:
 
 ### Step 7: Validation
 
-#### 7.1 TaskID Coverage Validation
+#### 7.1 TaskID Uniqueness Validation (CRITICAL)
+- **Scan ENTIRE file** and collect ALL TaskIDs
+- **Verify NO duplicate TaskIDs exist** - every TaskID must be unique
+- If duplicates found, STOP and rename all duplicates to unique TaskIDs
+- **Do NOT proceed until ALL TaskIDs are unique**
+
+#### 7.2 TaskID Coverage Validation
 - **EVERY task** must have TaskID format: `P[0-4]-[A-Z]{2,3}-[A-Z0-9]{4}`
 - **NO tasks** should have plain text descriptions without TaskID
 - **ALL TaskIDs** must be unique
 
-#### 7.2 Organization Validation
+#### 7.3 File Structure Validation (CRITICAL)
+- **Verify EXACTLY 4 sections exist**: Header+Quick Stats, Active Tasks, Completed Tasks, Archive
+- **If any other sections exist** (e.g., "Recent Activity", "Notes", "Recently Completed", "This Week", "This Month", "Archives"), DELETE them entirely
+- The file must contain ONLY the 4 required sections
+
+#### 7.4 Organization Validation
 - **ZERO completed tasks** in Active Tasks section - **MUST VERIFY NO CHECKMARKED TASKS REMAIN**
 - **ALL completed tasks** in Completed Tasks section - no orphaned completed tasks
-- Proper time-based organization
+- Completed Tasks section is a simple list with NO time-based subsections
 - **CRITICAL**: Active Tasks section must contain ONLY `- [ ]` (unchecked) tasks
 
-#### 7.3 Archive Validation
-- **Archives section exists** with single-line format only
+#### 7.5 Archive Validation
+- **Archive section exists** with single-line format only
 - **Approximately 80%** of completed tasks are archived
 - **Approximately 20%** most recent tasks remain visible
 - **All archived tasks** have compressed format: `{TaskID}: {description}`
-- **No checkboxes** in Archives section
+- **No checkboxes** in Archive section
 
-#### 7.4 Workflow Files Cleanup Validation
+#### 7.6 Workflow Files Cleanup Validation
 - Verify workflow files for archived tasks are removed
 - Check `.workflows/` directories for orphaned files
 - Confirm no broken references remain
 
-#### 7.5 Format Validation
+#### 7.7 Format Validation
 - Checkboxes properly formatted: `- [ ]` or `- [x]`
 - TaskIDs in bold format: `**{TaskID}**`
 - No duplicate tasks
@@ -215,19 +260,24 @@ Recalculate and update:
 ```
 ✅ Reorganized todos.md successfully
   - {N} tasks received new TaskIDs
+  - {N} duplicate TaskIDs fixed and renamed
   - {N} completed tasks moved to Completed Tasks section
   - {N} tasks archived (80% rule applied)
   - {N} workflow files cleaned up
+  - {N} unnecessary sections removed
   - Active Tasks now contains only {count} active tasks
   - Quick Stats updated with completion and archive metrics
+  - File now contains exactly 4 required sections
 ```
 
 ### Warning Messages:
 ```
 ⚠️ Warning: Found {N} tasks without TaskIDs - assigned automatically
+⚠️ Warning: Found {N} duplicate TaskIDs - renamed all to unique TaskIDs
 ⚠️ Warning: Created Completed Tasks section - {N} tasks moved
 ⚠️ Warning: Found {N} completed tasks in Active Tasks section - moved
 ⚠️ Warning: Archived {N} old tasks (80% rule) - {N} workflow files removed
+⚠️ Warning: Removed {N} unnecessary sections to comply with 4-section structure
 ⚠️ Warning: Some workflow files not found for archived tasks
 ```
 
@@ -267,7 +317,6 @@ Recalculate and update:
 - [ ] **P2-CB-A124** Update documentation
 
 ## Completed Tasks
-### Recently Completed
 - [x] **P2-CB-A125** Add error handling
   - **Completed**: 2025-01-14 19:00:00
   - **Method**: Task reorganization
@@ -288,14 +337,12 @@ Recalculate and update:
 - [ ] **P1-CB-A123** Fix critical bug
 
 ## Completed Tasks
-### Recently Completed
 - [x] **P2-CB-A124** Update docs
   - **Completed**: 2025-01-14 19:00:00
   - **Method**: Task reorganization
   - **Files Modified**: todos.md
   - **Impact**: Added TaskID and proper organization
 
-### This Week
 - [x] **P0-CB-A125** Fix crash
   - **Completed**: 2025-01-11 14:30:00
   - **Method**: Task reorganization
@@ -305,16 +352,13 @@ Recalculate and update:
 
 ### When there are many completed tasks (80% archiving):
 ```bash
-# Input todos.md has 10 completed tasks across time sections:
+# Input todos.md has 10 completed tasks:
 ## Completed Tasks
-### Recently Completed
 - [x] **P2-CB-A120** Recent task 1
 - [x] **P1-CB-A119** Recent task 2
-### This Week
 - [x] **P2-CB-A118** Task from 3 days ago
 - [x] **P3-CB-A117** Task from 5 days ago
 - [x] **P1-CB-A116** Task from 6 days ago
-### This Month
 - [x] **P2-CB-A115** Task from 2 weeks ago
 - [x] **P3-CB-A114** Task from 3 weeks ago
 - [x] **P1-CB-A113** Task from 4 weeks ago
@@ -322,7 +366,6 @@ Recalculate and update:
 
 # Output todos.md (80% = 8 tasks archived, 20% = 2 tasks visible):
 ## Completed Tasks
-### Recently Completed
 - [x] **P2-CB-A120** Recent task 1
   - **Completed**: 2025-01-14 19:00:00
   - **Method**: ...
@@ -330,7 +373,9 @@ Recalculate and update:
   - **Completed**: 2025-01-14 18:00:00
   - **Method**: ...
 
-### Archives
+## Archive
+
+### 2025-01
 P1-CB-A112: Old task from last month
 P1-CB-A113: Task from 4 weeks ago
 P3-CB-A114: Task from 3 weeks ago
@@ -350,7 +395,9 @@ P2-CB-A118: Task from 3 days ago
 ### When to Use:
 - After running `/update-todos --init` to clean up initial tasks
 - When you notice tasks without TaskIDs
+- When you notice duplicate TaskIDs in the file
 - When completed tasks accumulate in Active Tasks section
+- When file has extra sections that should be removed
 - Before major task management operations
 - Periodic maintenance (weekly/monthly) to archive old tasks and clean up workflow files
 
@@ -361,8 +408,10 @@ P2-CB-A118: Task from 3 days ago
 
 ### After Running:
 - Verify Active Tasks only contains incomplete work
-- Check Completed Tasks section for proper organization (20% most recent visible)
-- Review Archives section for compressed old tasks
+- Verify ALL TaskIDs are unique
+- Check Completed Tasks section for proper organization (simple list, 20% most recent visible)
+- Review Archive section for compressed old tasks
+- Confirm file has exactly 4 sections (no extra sections)
 - Confirm workflow files for archived tasks are cleaned up
 - Use `/do {TaskID}` to execute tasks with proper TaskIDs
 
@@ -398,14 +447,21 @@ P2-CB-A118: Task from 3 days ago
 ## Design Philosophy
 
 ### Focused Responsibility:
-- **Single Purpose**: Handles TaskID coverage, organization cleanup, and archive management
+- **Single Purpose**: Handles TaskID uniqueness verification, TaskID coverage, organization cleanup, and archive management
 - **No Analysis**: Doesn't analyze code or git changes
 - **No Content Generation**: Only reorganizes and compresses existing content
 - **Simple and Reliable**: Clear, predictable behavior with 80/20 rule for archiving
+- **Strict Structure**: Enforces exactly 4 sections in todos.md file
+
+### Critical Requirements:
+1. **TaskID Uniqueness**: Every TaskID in the file must be unique - duplicates are renamed
+2. **TaskID Coverage**: Every task must have a TaskID - missing TaskIDs are generated
+3. **4-Section Structure**: File must contain exactly 4 sections - extra sections are deleted
+4. **Organization**: Completed tasks in Completed Tasks section only, no time-based subsections
 
 ### Complementary to update-todos:
 - `update-todos` → Content analysis and new task generation
-- `reorganize-todos` → TaskID coverage, organization cleanup, and archive management
+- `reorganize-todos` → TaskID uniqueness verification, coverage, organization cleanup, and archive management
 - `do` → Task execution using TaskIDs
 
 This separation ensures each command has a clear, focused responsibility and reduces complexity.

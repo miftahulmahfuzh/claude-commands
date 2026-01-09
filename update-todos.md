@@ -91,21 +91,37 @@ For each package, generate a unique 2-3 letter code:
 - If conflict exists across packages, use longer code or add number suffix
 
 ### Step 1.2: TaskID Generation System
+
+#### 🔴 CRITICAL: TaskID Uniqueness Requirement
+
+**EVERY TaskID in the todos.md file MUST BE UNIQUE.**
+
+1. **Before generating ANY new TaskID**: You MUST scan the ENTIRE todos.md file and collect ALL existing TaskIDs
+2. **Verify uniqueness**: The new TaskID you generate MUST NOT exist anywhere in the file
+3. **If duplicate found**: You MUST rename ALL duplicate TaskIDs to new, unique values
+4. **If task has no TaskID**: You MUST generate a new, unique TaskID for that task
+
+**Failure to ensure TaskID uniqueness is a critical error.**
+
+#### TaskID Format
 Format: `Priority-PackageCode-4CharID`
 
 **Generation Logic:**
-1. Get all existing TaskIDs in current todos.md
-2. Extract used 4CharIDs for this package
+1. Scan ENTIRE todos.md file and collect ALL existing TaskIDs (Active Tasks, Completed Tasks, Archive sections)
+2. Extract all used 4CharIDs for this package
 3. Generate next available 4CharID in sequence:
    - Start with `A000`, `A001`, ..., `A999`
    - Then `B000`, `B001`, ..., `B999`
    - Continue through `Z999`
-4. Combine: `[Priority]-[PackageCode]-[4CharID]`
+4. **CRITICAL**: Verify the generated TaskID does NOT exist in the collected TaskIDs
+5. If it exists, increment to the next available ID until you find a unique one
+6. Combine: `[Priority]-[PackageCode]-[4CharID]`
 
 **Example:**
 - Package `db` has existing tasks: `P1-DB-A236`, `P0-DB-A237`
-- Next task with P1 priority → `P1-DB-A238`
-- Next task with P0 priority → `P0-DB-A238`
+- Scan entire file, find these are the only TaskIDs
+- Next task with P1 priority → Check if `P1-DB-A238` exists → If not, use it
+- Next task with P0 priority → Check if `P0-DB-A238` exists → If not, use it
 
 ### Step 2: Package Code Override Process (When --package-code provided)
 
@@ -151,23 +167,34 @@ Read in order:
 
 ### Step 4: Critical Pre-processing - Ensure Complete TaskID Coverage and Organization
 
-#### ⚠️ CRITICAL: Scan EVERY Task in todos.md for TaskIDs
-BEFORE processing any changes, perform comprehensive scan of the ENTIRE todos.md file:
+#### ⚠️ CRITICAL: Scan EVERY Task in todos.md for TaskIDs and Uniqueness
 
-1. **Check ALL Sections**: Active Tasks, Recent Activity, Archive, and ANY Completed Tasks section
-2. **Look for ANY tasks without TaskIDs**:
+**BEFORE processing ANY changes, perform comprehensive scan of the ENTIRE todos.md file:**
+
+1. **Check ALL Sections**: Active Tasks, Completed Tasks, Archive sections
+2. **Collect ALL existing TaskIDs** into a set for uniqueness verification
+3. **Look for ANY tasks without TaskIDs**:
    - Active tasks: `- [ ] {description}` (missing **{TaskID}**)
    - Completed tasks: `- [x] {description}` (missing **{TaskID}**)
    - Plain text descriptions without TaskID prefixes
-3. **Assign TaskIDs to ALL missing tasks** using the TaskID generation system in Step 1.2
-4. **NEVER skip this step** - even if todos.md looks complete, scan it thoroughly
-5. **Priority-based TaskID assignment**:
+4. **Assign TaskIDs to ALL missing tasks** using the TaskID generation system in Step 1.2
+5. **NEVER skip this step** - even if todos.md looks complete, scan it thoroughly
+6. **Priority-based TaskID assignment**:
    - Analyze task content to determine appropriate priority (P0-P4)
    - Generate TaskID: `{Priority}-{PackageCode}-{4CharID}`
+   - **CRITICAL**: Verify generated TaskID is unique against collected TaskIDs
+   - **If duplicate found**: Generate a new, unique TaskID
    - Update ALL occurrences of the task description with the new TaskID
 
+7. **Detect and Fix Duplicate TaskIDs**:
+   - After collecting all TaskIDs, check for duplicates
+   - If ANY TaskID appears more than once, you MUST rename each duplicate
+   - Generate new unique TaskIDs for all duplicates using next available sequence
+   - Update all references to use the new TaskIDs
+
 #### ⚠️ CRITICAL: Handle Completed Tasks Organization
-After TaskID assignment, check for completed tasks organization:
+
+After TaskID assignment and duplicate detection, check for completed tasks organization:
 
 1. **Verify Completed Tasks Section Exists**:
    - If `## Completed Tasks` section doesn't exist, CREATE IT
@@ -473,6 +500,17 @@ Assign priority tags:
 
 ### Step 7: Generate/Update todos.md
 
+#### 🔴 CRITICAL: todos.md File Structure - Exactly 4 Sections
+
+**The todos.md file MUST contain exactly these 4 sections:**
+
+1. **Header with Quick Stats** (metadata and statistics)
+2. **Active Tasks** (with P0-P4 subsections)
+3. **Completed Tasks** (simple list)
+4. **Archive** (single-line compressed format)
+
+**IF the file contains ANY other sections (e.g., "Recent Activity", "Notes", etc.), you MUST DELETE those sections entirely.**
+
 #### Format Structure:
 
 ```markdown
@@ -550,55 +588,6 @@ Assign priority tags:
 
 ---
 
-## Recent Activity
-
-### [{YYYY-MM-DD HH:MM}] - Commit: {short_hash} (or "Session Update")
-
-#### Completed ✓
-- [x] **P1-DB-A236** Fixed race condition in Manager.Start() - added mutex protection
-  - **Files**: manager.go:45-67
-  - **Commit**: abc123f
-  - **Impact**: Eliminated crash under high concurrency
-
-- [x] **P2-DB-A237** Refactored bowl creation logic into separate function
-  - **Files**: bowl.go:120-145
-  - **Why**: Reduced complexity from 15→8, improved readability
-
-#### Added 📝
-- [ ] **P1-DB-A238** Implement graceful shutdown for background workers
-  - **Reason**: New goroutines added in abc123f need cleanup
-  - **Files**: manager.go:89
-  - **Status**: active
-
-- [ ] **P2-DB-A239** Document new WithTimeout option in package_readme.md
-  - **Reason**: New public API added but not documented
-  - **Status**: active
-
-#### Identified 🔍
-- [ ] **P1-DB-A240** Potential memory leak in bowl recycling
-  - **Location**: bowl.go:234
-  - **Evidence**: TODO comment added during debugging
-  - **Next**: Profile memory usage under load
-  - **Status**: active
-
-- [ ] **P2-DB-A241** Duplicate error handling in 3 functions
-  - **Locations**: manager.go:156, manager.go:298, bowl.go:67
-  - **Suggestion**: Extract common error wrapper
-  - **Status**: active
-
-#### Ongoing 🔄
-- [ ] **P1-DB-A242** Multi-stage bowl processing pipeline
-  - **Status**: 2 of 4 stages implemented
-  - **Commits**: abc123f, def456a
-  - **Next**: Implement validation stage
-  - **Status**: in_progress
-
----
-
-{Previous activity sections...}
-
----
-
 ## Archive
 
 ### {YYYY-MM}
@@ -606,55 +595,63 @@ P1-CB-A112: Old task from last month
 P1-CB-A113: Task from 4 weeks ago
 P3-CB-A114: Task from 3 weeks ago
 P2-CB-A115: Task from 2 weeks ago
-
----
-
-## Notes
-
-### Documentation Status
-- package_readme.md: ✓ Up to date (2025-10-09)
-- analysis_report.md: ✓ Generated (2025-10-08)
-- unittest_guide.md: ✓ Exists
-
-### Known Issues
-{Long-standing known issues that aren't tasks yet}
-
-### Future Considerations
-{Ideas for major refactoring or features requiring design}
 ```
+
+#### Section Deletion Rule:
+- If you find ANY sections other than the 4 listed above (e.g., "Recent Activity", "Notes", "Documentation Status", etc.)
+- **DELETE those sections entirely** - do not preserve their content
+- The todos.md file must be clean and contain ONLY the 4 required sections
 
 ### Step 8: Task Deduplication and TaskID Management
 
-Before adding new tasks:
-1. **MANDATORY: Comprehensive TaskID Check**:
-   - Scan EVERY section: Active Tasks, Recent Activity, Archive, and Completed Tasks sections
-   - Look for ANY tasks without TaskID prefixes in format: `- [ ] **{TaskID}**` or `- [x] **{TaskID}**`
-   - Assign TaskIDs to ALL missing tasks using current package code and next available sequence
+#### 🔴 CRITICAL: TaskID Uniqueness and Duplication Handling
+
+**Before adding ANY new tasks, you MUST perform these checks:**
+
+1. **MANDATORY: Collect ALL Existing TaskIDs**:
+   - Scan EVERY section: Active Tasks, Completed Tasks, Archive
+   - Build a complete set of all TaskIDs currently in the file
    - **This is NOT optional - ALWAYS perform this check**
 
-2. **Check for Completed Tasks Organization**:
+2. **MANDATORY: Check for Duplicate TaskIDs**:
+   - After collecting all TaskIDs, check if ANY TaskID appears more than once
+   - **If duplicates found**: You MUST rename EACH duplicate to a new, unique TaskID
+   - Generate new unique TaskIDs using next available sequence
+   - Update ALL references to use the new TaskIDs
+   - **Do NOT proceed until all TaskIDs are unique**
+
+3. **MANDATORY: Check for Tasks Without TaskIDs**:
+   - Scan EVERY section for tasks missing TaskID prefixes
+   - Look for patterns: `- [ ] {description}` or `- [x] {description}`
+   - Assign TaskIDs to ALL missing tasks
+   - **CRITICAL**: Verify each new TaskID is unique against the collected set
+   - If a generated TaskID already exists, generate a new one
+
+4. **Check for Completed Tasks Organization**:
    - Verify no `- [x]` tasks remain in Active Tasks section
    - Ensure all completed tasks are in Completed Tasks section (simple list)
    - Create Completed Tasks section if it doesn't exist
 
-3. **Deduplication**:
+5. **Deduplication**:
    - Check if identical task exists in Active Tasks
    - Check if similar task exists (>80% text similarity)
    - If duplicate: merge contexts and update priority, keep existing TaskID
    - If similar: link them with "Related to: {TaskID}"
 
-### TaskID Assignment Rules:
+#### TaskID Assignment Rules:
 1. **Existing tasks without TaskIDs**: Assign TaskIDs using current package code and appropriate priority based on content
-2. **New tasks**: Always generate new TaskID using priority + package code + next sequence
-3. **Priority changes**: Keep same TaskID, update priority prefix
-4. **Merged tasks**: Keep TaskID of higher priority task
-5. **Split tasks**: Generate new TaskIDs for split tasks, mark original as completed
+2. **New tasks**: ALWAYS verify the generated TaskID does NOT exist in the file
+3. **Duplicate TaskIDs**: Rename ALL duplicates to new, unique TaskIDs
+4. **Priority changes**: Keep same TaskID, update priority prefix
+5. **Merged tasks**: Keep TaskID of higher priority task
+6. **Split tasks**: Generate new TaskIDs for split tasks, mark original as completed
 
-### TaskID Tracking:
-- Maintain index of all TaskIDs in project for quick lookup
+#### TaskID Tracking:
+- Maintain index of all TaskIDs in file for uniqueness verification
 - When searching for tasks: search by TaskID first, then by description
 - When referencing tasks in other commands: always use TaskID format
 - Ensure complete TaskID coverage across all task sections
+- **NEVER allow duplicate TaskIDs to exist in the file**
 
 ### Step 9: Task Completion and Archive Management
 
@@ -758,25 +755,36 @@ Before saving todos.md:
 
 ### ⚠️ CRITICAL VALIDATION CHECKS
 
-1. **TaskID Coverage Verification (MANDATORY)**:
-   - **Scan EVERY section**: Active Tasks, Completed Tasks, Recent Activity, Archive
+1. **TaskID Uniqueness Verification (MANDATORY)**:
+   - **Scan ENTIRE file** and collect ALL TaskIDs
+   - **Verify NO duplicate TaskIDs exist** - every TaskID must be unique
+   - If duplicates found, STOP and rename all duplicates to unique TaskIDs
+   - **Do NOT proceed until ALL TaskIDs are unique**
+
+2. **TaskID Coverage Verification (MANDATORY)**:
+   - **Scan EVERY section**: Active Tasks, Completed Tasks, Archive
    - **Verify NO task exists without TaskID** - look for patterns like `- [ ] {text}` or `- [x] {text}`
    - **ALL tasks must have format**: `- [ ] **{TaskID}** {description}` or `- [x] **{TaskID}** {description}`
    - If any task lacks TaskID, STOP and assign TaskIDs before proceeding
 
-2. **Difficulty Field Coverage Verification (MANDATORY)**:
-   - **Scan EVERY section**: Active Tasks, Completed Tasks, Recent Activity, Archive, Blocked
+3. **File Structure Verification (MANDATORY)**:
+   - **Verify EXACTLY 4 sections exist**: Header+Quick Stats, Active Tasks, Completed Tasks, Archive
+   - **If any other sections exist** (e.g., "Recent Activity", "Notes"), DELETE them entirely
+   - The file must contain ONLY the 4 required sections
+
+4. **Difficulty Field Coverage Verification (MANDATORY)**:
+   - **Scan EVERY section**: Active Tasks, Completed Tasks, Archive, Blocked
    - **Verify NO task exists without Difficulty field** - look for tasks missing `- **Difficulty**: {EASY|NORMAL|HARD}`
    - **ALL tasks must have a valid Difficulty value**: EASY, NORMAL, or HARD
    - If any task lacks Difficulty field or has invalid value, STOP and assign proper Difficulty
 
-3. **Completed Tasks Organization Verification (MANDATORY)**:
+5. **Completed Tasks Organization Verification (MANDATORY)**:
    - **ZERO completed tasks in Active Tasks section**
    - **ALL `- [x]` tasks must be in Completed Tasks section**
    - Verify Completed Tasks section exists with proper structure (simple list)
    - Archive section must remain in single-line compressed format
 
-4. **Standard Validation**:
+6. **Standard Validation**:
    - Verify all task checkboxes are properly formatted: `- [ ]` or `- [x]`
    - Verify all P0 tasks have context explaining criticality
    - Verify Quick Stats match actual task counts (including completed tasks)
@@ -785,14 +793,14 @@ Before saving todos.md:
    - Verify no duplicate tasks in Active Tasks section
    - Verify Archive section uses single-line compressed format (no checkboxes or metadata)
 
-5. **TaskID Format Validation**:
+7. **TaskID Format Validation**:
    - **ALL tasks** (active, completed, and archived) have TaskID in format: `P[0-4]-[A-Z]{2,3}-[A-Z0-9]{4}`
-   - All TaskIDs in Active Tasks are unique
+   - All TaskIDs in the file are unique
    - TaskID priority prefix matches task section priority
    - TaskID package code matches package code in header
    - No TaskID conflicts with archived tasks
 
-6. **Difficulty Field Validation**:
+8. **Difficulty Field Validation**:
    - **ALL tasks** (active, completed, and archived) have Difficulty field in format: `- **Difficulty**: {EASY|NORMAL|HARD}`
    - Difficulty values are exactly one of: EASY, NORMAL, HARD (case-sensitive)
    - Difficulty assignment aligns with task complexity and impact assessment
@@ -800,10 +808,12 @@ Before saving todos.md:
 
 ### ⚠️ VALIDATION ERRORS TO FIX IMMEDIATELY
 
+- If ANY duplicate TaskIDs found: **STOP** and rename all duplicates to unique TaskIDs
 - If ANY task lacks TaskID: **STOP** and assign TaskIDs
 - If ANY task lacks Difficulty field: **STOP** and assign proper Difficulty
 - If ANY completed task in Active Tasks: **MOVE** to Completed Tasks section
 - If Completed Tasks section missing: **CREATE** it (simple list, no time divisions)
+- If file has sections other than the 4 required: **DELETE** those sections
 - If Archive section not in single-line format: **FIX** it (keep compressed)
 - If TaskID format wrong: **FIX** it immediately
 - If Difficulty value invalid: **FIX** it immediately (must be EASY, NORMAL, or HARD)
@@ -881,12 +891,14 @@ Before saving todos.md:
 
 ## ⚠️ MANDATORY REQUIREMENTS - NEVER SKIP
 
-1. **ALWAYS scan entire todos.md for missing TaskIDs** - even if it looks complete
-2. **ALWAYS scan entire todos.md for missing Difficulty fields** - even if it looks complete
-3. **ALWAYS move completed tasks to Completed Tasks section** - no exceptions
-4. **ALWAYS create Completed Tasks section if it doesn't exist** (simple list, no time divisions)
-5. **ALWAYS verify ZERO completed tasks remain in Active Tasks section**
-6. **ALWAYS respect Archive section format** - single-line compressed, never expand
-7. **NEVER add time-based subsections to Completed Tasks** (Recently, This Week, This Month)
-8. **NEVER proceed to processing changes until ALL tasks have TaskIDs**
-9. **NEVER proceed to processing changes until ALL tasks have valid Difficulty fields**
+1. **ALWAYS verify ALL TaskIDs are unique** - scan entire file and check for duplicates
+2. **ALWAYS scan entire todos.md for missing TaskIDs** - even if it looks complete
+3. **ALWAYS scan entire todos.md for missing Difficulty fields** - even if it looks complete
+4. **ALWAYS move completed tasks to Completed Tasks section** - no exceptions
+5. **ALWAYS create Completed Tasks section if it doesn't exist** (simple list, no time divisions)
+6. **ALWAYS verify ZERO completed tasks remain in Active Tasks section**
+7. **ALWAYS ensure file has exactly 4 sections** - delete any other sections found
+8. **ALWAYS respect Archive section format** - single-line compressed, never expand
+9. **NEVER add time-based subsections to Completed Tasks** (Recently, This Week, This Month)
+10. **NEVER proceed to processing changes until ALL tasks have unique TaskIDs**
+11. **NEVER proceed to processing changes until ALL tasks have valid Difficulty fields**
