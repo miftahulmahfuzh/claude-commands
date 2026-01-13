@@ -26,9 +26,8 @@ Error: <paste logs here>
 Note: Only happens when mode=parallel
 
 Files:
-@chatbot/processing/.workflows/analysis/citation_for_aggregation_mode.md
-@tools/toolcore/caller.go
-@tools/toolcore/pipeline/execution/modes.go
+<file1>
+<file2>
 ```
 
 **What happens:**
