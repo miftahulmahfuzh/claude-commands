@@ -1,6 +1,18 @@
-# Do Command - Execute Tasks by TaskID
+# Do Command - Execute Tasks by TaskID (Redesigned)
 
-Execute tasks from any package's todos.md using TaskID without needing to specify the package directory path.
+Execute tasks from any package's todos.md using TaskID. **Supporting work delegated to subagents; main context reserved for code implementation only.**
+
+## Architecture Overview
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│  Prep Phase     │    │  Main Context   │    │  Post Phase     │
+│  (Sequential    │───▶│  (Code Only)     │───▶│  (Single        │
+│   Subagents)    │    │                  │    │   Subagent)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+**Context Isolation:** All file reading, planning, and documentation updates happen in isolated subagent contexts. The main context ONLY performs code implementation.
 
 ## Arguments
 - Required: `{TaskID}` (e.g., `P0-DB-A236`, `P1-CB-B789`)
@@ -17,232 +29,201 @@ Examples:
 - `P1-CB-B789` → P1 task in Chatbot Bowl package
 - `P2-CC-C123` → P2 task in Core Cache package
 
-## Process Flow
+## Process Flow (Subagent-Based)
 
-### Step 1: Locate Task
-1. **Parse TaskID**: Extract priority, package code, and 4CharID
-2. **Direct Search**: Search for the exact TaskID in all todos.md files:
-   ```bash
-   find . -name "todos.md" -path "*/.workflows/*" -exec grep -l "{TaskID}" {} \;
-   ```
-3. **Validate Uniqueness**: Ensure TaskID appears in exactly one file
-4. **Error Handling**:
-   - If TaskID not found: `✗ Error: Task '{TaskID}' not found in any todos.md files`
-   - If TaskID found in multiple files: `✗ Error: TaskID '{TaskID}' is not unique - found in {path1} and {path2}`
-   - Extract package path from the found file location
+### Phase 1: Preparation (Subagents 1 → 2 → 3)
 
-### Step 2: Load Task Context
-Read from the found `{package_path}/.workflows/todos.md`:
-1. **Task Details**: Extract full task description, context, and status
-2. **Package Context**: Load package_readme.md to understand package structure
-3. **Analysis Context**: Load analysis_report.md if exists for additional context
-4. **Related Files**: Parse file references in task description
+All preparation work happens in isolated subagent contexts to keep the main context clean.
 
-### Step 3: Parse Additional Notes
-If `--note` parameter provided:
-1. **Parse Note Content**: Extract additional instructions, file references, or context
-2. **Merge with Task**: Append note to task context as "Additional Instructions"
-3. **Update Priority**: If note indicates urgency, consider priority escalation
+#### Step 1: Locate Task (Subagent 1)
+**Dispatch:** Task Locator subagent
 
-### Step 4: Prepare Execution Plan
-Create execution plan based on task type and difficulty:
+**Input:**
+```yaml
+task_id: "{TaskID}"
+```
 
-#### Check Task Difficulty First
-1. **Extract Difficulty**: Read the `- **Difficulty**: {EASY|NORMAL|HARD}` field from task
-2. **HARD Task Special Handling**: If Difficulty is HARD, execute special workflow:
-   - Create new branch (see Step 4.1)
-   - Create detailed implementation plan (see Step 4.2)
-   - Get user confirmation before proceeding
+**Actions:**
+1. Search all `.workflows/todos.md` files for TaskID
+2. Validate uniqueness (exactly one match)
+3. Extract package path from file location
+4. Extract task metadata (priority, difficulty, type, title, context)
 
-#### 4.1 HARD Task Branch Creation (MANDATORY)
-For tasks with `**Difficulty**: HARD`:
+**Output:**
+```yaml
+status: success
+package_path: "{path}"
+task_metadata:
+  priority: "P0-P4"
+  difficulty: "EASY|NORMAL|HARD"
+  type: "Bug|Feature|Refactor|Docs"
+  title: "{title}"
+  context: "{context}"
+```
 
-1. **Create Dedicated Branch**:
-   ```bash
-   git checkout -b feature/{task-description-slug}-{TaskID}
-   # Example: git checkout -b feature/refactor-broadcast-manager-P1-BC-A123
-   ```
+**See:** `.subagents/task-locator.md` for full specification
 
-2. **Announce Branch Creation**:
-   ```
-   🔒 HARD Task Detected - Creating Branch: feature/{task-description-slug}-{TaskID}
-   📋 Task requires detailed planning and isolation
-   ```
+#### Step 2: Load Context (Subagent 2)
+**Dispatch:** Context Loader subagent
 
-3. **Verify Branch Created**: Ensure branch is successfully created and checked out
+**Input:**
+```yaml
+package_path: "{path}"
+task_metadata: {...}
+```
 
-#### 4.2 HARD Task Detailed Planning (MANDATORY)
-For tasks with `**Difficulty**: HARD`:
+**Actions:**
+1. Read task details from todos.md
+2. Read package_readme.md (if exists)
+3. Read analysis_report.md (if exists)
+4. **Synthesize** into concise context packet (no raw file contents)
 
-1. **Create Implementation Plan Document**:
-   ```
-   📋 Detailed Implementation Plan for {TaskID}
+**Output:**
+```yaml
+status: success
+context_packet:
+  task_description: "{1-2 sentence description}"
+  docs_summary: "{key points only}"
+  file_references: ["{file}"]
+  related_tasks: ["{TaskID}"]
+```
 
-   **Task**: {task_description}
-   **Difficulty**: HARD
-   **Branch**: feature/{task-description-slug}-{TaskID}
+**See:** `.subagents/context-loader.md` for full specification
 
-   **Analysis Phase**:
-   - Current state assessment
-   - Dependencies identification
-   - Risk assessment
-   - Testing strategy
+#### Step 3: Generate Execution Brief (Subagent 3)
+**Dispatch:** Plan Generator subagent
 
-   **Implementation Phases**:
-   - Phase 1: {description}
-   - Phase 2: {description}
-   - ...
+**Input:**
+```yaml
+task_metadata: {...}
+context_packet: {...}
+user_note: "{from --note flag}"  # optional
+```
 
-   **Rollback Strategy**:
-   - How to undo changes if needed
-   - Safe rollback points
-   ```
+**Actions:**
+1. Analyze task difficulty
+2. **For EASY/NORMAL:** Create simple step-by-step brief
+3. **For HARD:** Create detailed plan file + git branch + confirmation prompt
 
-2. **Save Plan to File (MANDATORY)**:
-   ```bash
-   # Save detailed plan to .workflows/plan/{TaskID}-plan.md
-   cat > .workflows/plan/{TaskID}-plan.md << 'EOF'
-   # Implementation Plan: {TaskID}
+**Output (Execution Brief):**
+```yaml
+# Execution Brief for {TaskID}
 
-   **Task**: {task_description}
-   **Difficulty**: HARD
-   **Branch**: feature/{task-description-slug}-{TaskID}
-   **Created**: {YYYY-MM-DD HH:MM:SS}
+task:
+  id: "{TaskID}"
+  title: "{title}"
+  difficulty: "EASY|NORMAL|HARD"
+  type: "{Bug|Feature|Refactor|Docs}"
 
-   ## Analysis Phase
-   {detailed analysis content}
+execution:
+  target_files:
+    - path: "{relative/path}"
+      action: "create|modify|delete"
+      description: "{what to do}"
 
-   ## Implementation Phases
-   {implementation phases content}
+  approach: |
+    {Concise approach - 2-3 sentences}
 
-   ## Rollback Strategy
-   {rollback strategy content}
+  steps:
+    - "{Step 1}"
+    - "{Step 2}"
 
-   ## Success Criteria
-   {measurable success criteria}
-   EOF
-   ```
+hard_task_config:  # HARD only
+  branch_name: "feature/{slug}-{TaskID}"
+  plan_file: ".workflows/plan/{TaskID}-plan.md"
+  confirmation_required: true
 
-3. **Confirm Plan Saved**:
-   ```
-   📄 Plan saved to: .workflows/plan/{TaskID}-plan.md
-   📋 Reference available during implementation
-   ```
+validation:
+  success_criteria: ["{criterion}"]
+  test_command: "{command}"
+```
 
-4. **Get User Confirmation**:
-   ```
-   🤔 Ready to implement HARD task {TaskID}
-   📋 Branch: feature/{task-description-slug}-{TaskID}
-   📄 Plan saved to: .workflows/plan/{TaskID}-plan.md
+**See:** `.subagents/plan-generator.md` for full specification
 
-   Continue with implementation? [y/N]
-   ```
+### Phase 2: Execution (Main Context)
 
-5. **Wait for User Input**: Only proceed with explicit user confirmation
+**CRITICAL:** This is the ONLY phase that runs in the main context.
 
-#### Standard Task Execution plan
+#### Step 4: Execute Implementation (Main Context)
 
-##### Bug Fix Tasks
-- Analyze error context and reproduction steps
-- Identify affected code locations
-- Plan fix implementation and testing approach
+**Input:** Clean execution brief from Subagent 3
 
-##### Feature Implementation Tasks
-- Understand feature requirements from task description
-- Identify integration points and dependencies
-- Plan implementation steps and validation approach
+**Actions:**
+1. Display task summary from brief
+2. **For HARD tasks:** Request user confirmation
+3. For each `target_file`:
+   - Read file
+   - Apply changes per `steps`
+   - Write file
+4. Run `test_command` if provided
+5. Return completion status
 
-##### Refactoring Tasks
-- Analyze current code structure and issues
-- Plan refactoring approach to maintain functionality
-- Identify tests needed to validate refactoring
+**What Main Context Does NOT Do:**
+- ❌ Read todos.md or any .workflows files
+- ❌ Read documentation files (package_readme.md, analysis_report.md)
+- ❌ Update todos.md
+- ❌ Perform git operations
+- ❌ Create plans
 
-##### Documentation Tasks
-- Identify what documentation needs updating
-- Gather context from code and existing docs
-- Plan documentation structure and content
+**Output:**
+```yaml
+completion_report:
+  task_id: "{TaskID}"
+  status: "success|failure"
+  modified_files: ["{file}"]
+  error_message: "{if failure}"
+```
 
-### Step 5: Execute Task
-Execute the task following this pattern:
+**See:** `.subagents/main-context-executor.md` for full specification
 
-1. **Announce Task**: Display task details and plan
-   ```
-   🎯 Executing Task: {TaskID}
-   📦 Package: {package_path}
-   📝 Description: {task_description}
-   🔧 Difficulty: {EASY|NORMAL|HARD}
-   📋 Context: {task_context}
-   ```
+### Phase 3: Completion (Subagent 4)
 
-2. **HARD Task Special Pre-execution**:
-   If Difficulty is HARD:
-   ```
-   🔒 Implementing HARD Task {TaskID}
-   📋 Branch: feature/{task-description-slug}-{TaskID}
-   📄 Following detailed implementation plan...
-   ```
+#### Step 5: Complete Task (Subagent 4)
+**Dispatch:** Completion Handler subagent
 
-3. **Load Required Files**: Read source files mentioned in task
-4. **Load Implementation Plan**: Read saved plan from `.workflows/plan/{TaskID}-plan.md` for reference
-5. **Implement Solution**: Make necessary code changes following the detailed plan
-6. **Update Documentation**: Update relevant .workflows files
-7. **Update Task Status**: Mark task as completed in todos.md
+**Input:**
+```yaml
+completion_report: {...}
+```
 
-### Step 6: Update Task Status
-After execution:
+**Actions:**
+1. Update todos.md:
+   - Mark task as completed (`- [ ]` → `- [x]`)
+   - Add completion metadata (timestamp, method, files)
+   - Move to Completed Tasks section
+2. Update related files:
+   - package_readme.md if API changed
+   - analysis_report.md if complexity/behavior changed
+3. Git operations:
+   - Stage modified files
+   - Create commit with descriptive message
+   - Push to remote
+   - For HARD tasks: provide merge instructions
+4. Update quick stats
 
-1. **Mark Completed**: Change checkbox from `- [ ]` to `- [x]`
-2. **Add Completion Note**:
-   ```markdown
-   - [x] **{TaskID}** {task_description}
-     - **Completed**: {YYYY-MM-DD HH:MM:SS}
-     - **Method**: {brief description of what was done}
-     - **Files Modified**: {list of files changed}
-   ```
-3. **CRITICAL: Move to Completed Tasks Section**:
-   - Check if `## Completed Tasks` section exists in todos.md
-   - If **NOT exists**, create the section:
-     ```markdown
-     ## Completed Tasks
+**Output:**
+```
+✅ Task Completed: {TaskID}
+📦 Package: {package}
+📄 Modified: {files}
+📝 Updated: {docs}
+💾 Commit: {commit_hash}
+🌿 Branch: {branch}  # for HARD tasks
+```
 
-     ### Recently Completed
-     - [x] **{TaskID}** {task_description}
-       - **Completed**: {YYYY-MM-DD HH:MM:SS}
-       - **Method**: {brief description of what was done}
-       - **Files Modified**: {list of files changed}
+**See:** `.subagents/completion-handler.md` for full specification
 
-     ### This Week
+## Context Isolation Summary
 
-     ### This Month
-     ```
-   - If **exists**, move completed task to appropriate time-based subsection:
-     - Completed today → "Recently Completed"
-     - Completed within 7 days → "This Week"
-     - Completed within 30 days → "This Month"
-     - Older than 30 days → Archive section (if exists)
-   - **ENSURE**: Completed task is REMOVED from Active Tasks section
-   - **VERIFY**: No completed tasks remain in Active Tasks section
+| Phase | Context | Files Read | Files Written |
+|-------|---------|------------|---------------|
+| **Subagent 1** | Isolated | All todos.md | None |
+| **Subagent 2** | Isolated | todos.md, docs | None |
+| **Subagent 3** | Isolated | None (uses data) | Plan file (HARD) |
+| **Main Context** | Clean | Target files only | Target files only |
+| **Subagent 4** | Isolated | todos.md, related files | todos.md, related files |
 
-4. **Update Quick Stats**: Recalculate task counts including completion metrics
-
-### Step 7: Update Related Files
-Based on task type, update other .workflows files:
-
-#### For Bug Fixes
-- Update analysis_report.md if the issue was documented there
-- Add note about fix to package_readme.md if it affects API behavior
-
-#### For Feature Implementation
-- Update package_readme.md with new API documentation
-- Update analysis_report.md if new complexity was introduced
-
-#### For Refactoring
-- Update analysis_report.md with improved complexity metrics
-- Update package_readme.md if API changed
-
-#### For Documentation Tasks
-- Update the target documentation files
-- Note in todos.md that documentation was updated
+**Main Context NEVER Loads:** todos.md, package_readme.md, analysis_report.md, plan files
 
 ## Search Strategy
 
@@ -282,77 +263,83 @@ Use regex to validate TaskID format before search:
 
 ### Success Messages:
 ```
-✅ Task Completed: P0-DB-A236
-📦 Package: db/.workflows/
-📝 Fixed race condition in Manager.Start()
-🔧 Difficulty: NORMAL
-📄 Modified: manager.go (lines 45-67)
-📄 Updated: todos.md, analysis_report.md
-📋 Task moved to Completed Tasks section
-📊 Quick Stats updated with completion metrics
+✅ Task Completed: P1-DB-A236
+📦 Package: db
+📄 Modified: manager.go
+📝 Updated: todos.md, package_readme.md
+💾 Commit: abc1234
+🌿 Branch: main
 ```
 
 ### HARD Task Success Messages:
 ```
 ✅ HARD Task Completed: P1-BC-A123
-📦 Package: broadcast/.workflows/
-📝 Refactored InitiateAndManageBroadcast function into smaller methods
-🔧 Difficulty: HARD
+📦 Package: broadcast
+📄 Modified: manager.go, validator.go, connector.go
+📝 Updated: todos.md, package_readme.md, analysis_report.md
+💾 Commit: def5678
 🌿 Branch: feature/refactor-broadcast-manager-P1-BC-A123
-📄 Plan saved to: .workflows/plan/P1-BC-A123-plan.md
-📄 Modified: manager.go, validator.go, connector.go, processor.go
-📄 Updated: todos.md, package_readme.md, analysis_report.md
-📋 Task moved to Completed Tasks section
-📊 Quick Stats updated with completion metrics
-🔀 Ready for branch merge: feature/refactor-broadcast-manager-P1-BC-A123
+
+🔀 Merge Instructions:
+   1. Review changes on branch: feature/refactor-broadcast-manager-P1-BC-A123
+   2. Run tests: go test ./broadcast -v
+   3. If satisfied, merge:
+      git checkout main
+      git merge feature/refactor-broadcast-manager-P1-BC-A123
+      git push origin main
+   4. Cleanup branch:
+      git branch -d feature/refactor-broadcast-manager-P1-BC-A123
+
+📄 Plan reference: .workflows/plan/P1-BC-A123-plan.md
 ```
 
 ### Progress Messages:
 ```
-🔍 Locating task P1-DB-A236...
-📁 Found in: db/.workflows/todos.md
-📋 Loading task context...
-🔧 Implementing solution...
-📝 Updating documentation...
-✅ Task completed successfully
+🔍 Locating task... (Subagent 1)
+📁 Found: P1-DB-A236 in db/.workflows/todos.md
+
+📋 Loading context... (Subagent 2)
+📋 Generating brief... (Subagent 3)
+
+🎯 Executing: P1-DB-A236 (Main Context)
+📄 Target Files: 1
+  📄 manager.go → modify
+✅ Implementation complete
+
+📝 Completing task... (Subagent 4)
+✅ Task Completed: P1-DB-A236
 ```
 
 ### HARD Task Progress Messages:
 ```
-🔍 Locating HARD task P1-BC-A123...
-📁 Found in: broadcast/.workflows/todos.md
-📋 Loading task context...
+🔍 Locating task... (Subagent 1)
+📁 Found: P1-BC-A123 in broadcast/.workflows/todos.md
+
+📋 Loading context... (Subagent 2)
+📋 Generating detailed plan... (Subagent 3)
 🔒 Creating branch: feature/refactor-broadcast-manager-P1-BC-A123
-📋 Creating detailed implementation plan...
-📄 Saving plan to: .workflows/plan/P1-BC-A123-plan.md
-🤔 User confirmation received for HARD task
-🔧 Implementing HARD task solution...
-📝 Updating documentation...
-✅ HARD Task completed successfully
-```
+📄 Plan saved: .workflows/plan/P1-BC-A123-plan.md
 
-### Warning Messages:
-```
-⚠️ Warning: Task P2-DB-A236 is marked as blocked
-⚠️ Warning: Task has high priority - consider impact assessment
-⚠️ Warning: Multiple files modified - review changes carefully
-```
+🤔 Ready to implement HARD task P1-BC-A123
+   Branch: feature/refactor-broadcast-manager-P1-BC-A123
+   Plan: .workflows/plan/P1-BC-A123-plan.md
+Continue with implementation? [y/N] y
 
-### HARD Task Warning Messages:
-```
-⚠️ Warning: HARD task P1-BC-A123 will create new branch
-⚠️ Warning: HARD task requires detailed planning before implementation
-⚠️ Warning: HARD task plan will be saved to .workflows/plan/P1-BC-A123-plan.md
-⚠️ Warning: HARD task affects multiple files - review carefully before merge
+🎯 Executing: P1-BC-A123 (Main Context)
+📄 Target Files: 3
+  📄 manager.go → modify
+  📄 validator.go → create
+  📄 connector.go → modify
+✅ Implementation complete
+
+📝 Completing task... (Subagent 4)
+✅ HARD Task Completed: P1-BC-A123
 ```
 
 ### Error Messages:
 ```
 ✗ Error: Invalid TaskID format: 'INVALID'
   Expected format: P[0-4]-[CODE]-[ID]
-
-✗ Error: Package code 'XX' not found
-  Available packages: DB, CB, CC, TP
 
 ✗ Error: Task 'P0-DB-Z999' not found
   Available tasks in DB: P0-DB-A236, P1-DB-A237, P2-DB-A238
@@ -361,61 +348,26 @@ Use regex to validate TaskID format before search:
   All tasks must have: - **Difficulty**: {EASY|NORMAL|HARD}
   Run: /update-todos {package_path} to fix
 
-✗ Error: Invalid Difficulty value for task P1-DB-A236: 'INVALID'
-  Valid values: EASY, NORMAL, HARD (case-sensitive)
-  Run: /update-todos {package_path} to fix
-
 ✗ Error: HARD task P1-BC-A123 requires branch creation
   Unable to create branch: {git_error_message}
   Check git status and try again
-
-✗ Error: HARD task P1-BC-A123 requires plan saving
-  Unable to save plan to .workflows/plan/P1-BC-A123-plan.md: {file_error_message}
-  Check directory permissions and try again
 ```
 
 ## Special Cases
 
 ### HARD Tasks (Difficulty: HARD)
-**Special handling for complex, high-impact tasks:**
+**All subagent coordination:**
 
-1. **Automatic Branch Creation**:
-   ```bash
-   git checkout -b feature/{task-description-slug}-{TaskID}
-   ```
+1. **Subagent 3 (Plan Generator)** handles:
+   - Detailed plan creation at `.workflows/plan/{TaskID}-plan.md`
+   - Git branch creation: `feature/{slug}-{TaskID}`
+   - User confirmation prompt
 
-2. **Detailed Implementation Plan Required**:
-   - Analysis phase with current state assessment
-   - Risk assessment and dependency identification
-   - Step-by-step implementation phases
-   - Rollback strategy with safe rollback points
+2. **Main Context** executes implementation on branch
 
-3. **Plan Persistence Requirements**:
-   - Save detailed plan to `.workflows/plan/{TaskID}-plan.md` before implementation
-   - Include analysis, phases, rollback strategy, and success criteria
-   - Reference plan during implementation for consistency
-   - Keep plan file as documentation after task completion
-
-4. **User Confirmation Before Implementation**:
-   ```
-   🤔 Ready to implement HARD task {TaskID}
-   📋 Branch: feature/{task-description-slug}-{TaskID}
-   📄 Plan saved to: .workflows/plan/{TaskID}-plan.md
-
-   Continue with implementation? [y/N]
-   ```
-
-5. **Enhanced Documentation Requirements**:
-   - Update all affected .workflows files
-   - Document breaking changes and migration guides
-   - Add comprehensive testing requirements
-   - Reference saved plan file in task completion notes
-
-6. **Branch Management After Completion**:
-   - Task completed on dedicated branch
-   - Branch ready for review and merge
-   - Merge instructions provided in success message
-   - Plan file remains as implementation documentation
+3. **Subagent 4 (Completion Handler)** provides:
+   - Merge instructions (no auto-push for HARD tasks)
+   - Plan file reference
 
 ### Blocked Tasks
 If task status is 'blocked':
@@ -423,25 +375,32 @@ If task status is 'blocked':
 2. Ask for confirmation: `Task is blocked by {dependency}. Continue anyway? [y/N]`
 3. If confirmed, proceed with execution
 
-### Priority Changes
-If note indicates higher priority:
-1. Ask for confirmation: `Escalate P2-DB-A236 to P0? [y/N]`
-2. If confirmed, update TaskID prefix in todos.md
-3. Update task location in appropriate priority section
-
-### Multi-Package Tasks
-If task affects multiple packages:
-1. Identify all affected packages from task description
-2. Load todos.md from each package
-3. Create linked tasks in each package with same 4CharID
-4. Execute coordinated changes across packages
-
 ### Tasks Requiring External Input
-If task requires user decisions during implementation:
+If task requires user decisions during implementation (main context):
 1. Pause execution at decision point
 2. Present options clearly
 3. Wait for user input
 4. Continue with chosen approach
+
+## Token Efficiency
+
+| Metric | Original | Redesigned | Improvement |
+|--------|----------|------------|-------------|
+| Context size before implementation | All docs + plans | Clean brief only | ~80% reduction |
+| Context size during implementation | Same + file edits | Target files only | ~70% reduction |
+| Context pollution | High (docs + git ops) | None (subagent handles) | 100% reduction |
+
+## Subagent Specifications
+
+Full specifications for each subagent are in `.subagents/`:
+
+| File | Purpose |
+|------|---------|
+| `task-locator.md` | Find TaskID, extract metadata |
+| `context-loader.md` | Load and synthesize context |
+| `plan-generator.md` | Create execution brief |
+| `main-context-executor.md` | Code implementation logic |
+| `completion-handler.md` | Update docs, git operations |
 
 ## Integration with Other Commands
 
