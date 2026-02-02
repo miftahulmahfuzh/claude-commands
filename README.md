@@ -240,8 +240,8 @@ Execute tasks from any package's todos.md using TaskID. **Supporting work delega
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │  Prep Phase     │    │  Main Context   │    │  Post Phase     │
-│  (Sequential    │───▶│  (Code Only)     │───▶│  (Single        │
-│   Subagents)    │    │                  │    │   Subagent)     │
+│  (Sequential    │───▶│  (Code Only)    │───▶│  (Single        │
+│   Subagents)    │    │                 │    │   Subagent)     │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
