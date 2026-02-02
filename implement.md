@@ -52,9 +52,33 @@ Use package code from existing todos.md header. Generate next available TaskID:
 - Analyze analysis to determine priority (P0-P4)
 - Use next sequential 4CharID (A000, A001... A999, B000...)
 
-### Step 4: Add Task to todos.md
+### Step 4 & 5: Update todos.md and Create Implementation Plan via Subagent
 
-**Add to appropriate priority section in Active Tasks:**
+**CRITICAL: You MUST use a subagent for Steps 4 and 5.**
+
+This keeps the main context clean for the actual code implementation work.
+
+**DO NOT** update todos.md or create the implementation plan in the main context.
+
+#### Subagent Instructions
+
+Dispatch a subagent with the following prompt template:
+
+```
+You are implementing Steps 4 and 5 of the /implement command.
+
+**Inputs:**
+- Analysis file: {code_analyzer.md path}
+- Path: {path}
+- TaskID: {TaskID}
+- Priority: {P0-P4}
+- Package code: {from todos.md header}
+- Note: {additional note if provided}
+
+**Step 4: Add Task to todos.md**
+
+Read {path}/.workflows/todos.md and add the task to the appropriate priority section:
+
 ```markdown
 - [ ] **{TaskID}** {Brief title from analysis}
   - **Difficulty**: {EASY|NORMAL|HARD}
@@ -64,11 +88,11 @@ Use package code from existing todos.md header. Generate next available TaskID:
   - **Plan**: `.workflows/plan/{TaskID}.md`
 ```
 
-**Tip**: The "Detailed Requirements Understanding" section provides the best context summary - it's already technical and precise.
+Tip: Use the "Detailed Requirements Understanding" section for context - it's already technical and precise.
 
-### Step 5: Create Implementation Plan
+**Step 5: Create Implementation Plan**
 
-Create `{path}/.workflows/plan/{TaskID}.md`:
+Create {path}/.workflows/plan/{TaskID}.md with this structure:
 
 ```markdown
 # Implementation Plan: {TaskID}
@@ -135,13 +159,48 @@ Create `{path}/.workflows/plan/{TaskID}.md`:
 {if implementation fails}
 ```
 
-**CRITICAL:**
+**CRITICAL Plan Requirements:**
 - ALL code blocks must be COMPLETE and runnable
 - NO placeholders like `// ... existing code`
 - NO abbreviated struct definitions
 - FULL functions that can be directly implemented
 
-### Step 6: Execute Implementation
+**Your Output:**
+When complete, report back with:
+1. TaskID created
+2. Priority level assigned
+3. Brief task title
+4. Full path to plan file created
+5. Summary of what was done
+
+**Important:**
+- Keep the implementation plan CONCISE - focus on code changes
+- Trust the analysis - don't re-analyze what's already documented
+- If any aspect of the analysis is unclear, ask for clarification using AskUserQuestion
+- When in doubt, ask - never guess and proceed
+```
+
+#### After Subagent Completes
+
+The subagent will return:
+- **TaskID**: The generated task identifier
+- **Priority**: P0-P4 level
+- **Title**: Brief task title
+- **Plan path**: `.workflows/plan/{TaskID}.md`
+
+Verify these values before proceeding to Step 6.
+
+### Step 4 (Original): Add Task to todos.md
+
+**DELEGATED TO SUBAGENT** - See Step 4 & 5 above.
+
+### Step 5 (Original): Create Implementation Plan
+
+**DELEGATED TO SUBAGENT** - See Step 4 & 5 above.
+
+### Step 6: Execute Implementation (Main Context)
+
+**CRITICAL: This step runs in the MAIN context after the subagent completes.**
 
 Follow the plan sequentially:
 1. For each step: Read the file, make changes
@@ -182,7 +241,7 @@ Run: /update-todos {path} --init
 
 ## Handling Confusion
 
-### During Implementation Plan Creation (Step 5)
+### During Implementation Plan Creation (Step 5 - Subagent)
 
 If any aspect of the analysis is unclear, ambiguous, or has multiple valid approaches:
 
@@ -205,7 +264,7 @@ Options:
 - Option B: Do Q because R
 ```
 
-### During Code Implementation (Step 6)
+### During Code Implementation (Step 6 - Main Context)
 
 If issues arise during actual code changes:
 
@@ -234,3 +293,28 @@ If issues arise during actual code changes:
 - If `-note` provided, it supplements (not replaces) the analysis
 - Success Criteria from Requirements Understanding should drive testing plan
 - **When in doubt, ask - never guess and proceed**
+
+## Context Management
+
+**Why use a subagent for Steps 4 & 5:**
+
+The subagent handles all the documentation work (updating todos.md and creating the implementation plan) in a separate context. This:
+
+1. **Keeps main context clean**: The main conversation only contains the actual code implementation work
+2. **Reduces token usage**: Documentation details don't pollute the main context during code changes
+3. **Improves focus**: When implementing code, the main context has only relevant implementation details
+4. **Preserves handoff clarity**: The subagent returns structured output (TaskID, priority, title, plan path) that the main context uses
+
+**Data flow:**
+```
+Main Context (Steps 1-3)
+    → Generate TaskID, prepare inputs
+    ↓
+Subagent (Steps 4-5)
+    → Update todos.md
+    → Create implementation plan
+    → Return: TaskID, Priority, Title, Plan path
+    ↓
+Main Context (Step 6)
+    → Execute implementation with clean context
+```
