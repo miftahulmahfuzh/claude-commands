@@ -206,6 +206,7 @@ Follow the plan sequentially:
 1. For each step: Read the file, make changes
 2. Mark task as completed in todos.md after implementation
 3. Update task status to `completed`
+4. **Spawn Pusher subagent** to commit and push all changes
 
 ## Output Format
 

@@ -196,8 +196,7 @@ completion_report: {...}
    - analysis_report.md if complexity/behavior changed
 3. Git operations:
    - Stage modified files
-   - Create commit with descriptive message
-   - Push to remote
+   - **Spawn Pusher subagent** to commit and push changes
    - For HARD tasks: provide merge instructions
 4. Update quick stats
 
