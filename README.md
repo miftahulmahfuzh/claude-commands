@@ -284,7 +284,13 @@ A specialized subagent for git commit and push operations using the fast, lightw
 - ✨ Provides detailed summary of all operations
 
 **Usage:**
-This agent is typically invoked internally by other commands (like `/do`) for git operations. It can also be used directly via the Task tool with `subagent_type: "pusher"`.
+In Claude Code, simply type:
+```
+run pusher
+```
+This will automatically spawn the Pusher subagent to commit and push all changes.
+
+This agent is also invoked internally by other commands (like `/do`) for git operations.
 
 **Benefits:**
 - Uses haiku model for fast, cost-effective operations
