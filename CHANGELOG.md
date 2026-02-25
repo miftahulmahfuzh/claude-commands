@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-02-25
+
+### Added
+- **Subagent-based Architecture for /do and /implement**: Complete redesign with context isolation
+  - Task Locator, Context Loader, Plan Generator, and Completion Handler subagents
+  - Improved task execution with dedicated context management
+  - Better error handling and task tracking
+
+- **New Commands**:
+  - `/postmortem`: Session problem documentation with TaskID integration
+  - `/reorganize-todos`: Task organization with automatic completed tasks management
+  - `/analyze-package`: Package analysis command
+  - `/analyze`: Code archaeology and analysis command
+  - `/update-readme`: Automated README updates
+  - `/update-todos`: Task list management command
+
+- **Difficulty Classification System**: Automatic HARD task branch management
+  - P1/P2/P3 priority system with difficulty indicators
+  - Automatic branch creation for complex tasks
+
+- **TaskID System**: Comprehensive task tracking with unique identifiers
+  - Enforced uniqueness and 4-section structure
+  - Completed tasks separation and archive management
+
+- **Pusher Agent**: Specialized git commit and push operations
+
+- **Sync Script**: Repository synchronization utility with portability fixes
+
+### Changed
+- **Repository Reorganization**: Improved directory structure
+  - Moved plan files to dedicated plan directory
+  - Moved push.md to agents/pusher.md
+  - Added .workflows/todos.md for workflow tracking
+
+- **Enhanced Documentation**:
+  - Comprehensive README updates with 487 new lines
+  - Detailed command documentation for all new commands
+  - Interactive clarification guidance for confusion handling
+
+### Fixed
+- **sync.sh**: Fixed dirname command syntax for portability across shell implementations
+
+### Removed
+- **install.sh**: Replaced with sync.sh for improved workflow
+
 ## [1.0.0] - 2025-09-14
 
 ### Added
