@@ -221,14 +221,14 @@ After TaskID assignment and duplicate detection, check for completed tasks organ
    - **Do NOT leave any completed tasks in Active Tasks section**
 
 3. **Respect Archive Section Structure**:
-   - Archive section exists as single-line format: `{TaskID}: {description}`
+   - Archive section exists as single-line format with bullet: `- {TaskID}: {description}`
    - Example:
      ```markdown
      ## Archive
 
      ### {YYYY-MM}
-     P1-CB-A112: Old task from last month
-     P1-CB-A113: Task from 4 weeks ago
+     - P1-CB-A112: Old task from last month
+     - P1-CB-A113: Task from 4 weeks ago
      ```
    - **NEVER convert Archive items back to full format with checkboxes**
    - Archive is read-only - items stay compressed
@@ -591,10 +591,10 @@ Assign priority tags:
 ## Archive
 
 ### {YYYY-MM}
-P1-CB-A112: Old task from last month
-P1-CB-A113: Task from 4 weeks ago
-P3-CB-A114: Task from 3 weeks ago
-P2-CB-A115: Task from 2 weeks ago
+- P1-CB-A112: Old task from last month
+- P1-CB-A113: Task from 4 weeks ago
+- P3-CB-A114: Task from 3 weeks ago
+- P2-CB-A115: Task from 2 weeks ago
 ```
 
 #### Section Deletion Rule:
@@ -664,7 +664,7 @@ When completing tasks:
 #### Archive Maintenance:
 Periodically (weekly/monthly):
 - Move completed tasks to Archive section when they accumulate
-- Archive format: Single-line compressed `{TaskID}: {description}`
+- Archive format: Single-line compressed `- {TaskID}: {description}`
 - Archive is read-only - items stay compressed, never expanded back
 - **Do NOT add checkboxes, completion details, or metadata to Archive items**
 
@@ -673,9 +673,9 @@ Example Archive structure:
 ## Archive
 
 ### {YYYY-MM}
-P1-CB-A112: Old task from last month
-P1-CB-A113: Task from 4 weeks ago
-P3-CB-A114: Task from 3 weeks ago
+- P1-CB-A112: Old task from last month
+- P1-CB-A113: Task from 4 weeks ago
+- P3-CB-A114: Task from 3 weeks ago
 ```
 
 #### Archive Cleanup:

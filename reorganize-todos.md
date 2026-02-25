@@ -177,7 +177,7 @@ Look for:
   - **Impact**: Improved error handling
 
 # After (in Archive):
-P2-DB-A123: Add validation for empty input
+- P2-DB-A123: Add validation for empty input
 ```
 
 3. **Trace and Remove Relevant Workflow Files**:
@@ -199,7 +199,7 @@ find . -type d -name ".workflows" -exec find {} -name "*{task-id}*.md" \; 2>/dev
 ```
 
 #### 5.4 Update Archive Section Format
-- **Single-line format only**: `{TaskID}: {task description}`
+- **Single-line format with bullet**: `- {TaskID}: {task description}`
 - **Sort by TaskID** for easy reference
 - **No completion metadata** (date, method, files, impact)
 - **No checkboxes** (tasks are completed and archived)
@@ -241,7 +241,7 @@ Recalculate and update:
 - **Archive section exists** with single-line format only
 - **Approximately 80%** of completed tasks are archived
 - **Approximately 20%** most recent tasks remain visible
-- **All archived tasks** have compressed format: `{TaskID}: {description}`
+- **All archived tasks** have compressed format: `- {TaskID}: {description}`
 - **No checkboxes** in Archive section
 
 #### 7.6 Workflow Files Cleanup Validation
@@ -376,13 +376,13 @@ Recalculate and update:
 ## Archive
 
 ### 2025-01
-P1-CB-A112: Old task from last month
-P1-CB-A113: Task from 4 weeks ago
-P3-CB-A114: Task from 3 weeks ago
-P2-CB-A115: Task from 2 weeks ago
-P1-CB-A116: Task from 6 days ago
-P3-CB-A117: Task from 5 days ago
-P2-CB-A118: Task from 3 days ago
+- P1-CB-A112: Old task from last month
+- P1-CB-A113: Task from 4 weeks ago
+- P3-CB-A114: Task from 3 weeks ago
+- P2-CB-A115: Task from 2 weeks ago
+- P1-CB-A116: Task from 6 days ago
+- P3-CB-A117: Task from 5 days ago
+- P2-CB-A118: Task from 3 days ago
 
 # Workflow files removed:
 # - .workflows/plan-P1-CB-A112.md
