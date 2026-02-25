@@ -4,58 +4,35 @@ A curated collection of custom Claude Code commands that supercharge your develo
 
 ## 🛠️ Installation
 
-Clone this repository and run the installation script to set up all commands:
+Clone this repository and run the sync script to set up all commands and agents:
 
 ```bash
 git clone https://github.com/miftahulmahfuzh/claude-commands.git
 cd claude-commands
-./install.sh
+./sync.sh
 ```
 
-The installation script will:
-- ✅ Create a symlink from `~/.claude/commands` to this repository
-- 📦 Backup any existing commands directory
-- 🔗 Keep your commands in sync with this git repository
-- 🎉 Enable immediate use of all custom commands
+The sync script will:
+- ✅ Copy commands to `~/.claude/commands/`
+- ✅ Copy agents to `~/.claude/agents/`
+- 🎉 Enable immediate use of all custom commands and agents
 
 ### Manual Installation
 
 If you prefer manual setup:
 
 ```bash
-# Backup existing commands (if any)
-mv ~/.claude/commands ~/.claude/commands.backup
+# Create directories if needed
+mkdir -p ~/.claude/commands ~/.claude/agents
 
-# Create symlink to this repository
-ln -s /path/to/claude-commands ~/.claude/commands
+# Copy commands and agents
+cp commands/* ~/.claude/commands/
+cp agents/* ~/.claude/agents/
 ```
 
 ## 📋 Available Commands
 
-### Git Workflow Commands
-
-#### `/push` - Intelligent Git Workflow Automation
-Streamlines your entire git commit and push process with AI-powered commit message generation.
-
-**What it does:**
-- 🔍 Analyzes all your code changes using `git diff`
-- 🧠 Generates intelligent commit messages following conventional commit format
-- 📝 Categorizes changes (feat, fix, refactor, docs, etc.)
-- 🚀 Stages, commits, and pushes everything in one command
-- ✨ Provides detailed summary of all operations
-
-**Usage:**
-```
-/push
-```
-
-**Perfect for:**
-- Quick commits with meaningful messages
-- Following consistent commit conventions
-- Understanding the impact of your changes
-- Streamlined development workflow
-
----
+### Version Management
 
 #### `/up-version` - Automated Semantic Versioning
 Automates the entire version release process with intelligent semantic versioning and changelog generation.
@@ -293,6 +270,29 @@ Execute tasks from any package's todos.md using TaskID. **Supporting work delega
 
 ---
 
+## 🤖 Available Agents
+
+### `pusher` - Git Commit & Push Agent
+
+A specialized subagent for git commit and push operations using the fast, lightweight haiku model.
+
+**What it does:**
+- 🔍 Analyzes all your code changes using `git diff`
+- 🧠 Generates intelligent commit messages following conventional commit format
+- 📝 Categorizes changes (feat, fix, refactor, docs, etc.)
+- 🚀 Stages, commits, and pushes everything in one operation
+- ✨ Provides detailed summary of all operations
+
+**Usage:**
+This agent is typically invoked internally by other commands (like `/do`) for git operations. It can also be used directly via the Task tool with `subagent_type: "pusher"`.
+
+**Benefits:**
+- Uses haiku model for fast, cost-effective operations
+- Keeps main context clean by delegating git work
+- Consistent commit message formatting
+
+---
+
 ## 🔄 Development Workflows
 
 ### Bug Investigation Workflow with `/analyze` + `/implement`
@@ -410,6 +410,26 @@ Both use **subagent architecture** to keep main context clean for code implement
 ---
 
 ## 📁 Project Structure
+
+This repository is organized as follows:
+
+```
+claude-commands/
+├── commands/              # Slash commands for Claude Code
+│   ├── analyze.md         # Code archaeology & dataflow tracing
+│   ├── analyze-package.md # Package documentation generator
+│   ├── do.md              # Execute tasks by TaskID
+│   ├── implement.md       # Implementation from analysis
+│   ├── postmortem.md      # Session problem documentation
+│   ├── reorganize-todos.md# Reorganize todos by priority
+│   ├── update-readme.md   # Update package README
+│   ├── update-todos.md    # Update todos.md
+│   └── up-version.md      # Semantic versioning automation
+├── agents/                # Specialized subagents
+│   └── pusher.md          # Git commit & push (haiku model)
+├── sync.sh                # Sync script for installation
+└── README.md
+```
 
 After using package documentation commands, your project will have this structure:
 
