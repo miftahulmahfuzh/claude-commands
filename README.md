@@ -290,7 +290,7 @@ run pusher
 ```
 This will automatically spawn the Pusher subagent to commit and push all changes.
 
-This agent is also invoked internally by other commands (like `/do`) for git operations.
+This agent is also invoked internally by other commands (like `/do` & `/implement`) at the end of implementation.
 
 **Benefits:**
 - Uses haiku model for fast, cost-effective operations
