@@ -194,11 +194,12 @@ completion_report: {...}
 2. Update related files:
    - package_readme.md if API changed
    - analysis_report.md if complexity/behavior changed
-3. Git operations:
-   - Stage modified files
+3. **Spawn README Updater subagent** (see Step 6 below)
+4. Git operations:
+   - Stage modified files (including any README updates from Step 6)
    - **Spawn Pusher subagent** to commit and push changes
    - For HARD tasks: provide merge instructions
-4. Update quick stats
+5. Update quick stats
 
 **Output:**
 ```
@@ -212,6 +213,36 @@ completion_report: {...}
 
 **See:** `.subagents/completion-handler.md` for full specification
 
+#### Step 6: Update Package README (README Updater Subagent)
+
+**Dispatch:** README Updater subagent
+
+**Model:** `sonnet` (required)
+
+**Input:**
+```yaml
+modified_files: [...]  # from completion_report
+task_id: "{TaskID}"
+```
+
+**Actions:**
+1. Identify the single package most influenced by the changes in this session (greatest number of modified files / most significant API/behavior shifts)
+2. Resolve that package's relative directory path (e.g., `chatbot/bowl`)
+3. Check whether `{package_path}/.workflows/package_readme.md` exists:
+   - **If it exists:** Read it, then update it to reflect the current state of the package (API changes, new behaviors, removed functionality, structural shifts)
+   - **If it does NOT exist:** Automatically run `/update-readme {package_path}` — invoke the `update-readme` skill/command with the resolved relative package path. This generates the initial package_readme.md following the full spec in `commands/update-readme.md`. Do NOT skip and do NOT ask the user; this must happen automatically so the engineer doesn't need to run it manually in another session.
+
+**Output:**
+```yaml
+status: updated|created
+readme_path: "{path/to/package_readme.md}"
+summary: "{brief description of what was updated or that it was newly created via /update-readme}"
+```
+
+**Notes:**
+- This subagent MUST run before the Pusher subagent so README updates are committed together with code changes
+- Use sonnet model for this task
+
 ## Context Isolation Summary
 
 | Phase | Context | Files Read | Files Written |
@@ -221,6 +252,7 @@ completion_report: {...}
 | **Subagent 3** | Isolated | None (uses data) | Plan file (HARD) |
 | **Main Context** | Clean | Target files only | Target files only |
 | **Subagent 4** | Isolated | todos.md, related files | todos.md, related files |
+| **README Updater** | Isolated (sonnet) | package_readme.md | package_readme.md |
 
 **Main Context NEVER Loads:** todos.md, package_readme.md, analysis_report.md, plan files
 
@@ -400,6 +432,7 @@ Full specifications for each subagent are in `.subagents/`:
 | `plan-generator.md` | Create execution brief |
 | `main-context-executor.md` | Code implementation logic |
 | `completion-handler.md` | Update docs, git operations |
+| `readme-updater.md` | Locate + update most-impacted package_readme.md (sonnet) |
 
 ## Integration with Other Commands
 

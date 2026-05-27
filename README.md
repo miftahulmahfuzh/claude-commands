@@ -131,6 +131,7 @@ Execute implementation based on `/analyze` output. Creates task, generates plan,
 - 📝 **Updates documentation** and marks task complete
 - 📊 **Auto-detects path** from analysis if not specified
 - 🔄 **Preserves user context** from analysis (original request, requirements understanding)
+- 📚 **Auto-refreshes package_readme.md** via a dedicated README Updater subagent (sonnet model) — locates the single most-impacted package and updates its `package_readme.md`. If none exists, automatically invokes `/update-readme` to create one (no manual bootstrap needed). Runs before the Pusher so README changes are committed together with code.
 
 **Usage:**
 ```bash
@@ -151,6 +152,8 @@ Execute implementation based on `/analyze` output. Creates task, generates plan,
 - **Steps 1-3**: Read analysis, determine path, generate TaskID (main context)
 - **Steps 4-5**: Update todos.md + create implementation plan (subagent - isolated context)
 - **Step 6**: Execute implementation (main context - clean, only code)
+- **Step 7**: README Updater subagent (sonnet) — updates most-impacted `package_readme.md`, or auto-runs `/update-readme` if it doesn't exist yet
+- **Final**: Pusher subagent commits + pushes code and README together
 
 **Context Management Benefits:**
 1. **Keeps main context clean**: Documentation work isolated in subagent
@@ -230,6 +233,7 @@ Execute tasks from any package's todos.md using TaskID. **Supporting work delega
 - 🔧 **Executes implementation** in clean main context (code only)
 - 📝 **Updates documentation** and marks task complete (via subagent)
 - ✅ **Moves completed tasks** to Completed Tasks section (via subagent)
+- 📚 **Auto-refreshes package_readme.md** via a dedicated README Updater subagent (sonnet model) — updates the most-impacted package's `package_readme.md`, or auto-invokes `/update-readme` to create one if missing. Runs before the Pusher so README updates are committed with the code.
 
 **Usage:**
 ```bash
@@ -249,10 +253,11 @@ Execute tasks from any package's todos.md using TaskID. **Supporting work delega
 - Load target files, apply changes, run tests
 - Return completion report
 
-**Phase 3: Completion (Subagent 4)**
+**Phase 3: Completion (Subagent 4 + README Updater + Pusher)**
 - Update todos.md (mark completed, move section)
-- Update related files (package_readme.md, analysis_report.md)
-- Git operations (add, commit, push)
+- Update related files (analysis_report.md)
+- Spawn **README Updater subagent** (sonnet) — refreshes the most-impacted `package_readme.md`, or auto-runs `/update-readme {package_path}` if no `package_readme.md` exists yet (engineers no longer need to bootstrap it manually in a separate session)
+- Git operations via **Pusher subagent** (add, commit, push) — runs last so code + README updates are committed together
 - Provide merge instructions for HARD tasks
 
 **Token Efficiency:**

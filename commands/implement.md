@@ -206,7 +206,59 @@ Follow the plan sequentially:
 1. For each step: Read the file, make changes
 2. Mark task as completed in todos.md after implementation
 3. Update task status to `completed`
-4. **Spawn Pusher subagent** to commit and push all changes
+4. **Spawn README Updater subagent** (see Step 7) — must run BEFORE Pusher so README updates are included in the commit
+5. **Spawn Pusher subagent** to commit and push all changes
+
+### Step 7: Update Package README (README Updater Subagent)
+
+**CRITICAL: This step runs as a NEW subagent. Use the `sonnet` model.**
+
+Dispatch a subagent with the following prompt:
+
+```
+You are the README Updater for the /implement command.
+
+**Task:**
+Locate the most relevant package_readme.md (representing a single package)
+that got influenced the most by the current session, and update that
+package_readme.md to reflect the current state of that package.
+
+**Inputs:**
+- TaskID: {TaskID}
+- Modified files: {list of files changed in Step 6}
+- Analysis source: {code_analyzer.md filename}
+
+**Actions:**
+1. Inspect the modified files to determine which single package was most
+   impacted (greatest number of changes, most significant API/behavior shifts).
+2. Resolve the relative directory path of that package (e.g., `chatbot/bowl`).
+3. Check whether `{package_path}/.workflows/package_readme.md` exists.
+4. **If it exists:**
+   - Read the current package_readme.md.
+   - Update it to reflect the current state of the package: API changes,
+     new functions/types, removed functionality, behavior changes, structural shifts.
+5. **If it does NOT exist:**
+   - Automatically run `/update-readme {package_path}` — invoke the
+     `update-readme` skill/command with the resolved relative package path.
+   - This generates the initial package_readme.md per the full spec in
+     `commands/update-readme.md`.
+   - Do NOT skip and do NOT ask the user; this must happen automatically so
+     the engineer doesn't need to manually run /update-readme in another
+     session before the process can continue.
+
+**Constraints:**
+- Use the `sonnet` model for this task.
+- Target ONE package_readme.md only — the single most-impacted package.
+- Do not invent content; reflect actual current state of the package.
+
+**Your Output:**
+- Path of the package_readme.md updated or created
+- Status: `updated` (existing file) or `created` (ran /update-readme)
+- Brief summary of what was updated/created
+```
+
+**Important:** This subagent runs BEFORE the Pusher subagent so README changes
+are committed and pushed alongside the code changes.
 
 ## Output Format
 
@@ -318,4 +370,11 @@ Subagent (Steps 4-5)
     ↓
 Main Context (Step 6)
     → Execute implementation with clean context
+    ↓
+README Updater Subagent (Step 7, sonnet model)
+    → Locate most-impacted package_readme.md
+    → Update it to reflect current package state
+    ↓
+Pusher Subagent
+    → Commit + push all changes (code + README)
 ```
