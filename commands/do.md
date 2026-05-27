@@ -61,7 +61,7 @@ task_metadata:
   context: "{context}"
 ```
 
-**See:** `.subagents/task-locator.md` for full specification
+**See:** `agents/task-locator.md` for full specification
 
 #### Step 2: Load Context (Subagent 2)
 **Dispatch:** Context Loader subagent
@@ -88,7 +88,7 @@ context_packet:
   related_tasks: ["{TaskID}"]
 ```
 
-**See:** `.subagents/context-loader.md` for full specification
+**See:** `agents/context-loader.md` for full specification
 
 #### Step 3: Generate Execution Brief (Subagent 3)
 **Dispatch:** Plan Generator subagent
@@ -138,7 +138,7 @@ validation:
   test_command: "{command}"
 ```
 
-**See:** `.subagents/plan-generator.md` for full specification
+**See:** `agents/plan-generator.md` for full specification
 
 ### Phase 2: Execution (Main Context)
 
@@ -174,7 +174,7 @@ completion_report:
   error_message: "{if failure}"
 ```
 
-**See:** `.subagents/main-context-executor.md` for full specification
+**Note:** No agent file — Step 4 intentionally runs in the main context for code edits
 
 ### Phase 3: Completion (Subagent 4)
 
@@ -211,7 +211,7 @@ completion_report: {...}
 🌿 Branch: {branch}  # for HARD tasks
 ```
 
-**See:** `.subagents/completion-handler.md` for full specification
+**See:** `agents/completion-handler.md` for full specification
 
 #### Step 6: Update Package README (README Updater Subagent)
 
@@ -423,16 +423,18 @@ If task requires user decisions during implementation (main context):
 
 ## Subagent Specifications
 
-Full specifications for each subagent are in `.subagents/`:
+Real subagents live in `agents/` (deployed to `~/.claude/agents/` by `sync.sh`) and are dispatched via the Task/Agent tool by `subagent_type`:
 
-| File | Purpose |
-|------|---------|
-| `task-locator.md` | Find TaskID, extract metadata |
-| `context-loader.md` | Load and synthesize context |
-| `plan-generator.md` | Create execution brief |
-| `main-context-executor.md` | Code implementation logic |
-| `completion-handler.md` | Update docs, git operations |
-| `readme-updater.md` | Locate + update most-impacted package_readme.md (sonnet) |
+| Agent | Model | Purpose |
+|-------|-------|---------|
+| `task-locator.md` | haiku | Find TaskID, extract metadata |
+| `context-loader.md` | sonnet | Load and synthesize context |
+| `plan-generator.md` | sonnet | Create execution brief (+ branch & plan for HARD) |
+| `completion-handler.md` | sonnet | Update todos.md, dispatch readme-updater & pusher |
+| `readme-updater.md` | sonnet | Locate + update most-impacted package_readme.md |
+| `pusher.md` | haiku | Stage, commit, push (owns all git side effects) |
+
+> **Note:** Step 4 (Execute Implementation) runs in the **main context**, not a subagent — it has no agent file by design.
 
 ## Integration with Other Commands
 
