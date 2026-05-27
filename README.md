@@ -151,9 +151,7 @@ Execute implementation based on `/analyze` output. Creates task, generates plan,
 **Subagent Architecture:**
 - **Steps 1-3**: Read analysis, determine path, generate TaskID (main context)
 - **Steps 4-5**: Update todos.md + create implementation plan (subagent - isolated context)
-- **Step 6**: Execute implementation (main context - clean, only code)
-- **Step 7**: README Updater subagent (sonnet) — updates most-impacted `package_readme.md`, or auto-runs `/update-readme` if it doesn't exist yet
-- **Final**: Pusher subagent commits + pushes code and README together
+- **Step 6**: Execute implementation (main context - clean, only code), then dispatch the **completion-handler** agent (shared with `/do`) which chains **readme-updater** (sonnet) and **pusher** (haiku) to finalize docs and commit code + README together
 
 **Context Management Benefits:**
 1. **Keeps main context clean**: Documentation work isolated in subagent
