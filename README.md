@@ -273,6 +273,57 @@ Execute tasks from any package's todos.md using TaskID. **Supporting work delega
 
 ---
 
+### Debugging Commands
+
+#### `/dbg` - Go Debugger (Delve) Workflows
+
+Drive the Go debugger (**Delve / `dlv`**) in **batch mode** to trace runtime behavior, instead of relying solely on server logs. This replaces the "paste logs → guess which `log.Debug` fired → infer dataflow statically" loop with **real runtime values**: actual call sequences, argument values, variable state, goroutine stacks, and post-mortem analysis.
+
+**What it does:**
+- 🔬 **Traces real dataflow** - prints every call to matching functions with arguments + return values (no code changes)
+- 🎯 **Breakpoint-debugs tests** - batch command scripts (no interactive stepping loop), ideal for deterministic bugs
+- 🪦 **Post-mortem analysis** - inspects a crashed/hung server's frozen state from a core dump (every variable in every goroutine, offline)
+- 🧵 **Concurrency-aware** - built for a streaming HTTP server where breakpoints would freeze the server and cause heisenbugs
+
+**Usage:**
+```bash
+/dbg <what you want to debug>
+
+Context: <symptom / suspected area>
+Error: <optional logs>
+```
+
+Claude then picks the right workflow and drives `dlv` for you.
+
+**The three workflows (project-local helper scripts in `cmd/dlv/`):**
+
+| Script | Purpose | Replaces |
+|--------|---------|----------|
+| `dlv_trace.sh` | Print every call to matching funcs with arg + return values | "which `log.Debug` fired?" archaeology |
+| `dlv_test.sh` | Batch breakpoint-debug a single test (scripted, no ping-pong) | manual interactive stepping |
+| `dlv_core.sh` | Post-mortem a crashed/hung server from a core dump | log forensics on live-server crashes |
+
+**Example - trace a deterministic test:**
+```bash
+cmd/dlv/dlv_trace.sh --test 'finalizeResponse' ./chatbot/processing -- -test.run TestResume
+```
+
+**⚠️ Dependency - this command is different:** Unlike the other commands (which are self-contained markdown), `/dbg` drives **helper scripts that live in the target Go project**, not in this repo. `sync.sh` installs `dbg.md` to `~/.claude/commands/`, but the three `cmd/dlv/*.sh` scripts must exist in the project being debugged. See [**Go Debugging Workflow**](#go-debugging-workflow-with-dbg) below for setup.
+
+**Prerequisites:**
+- `dlv` **must be built with the same Go major version as the project toolchain** (e.g. Go 1.25.x emits DWARFv5; a `dlv` built with Go <1.25 cannot read it). Install/upgrade with:
+  ```bash
+  GOTOOLCHAIN=go1.25.7 go install github.com/go-delve/delve/cmd/dlv@latest
+  ```
+
+**Perfect for:**
+- **Bug investigation** where logs don't tell the whole story (need actual variable values)
+- **Concurrency bugs** in queue / cancellation / streamer code
+- **Live-server crashes** - capture a core dump, analyze it offline like you'd analyze logs
+- **Complementing `/analyze`** - `/analyze` reads code statically; `/dbg` confirms what *actually* happens at runtime
+
+---
+
 ## 🤖 Available Agents
 
 ### `pusher` - Git Commit & Push Agent
@@ -341,6 +392,69 @@ Files:
 - Session 2 tokens: Main context has only code implementation details
 - **Total tokens < single session** doing both analysis + implementation
 - Subagent keeps documentation isolated from code implementation
+
+---
+
+### Go Debugging Workflow with `/dbg`
+
+`/dbg` slots into the existing Go workflow as the **runtime-truth** step. Where `/analyze` reads the code statically and you currently paste server logs for Claude to trace, `/dbg` makes the program *show* what it does — actual call sequences, argument values, and goroutine state.
+
+**Where it fits:**
+```
+Bug appears
+│
+├─ Need to understand the code paths?        → /analyze   (static dataflow map)
+├─ Need to know what ACTUALLY happens?       → /dbg       (runtime values via Delve)
+└─ Ready to fix it?                          → /implement (or /do)
+```
+
+**One-time setup per Go project:**
+
+`/dbg` drives three helper scripts that live **inside the Go project** (committed there, not in this repo). Create them under `cmd/dlv/` (or copy them from a project that already has them):
+
+```bash
+# In your Go project root:
+mkdir -p cmd/dlv
+# add: dlv_trace.sh, dlv_test.sh, dlv_core.sh   (see the /dbg command doc for contents)
+chmod +x cmd/dlv/*.sh
+
+# Make sure dlv matches your toolchain's Go version (DWARF compatibility):
+GOTOOLCHAIN=go1.25.7 go install github.com/go-delve/delve/cmd/dlv@latest
+
+# Optional: pre-allow the scripts in the project's .claude/settings.local.json
+#   "Bash(dlv:*)", "Bash(cmd/dlv/dlv_trace.sh:*)",
+#   "Bash(cmd/dlv/dlv_test.sh:*)", "Bash(cmd/dlv/dlv_core.sh:*)"
+```
+
+> Why project-local? The scripts reference the project's packages and test names, and they are committed alongside the code so the whole team shares the same debugging entry points. The `dbg.md` command (synced globally) is the reusable "how", the scripts are the project-specific "what".
+
+**Typical session - bug that logs can't explain:**
+```bash
+/dbg streamer drops Sources box on resume
+
+Context: Sources box disappears only on the second resume
+Error: <paste the misleading log line here>
+
+# Claude reproduces it as a go test, then runs:
+#   cmd/dlv/dlv_trace.sh --test 'finalizeResponse' ./chatbot/processing -- -test.run TestResume
+# and reads the real call sequence + arg values, instead of guessing from logs.
+```
+
+**Live-server crash:**
+```bash
+# You capture a core dump like you'd capture logs:
+ulimit -c unlimited; go build -o /tmp/agentic .
+GOTRACEBACK=crash /tmp/agentic        # writes a core file on panic
+
+/dbg analyze this core dump  (then hand over /tmp/agentic + the core file)
+# Claude runs cmd/dlv/dlv_core.sh to inspect every goroutine's frozen state.
+```
+
+**Key Benefits:**
+- **Runtime truth over inference** - real values, not best-guess reading of logs
+- **No interactive token loop** - batch transcripts, analyzed in one pass
+- **Concurrency-safe** - avoids freezing the streaming server / timing heisenbugs
+- **Complements, not replaces** - pairs with `/analyze` (static) and `/implement` (fix)
 
 ---
 
@@ -427,6 +541,7 @@ claude-commands/
 ├── commands/              # Slash commands for Claude Code
 │   ├── analyze.md         # Code archaeology & dataflow tracing
 │   ├── analyze-package.md # Package documentation generator
+│   ├── dbg.md             # Go debugger (Delve) batch workflows
 │   ├── do.md              # Execute tasks by TaskID
 │   ├── implement.md       # Implementation from analysis
 │   ├── postmortem.md      # Session problem documentation
@@ -484,6 +599,13 @@ The `.workflows/` directory keeps all package-level documentation organized and 
 - Use `/do` for EXISTING tasks in todos.md
 - Let subagents handle all documentation and git operations
 - Main context should ONLY do code implementation
+
+### For Debugging (`/dbg`)
+- **Reproduce first**: turn the bug into a focused `go test`, then debug the test - deterministic and fast
+- **Trace before breakpointing**: `dlv_trace.sh` (call + arg values) often reveals the cause without a single breakpoint
+- **Keep `dlv` in sync**: rebuild it whenever your project's Go major version changes (DWARF compatibility)
+- **Live crashes → core dumps**: hand Claude a core file the way you'd hand it logs - far richer state
+- **Commit the `cmd/dlv/` scripts**: they're project-local entry points the whole team shares
 
 ---
 
