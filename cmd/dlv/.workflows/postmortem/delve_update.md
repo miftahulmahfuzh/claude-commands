@@ -1,10 +1,13 @@
 # Postmortem: Installing a Working Delve (dlv) Debugger
 
 **Date:** 2026-06-26
+
 **Goal:** Get the Go debugger (Delve) usable on this project so we can trace bugs
 with real runtime values instead of only server logs.
+
 **Outcome:** ✅ `dlv` upgraded from v1.25.2 → v1.27.0 (built with Go 1.25.7); the
 `/dbg` workflow (`cmd/dlv/*.sh`) is verified working end-to-end.
+
 **Time cost:** Much higher than expected — a 5-minute install turned into a deep
 environment debugging session because of two *layered* problems.
 
