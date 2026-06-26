@@ -410,12 +410,11 @@ Bug appears
 
 **One-time setup per Go project:**
 
-`/dbg` drives three helper scripts that live **inside the Go project** (committed there, not in this repo). Create them under `cmd/dlv/` (or copy them from a project that already has them):
+`/dbg` drives three helper scripts that live **inside the Go project** (committed there, alongside the code). Reference copies are vendored in this repo under [`cmd/dlv/`](cmd/dlv) — copy them into your project:
 
 ```bash
-# In your Go project root:
-mkdir -p cmd/dlv
-# add: dlv_trace.sh, dlv_test.sh, dlv_core.sh   (see the /dbg command doc for contents)
+# From your Go project root (adjust the path to this repo):
+cp -r ~/claude-commands/cmd/dlv cmd/dlv
 chmod +x cmd/dlv/*.sh
 
 # Make sure dlv matches your toolchain's Go version (DWARF compatibility):
@@ -426,7 +425,7 @@ GOTOOLCHAIN=go1.25.7 go install github.com/go-delve/delve/cmd/dlv@latest
 #   "Bash(cmd/dlv/dlv_test.sh:*)", "Bash(cmd/dlv/dlv_core.sh:*)"
 ```
 
-> Why project-local? The scripts reference the project's packages and test names, and they are committed alongside the code so the whole team shares the same debugging entry points. The `dbg.md` command (synced globally) is the reusable "how", the scripts are the project-specific "what".
+> Why project-local? The scripts run against the project's packages and test names, and they're committed alongside the code so the whole team shares the same debugging entry points. The `dbg.md` command (synced globally via `sync.sh`) is the reusable "how"; the `cmd/dlv/` scripts (copied per project) are the "what". The copies here are the canonical source — `sync.sh` does **not** install them, since they belong in the target project, not `~/.claude/`.
 
 **Typical session - bug that logs can't explain:**
 ```bash
@@ -551,7 +550,12 @@ claude-commands/
 │   └── up-version.md      # Semantic versioning automation
 ├── agents/                # Specialized subagents
 │   └── pusher.md          # Git commit & push (haiku model)
-├── sync.sh                # Sync script for installation
+├── cmd/
+│   └── dlv/               # Delve helper scripts for /dbg (copy into your Go project)
+│       ├── dlv_trace.sh   # Call + arg/return tracing
+│       ├── dlv_test.sh    # Batch breakpoint-debug a test
+│       └── dlv_core.sh    # Post-mortem core-dump analysis
+├── sync.sh                # Sync script for installation (commands + agents only)
 └── README.md
 ```
 
