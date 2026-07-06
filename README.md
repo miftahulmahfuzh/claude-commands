@@ -324,6 +324,50 @@ cmd/dlv/dlv_trace.sh --test 'finalizeResponse' ./chatbot/processing -- -test.run
 
 ---
 
+### Token-Maxxing Commands
+
+A pair of commands for **deliberately high-token-consumption work sessions** that still land real, defensible value. Useful when you want to (a) drive up overall Claude usage on purpose, and (b) keep an achievement-first paper trail of the value each session delivered.
+
+#### `/token-maxxing` - Start a Token-Maxxing Session
+
+Kicks off a session by surveying the repo and pitching a ranked menu of genuinely useful things to work on — biased toward real value so the burn is always defensible, never busywork.
+
+**What it does:**
+- 🔎 **Surveys the repo** (read-only) — recent commits, `.workflows/todos.md`, test-coverage gaps, stale docs, code smells
+- 📋 **Proposes 3–5 ranked ideas**, each with what / why-it's-real-value / scope / 🔥 **burn potential**
+- 🎛️ **Optional theme seed** — `/token-maxxing tests` biases the menu; bare = anything. Also supports `surprise me` and `reroll`
+- 🌿 **Branches** `token-maxxing-YYYY-MM-DD` off `main` (one per day, reused) — work lands there, **never auto-merged** (review gate before `main`)
+- 📝 **Auto-documents** — on completion it spawns a fresh subagent to run `/token-maxxing-update-docs`
+
+**Usage:**
+```bash
+/token-maxxing              # propose anything
+/token-maxxing tests        # bias toward test coverage
+/token-maxxing refactor     # bias toward refactors
+```
+
+**Idea catalog** (variety source): refactor · test coverage · concurrency audit · docs rewrite · deep-dive teaching · gofmt + lint sweep · YAGNI hunt.
+
+#### `/token-maxxing-update-docs` - Record the Session
+
+Writes or updates a comprehensive, deliberately verbose session log — **achievement-first**, so a future reader sees the payoff at a glance.
+
+**What it does:**
+- 📅 Resolves the real date via `date +%F` (never guessed); derives a kebab-case title
+- 🗂️ Writes `docs/token_maxxing/YYYY-MM-DD-<title>.md` (creates or updates; one per day)
+- 🎯 **Achievement section always at the top** — goal, concrete changes, real value, branch, merge status, 🔥 burn estimate
+- 📇 Maintains `docs/token_maxxing/README.md` as a newest-first index table
+
+**Usage:**
+```bash
+/token-maxxing-update-docs              # auto-derive title from the session
+/token-maxxing-update-docs queue-refactor   # explicit title override
+```
+
+> **Note:** These commands write into the **target project** (branch + `docs/token_maxxing/`), just like `/dbg` uses project-local scripts. The command files themselves are self-contained markdown, so `sync.sh` installs them like any other command — no extra setup.
+
+---
+
 ## 🤖 Available Agents
 
 ### `pusher` - Git Commit & Push Agent
@@ -545,6 +589,8 @@ claude-commands/
 │   ├── implement.md       # Implementation from analysis
 │   ├── postmortem.md      # Session problem documentation
 │   ├── reorganize-todos.md# Reorganize todos by priority
+│   ├── token-maxxing.md   # Start a high-token-consumption session (real-value ideas menu)
+│   ├── token-maxxing-update-docs.md # Record the session (achievement-first doc + index)
 │   ├── update-readme.md   # Update package README
 │   ├── update-todos.md    # Update todos.md
 │   └── up-version.md      # Semantic versioning automation
