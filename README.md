@@ -333,8 +333,9 @@ A pair of commands for **deliberately high-token-consumption work sessions** tha
 Kicks off a session by surveying the repo and pitching a ranked menu of genuinely useful things to work on — biased toward real value so the burn is always defensible, never busywork.
 
 **What it does:**
+- 🧠 **Recalls recent sessions** — spawns a fresh subagent to read the 5 most recent `docs/token_maxxing/` docs in full, splitting them into `completed` (don't re-propose) and `continuation-candidates` (open follow-ups / unmerged work worth continuing). Gives the workflow memory across days.
 - 🔎 **Surveys the repo** (read-only) — recent commits, `.workflows/todos.md`, test-coverage gaps, stale docs, code smells
-- 📋 **Proposes 3–5 ranked ideas**, each with what / why-it's-real-value / scope / 🔥 **burn potential**
+- 📋 **Proposes 3–5 ranked ideas**, each tagged **🆕 fresh** (new, non-colliding) or **🔁 continue/improve** (deepen a prior session), with what / why-it's-real-value / scope / 🔥 **burn potential** — aiming for a mix of both
 - 🎛️ **Optional theme seed** — `/token-maxxing tests` biases the menu; bare = anything. Also supports `surprise me` and `reroll`
 - 🌿 **Branches** `token-maxxing-YYYY-MM-DD` off `main` (one per day, reused) — work lands there, **never auto-merged** (review gate before `main`)
 - 📝 **Auto-documents** — on completion it spawns a fresh subagent to run `/token-maxxing-update-docs`

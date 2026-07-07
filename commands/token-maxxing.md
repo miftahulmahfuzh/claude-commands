@@ -19,7 +19,25 @@ Optional theme passed by the user: **$ARGUMENTS**
 ### 1. Get the real date
 Run `date +%F` in bash. Never guess the date. Call the result `<DATE>`.
 
-### 2. Survey the repo (read-only, cheap)
+### 2. Recall recent sessions (spawn a subagent)
+Give the workflow memory so today doesn't repeat what we already finished, and so we can
+choose to *continue* prior work.
+
+Spawn a **fresh subagent** to read the most recent token-maxxing docs:
+- List `docs/token_maxxing/*.md` (excluding `README.md`), sort by ISO filename **descending**,
+  take the top **5**. If fewer exist, take what's there. If none exist, skip this step —
+  everything is fresh.
+- The subagent reads those docs **in full** and returns a compact digest. For each session:
+  title, achievement one-liner, **merge status**, and any items under
+  "Follow-ups & YAGNI notes".
+- From the digest, the subagent produces two buckets:
+  - **`completed`** — work that is done and merged; do NOT re-propose these verbatim.
+  - **`continuation-candidates`** — open follow-ups, unmerged branches, or ideas explicitly
+    deferred; these are ripe to *continue or improve* today.
+
+Hold both buckets for Step 4.
+
+### 3. Survey the repo (read-only, cheap)
 Skim for grounding — do NOT do deep work yet:
 - Recent commits: `git log --oneline -15`
 - Open work: any `.workflows/todos.md` files (`find . -name todos.md`)
@@ -27,14 +45,21 @@ Skim for grounding — do NOT do deep work yet:
 - Stale or thin docs under `docs/` and `**/package_readme.md`
 - Obvious smells: large files, TODO/FIXME markers, dead code
 
-### 3. Propose a menu of 3–5 ideas
+### 4. Propose a menu of 3–5 ideas
+Blend fresh ideas with continuations. Every option is tagged:
+- **🆕 Fresh** — new work that does NOT collide with anything in the `completed` bucket.
+- **🔁 Continue/improve** — drawn from `continuation-candidates` (deepen, finish, or improve
+  a prior session's work).
+
+Aim for a mix of both (e.g. 3 fresh + 1–2 continuations) unless a theme narrows it.
 Rank by value. For EACH idea give:
+- **Tag** — 🆕 or 🔁 (for 🔁, name the prior session it continues)
 - **What** — one crisp sentence
 - **Why it's real value** — not busywork
 - **Scope** — files/packages touched, rough size
 - **🔥 Burn potential** — low / med / high (how many tokens it will credibly consume)
 
-Bias the menu toward `$ARGUMENTS` if provided. Keep ideas varied across sessions by
+Bias the menu toward `$ARGUMENTS` if provided. Keep the fresh ideas varied across sessions by
 drawing from this catalog (don't propose the same set every day):
 
 - **Refactor** a subsystem for clarity/quality (e.g. `chatbot/queue`, `chatbot/cancellation`, `tools/toolcore/pipeline`)
@@ -47,15 +72,15 @@ drawing from this catalog (don't propose the same set every day):
 
 End the menu with: **"Pick a number, or say `surprise me` (I pick the highest-value one) or `reroll` (new menu)."**
 
-### 4. Let the user choose
+### 5. Let the user choose
 - A number → that idea.
 - `surprise me` → pick the highest-value idea yourself.
-- `reroll` → generate a fresh menu (go back to step 3).
+- `reroll` → generate a fresh menu (go back to step 4).
 
-### 5. Confirm scope briefly
+### 6. Confirm scope briefly
 One short exchange to lock scope. Adjust to user feedback.
 
-### 6. Create / reuse today's branch
+### 7. Create / reuse today's branch
 ```bash
 git checkout main && git pull --ff-only 2>/dev/null; \
 git checkout -b "token-maxxing-<DATE>" 2>/dev/null || git checkout "token-maxxing-<DATE>"
@@ -63,12 +88,12 @@ git checkout -b "token-maxxing-<DATE>" 2>/dev/null || git checkout "token-maxxin
 One branch per day — reuse it if it already exists. All work lands here; do NOT merge
 to `main` automatically (the user reviews and merges later).
 
-### 7. Roll
+### 8. Roll
 Do the work. Commit real increments with clear messages. Follow the project's skills
 (TDD, systematic-debugging, etc.) as normal — quality still matters. Be thorough and
 verbose; exhaustive-but-correct is the goal, not terse.
 
-### 8. Auto-write the session doc when done
+### 9. Auto-write the session doc when done
 When you judge the work complete (or at a natural stopping point), **spawn a fresh
 subagent** to run the `/token-maxxing-update-docs` workflow so the session is recorded
 without you having to be asked. Give the subagent a full summary of what happened this
