@@ -40,9 +40,9 @@ Hold both buckets for Step 4.
 ### 3. Survey the repo (read-only, cheap)
 Skim for grounding — do NOT do deep work yet:
 - Recent commits: `git log --oneline -15`
-- Open work: any `.workflows/todos.md` files (`find . -name todos.md`)
+- Open work: any `.workflows/todos.md` and `**/analysis_report.md` files (`find . -name todos.md` , `find . -name analysis_report.md`)
 - Test-coverage gaps: packages with few/no `*_test.go` files
-- Stale or thin docs under `docs/` and `**/package_readme.md`
+- Stale or thin docs under `docs/` , `**/analysis_report.md` , `**/package_readme.md` and `**/unittest_guide.md`
 - Obvious smells: large files, TODO/FIXME markers, dead code
 
 ### 4. Propose a menu of 3–5 ideas
