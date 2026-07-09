@@ -66,11 +66,14 @@ Maintain `docs/token_maxxing/README.md` as a table of all sessions. Create it if
 
 A log of deliberately high-token-consumption sessions and the real value each delivered.
 
-| Date | Title | Achievement | Branch | Doc |
-|------|-------|-------------|--------|-----|
-| <DATE> | <Title> | <one-liner> | token-maxxing-<DATE> | [link](./<DATE>-<title>.md) |
+| Date | Title | Achievement | Doc |
+|------|-------|-------------|-----|
+| <DATE> | <Title> | <one-liner> | [link](./<DATE>-<title>.md) |
 ```
 Add or update the row for `<DATE>`. Keep rows sorted newest-first.
+The branch is not a column in this index (branches are date-identified via the Date
+column and deleted at session end); the per-session doc's Achievement block still
+records the branch name.
 
 ### 5. Report
 Print the doc path and the one-line achievement so the user sees the result.
