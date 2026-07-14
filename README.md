@@ -15,7 +15,8 @@ cd claude-commands
 The sync script will:
 - ✅ Copy commands to `~/.claude/commands/`
 - ✅ Copy agents to `~/.claude/agents/`
-- 🎉 Enable immediate use of all custom commands and agents
+- ✅ Copy skills to `~/.claude/skills/`
+- 🎉 Enable immediate use of all custom commands, agents, and skills
 
 ### Manual Installation
 
@@ -23,11 +24,12 @@ If you prefer manual setup:
 
 ```bash
 # Create directories if needed
-mkdir -p ~/.claude/commands ~/.claude/agents
+mkdir -p ~/.claude/commands ~/.claude/agents ~/.claude/skills
 
-# Copy commands and agents
+# Copy commands, agents, and skills
 cp commands/* ~/.claude/commands/
 cp agents/* ~/.claude/agents/
+cp -r skills/* ~/.claude/skills/
 ```
 
 ## 📋 Available Commands
@@ -398,6 +400,24 @@ This agent is also invoked internally by other commands (like `/do` & `/implemen
 
 ---
 
+## 🧠 Available Skills
+
+Skills live in `skills/<name>/SKILL.md` and are auto-discovered by Claude Code based on their `description` triggers — you don't invoke them with a slash. Each skill is a directory so it can ship supporting assets (templates, scripts) alongside the guidance.
+
+### `confluence-writer` - Paste Docs into Confluence Without Broken Formatting
+
+Guidance for getting a document into Confluence with correct formatting, covering both Confluence **Server/Data Center** and **Cloud**.
+
+**What it does:**
+- 🎯 **Core trick:** render the doc as HTML → copy the *rendered* page from a browser → paste rich text into the editor (bypasses every markdown/wiki-markup converter)
+- 🔎 **Detects the flavor** from the URL (`viewpage.action?pageId=` = Server/DC vs `/wiki/spaces/` = Cloud) and picks the right native importer as a fallback
+- 🚑 **Fixes the common failures:** literal `##`/`|` from pasted markdown, and the `HTTP 500 / conf_wikimarkup_conversion_errors` from the flaky wiki-markup importer
+- 📄 Ships `template.html` — a ready-to-adapt, clean-pasting HTML skeleton (headings, tables, panels, ASCII-diagram `<pre>`)
+
+**When it triggers:** any time you're writing/publishing to Confluence, or a paste comes out mangled.
+
+---
+
 ## 🔄 Development Workflows
 
 ### Bug Investigation Workflow with `/analyze` + `/implement`
@@ -597,12 +617,16 @@ claude-commands/
 │   └── up-version.md      # Semantic versioning automation
 ├── agents/                # Specialized subagents
 │   └── pusher.md          # Git commit & push (haiku model)
+├── skills/                # Auto-discovered skills (each a directory with SKILL.md)
+│   └── confluence-writer/ # Paste docs into Confluence without broken formatting
+│       ├── SKILL.md       # When-to-use triggers + method + gotchas
+│       └── template.html  # Clean-pasting HTML skeleton
 ├── cmd/
 │   └── dlv/               # Delve helper scripts for /dbg (copy into your Go project)
 │       ├── dlv_trace.sh   # Call + arg/return tracing
 │       ├── dlv_test.sh    # Batch breakpoint-debug a test
 │       └── dlv_core.sh    # Post-mortem core-dump analysis
-├── sync.sh                # Sync script for installation (commands + agents only)
+├── sync.sh                # Sync script for installation (commands + agents + skills)
 └── README.md
 ```
 

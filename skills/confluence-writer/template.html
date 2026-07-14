@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Confluence Paste Template</title>
+<style>
+  /* Confluence drops most of this on paste; it just makes the browser preview readable. */
+  body { font-family: Arial, Helvetica, sans-serif; line-height: 1.5; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #172b4d; }
+  h1 { font-size: 24px; border-bottom: 2px solid #ddd; padding-bottom: 6px; }
+  h2 { font-size: 19px; margin-top: 28px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+  h3 { font-size: 16px; margin-top: 20px; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  th, td { border: 1px solid #c1c7d0; padding: 6px 10px; text-align: left; vertical-align: top; font-size: 14px; }
+  th { background: #f4f5f7; }
+  pre { background: #f4f5f7; border: 1px solid #c1c7d0; padding: 12px; overflow-x: auto; font-family: "Courier New", monospace; font-size: 12px; line-height: 1.3; }
+  code { background: #f4f5f7; padding: 1px 4px; font-family: "Courier New", monospace; }
+  .panel { border: 1px solid #c1c7d0; border-left: 4px solid #4c9aff; background: #deebff; padding: 10px 14px; margin: 14px 0; }
+  .panel.note { border-left-color: #ffab00; background: #fffae6; }
+  .panel .title { font-weight: bold; margin-bottom: 4px; }
+  hr { border: none; border-top: 1px solid #ddd; margin: 24px 0; }
+</style>
+</head>
+<body>
+
+<!--
+  HOW TO USE:
+  1. Replace the sample content below with your document.
+  2. Open this file in a browser (WSL: explorer.exe "$(wslpath -w template.html)").
+  3. Ctrl+A, Ctrl+C in the browser, then Ctrl+V into the Confluence page editor.
+  RULES: semantic HTML only; <pre> for ASCII diagrams (escape < > &); <br> for
+  in-cell line breaks; plain ASCII in diagrams (-> not the arrow glyph).
+-->
+
+<h1>Document Title</h1>
+
+<p>
+<strong>Prepared for:</strong> Name<br>
+<strong>Date:</strong> YYYY-MM-DD<br>
+<strong>Status:</strong> Draft
+</p>
+
+<div class="panel">
+  <div class="title">Info panel</div>
+  Use for scope notes or assumptions. Paste as a shaded block; convert to a native panel in the editor if desired.
+</div>
+
+<div class="panel note">
+  <div class="title">Note / warning panel</div>
+  Amber variant for headline findings or caveats.
+</div>
+
+<hr>
+
+<h2>1. Section Heading</h2>
+<p>Body paragraph with <strong>bold</strong>, <em>italic</em>, and inline <code>code</code>.</p>
+<ul>
+  <li>Bullet item one.</li>
+  <li>Bullet item two.</li>
+</ul>
+<ol>
+  <li>Numbered step one.</li>
+  <li>Numbered step two.</li>
+</ol>
+
+<h2>2. Table Example</h2>
+<table>
+  <tr><th>Column A</th><th>Column B</th><th>Notes</th></tr>
+  <tr><td>Value</td><td>Value</td><td>In-cell line break:<br>second line here</td></tr>
+  <tr><td><strong>Total</strong></td><td>42</td><td>Bold works inside cells.</td></tr>
+</table>
+
+<h2>3. Diagram / Preformatted</h2>
+<pre>
+ +----------+      +----------+
+ |  Box A   | ---> |  Box B   |
+ +----------+      +----------+
+   note: use plain ASCII; escape &lt; &gt; &amp; as entities
+</pre>
+
+</body>
+</html>

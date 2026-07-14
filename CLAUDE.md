@@ -4,19 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Is
 
-A collection of **Claude Code slash commands** (`commands/*.md`) and **subagents** (`agents/*.md`) that are deployed into a user's `~/.claude/` directory. There is no application to build, run, or test — each file is a prompt/spec that Claude Code loads at invocation time. "Editing the code" here means editing markdown.
+A collection of **Claude Code slash commands** (`commands/*.md`), **subagents** (`agents/*.md`), and **skills** (`skills/<name>/SKILL.md`) that are deployed into a user's `~/.claude/` directory. There is no application to build, run, or test — each file is a prompt/spec that Claude Code loads at invocation time. "Editing the code" here means editing markdown.
 
 ## Deploying Changes
 
-`./sync.sh` copies `commands/*` → `~/.claude/commands/` and `agents/*` → `~/.claude/agents/`. Run it after any change to make the change live in Claude Code. There is no lint, no test runner, no CI.
+`./sync.sh` copies `commands/*` → `~/.claude/commands/`, `agents/*` → `~/.claude/agents/`, and `skills/*` → `~/.claude/skills/`. Run it after any change to make the change live in Claude Code. There is no lint, no test runner, no CI.
 
 To smoke-test a command after editing, run `./sync.sh` then invoke the command (e.g. `/do P0-XX-A123`) in a Claude Code session against a real `.workflows/` directory.
 
 ## Architecture
 
-### Two artifact types
+### Three artifact types
 - **`commands/<name>.md`** — invoked by the user as `/<name>`. Top-level prompt; main context executes it.
 - **`agents/<name>.md`** — invoked as a subagent via the Task/Agent tool. Frontmatter (`name`, `description`, `model`, `color`) controls dispatch; `model: haiku` is used to keep cost/latency low for routine work (see `agents/pusher.md`).
+- **`skills/<name>/SKILL.md`** — auto-discovered by Claude Code from its frontmatter `description` (a "Use when…" trigger); not user-invoked. Each skill is a **directory** so it can ship supporting assets (templates, scripts) beside the `SKILL.md` — e.g. `skills/confluence-writer/template.html`.
 
 ### The `.workflows/` contract
 Most commands operate on a target package directory that contains a `.workflows/` folder. This is the persistence layer that ties commands together:
@@ -74,6 +75,12 @@ Tasks are tagged EASY / NORMAL / HARD. HARD tasks trigger automatic branch creat
 
 ### Adding a new agent
 Create `agents/<name>.md` with frontmatter (`name`, `description`, `model`, `color`). Use `model: haiku` for fast/cheap routine work, `sonnet` for tasks needing judgment (e.g. README updater).
+
+### Adding a new skill
+1. Create `skills/<name>/SKILL.md` with YAML frontmatter — only `name` and `description`. The `description` must be third-person and start with "Use when…", listing concrete triggers/symptoms (Claude reads it to decide whether to load the skill); do NOT summarize the skill's workflow there.
+2. Put supporting assets (templates, scripts) in the same directory and reference them by relative name.
+3. Update `README.md` (the "Available Skills" section is the user-facing index) and the Project Structure tree.
+4. Run `./sync.sh` to deploy.
 
 ### Versioning
 `/up-version` analyzes commits since the last tag and updates `CHANGELOG.md` following Keep-a-Changelog + SemVer. Don't hand-edit `CHANGELOG.md` for routine changes — let `/up-version` generate the entry on release.

@@ -9,6 +9,7 @@ REPO_DIR="$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 COMMANDS_DIR="$CLAUDE_DIR/commands"
 AGENTS_DIR="$CLAUDE_DIR/agents"
+SKILLS_DIR="$CLAUDE_DIR/skills"
 
 echo "Syncing Claude Commands & Agents..."
 echo "Repository: $REPO_DIR"
@@ -31,6 +32,14 @@ mkdir -p "$AGENTS_DIR"
 cp -r "$REPO_DIR/agents/"* "$AGENTS_DIR/"
 echo "  Agents synced to $AGENTS_DIR"
 
+# Sync skills (each skill is a directory containing SKILL.md + optional assets)
+if [ -d "$REPO_DIR/skills" ]; then
+    echo "Syncing skills..."
+    mkdir -p "$SKILLS_DIR"
+    cp -r "$REPO_DIR/skills/"* "$SKILLS_DIR/"
+    echo "  Skills synced to $SKILLS_DIR"
+fi
+
 # List what was synced
 echo ""
 echo "Synced commands:"
@@ -49,6 +58,17 @@ for agent_file in "$REPO_DIR/agents/"*.md; do
         echo "   $agent_name"
     fi
 done
+
+if [ -d "$REPO_DIR/skills" ]; then
+    echo ""
+    echo "Synced skills:"
+    for skill_dir in "$REPO_DIR/skills/"*/; do
+        if [ -f "$skill_dir/SKILL.md" ]; then
+            skill_name=$(basename "$skill_dir")
+            echo "   $skill_name"
+        fi
+    done
+fi
 
 echo ""
 echo "Sync complete!"
