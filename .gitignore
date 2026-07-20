@@ -1,2 +1,6 @@
 .worktrees/
 docs/plans/
+
+# confluence-reader: never commit a filled-in credentials file (the .example is fine)
+**/confluence-reader/credentials
+credentials

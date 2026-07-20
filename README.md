@@ -416,6 +416,19 @@ Guidance for getting a document into Confluence with correct formatting, coverin
 
 **When it triggers:** any time you're writing/publishing to Confluence, or a paste comes out mangled.
 
+### `confluence-reader` - Read a Login-Walled Confluence Page (Text + Images)
+
+The **read** counterpart to `confluence-writer`. When an agent can't open a Confluence link in a browser (a PRD/spec behind login), this pulls the page down via the REST API so the agent can actually read it.
+
+**What it does:**
+- 🎯 **Core trick:** hit `/rest/api/content` with the user's credentials → save the body as readable text **and** download every inline image as a local file the agent can `Read` (PDF/copy-paste both lose the images)
+- 🔗 **Resolves any URL form** to a pageId: `/display/SPACE/Page`, `/pages/viewpage.action?pageId=`, tiny `/x/…` links, Cloud `/wiki/spaces/.../pages/<id>`, or a bare numeric id
+- 🖼️ Body text carries `[IMG: images/<file>]` markers so you know where each screenshot sits in context; open only the ones that matter
+- 🔐 **Credentials never touch the chat:** reads a `CONFLUENCE_PAT` (preferred), `CONFLUENCE_USER`/`CONFLUENCE_PASS`, or a git-ignored `~/.config/confluence-reader/credentials` file (`credentials.example` provided)
+- 🐍 Ships `confluence_fetch.py` — **stdlib only, no `pip install`**; works on Confluence **Server/Data Center** and **Cloud**
+
+**When it triggers:** any time you need to read a Confluence page/PRD that's behind login.
+
 ---
 
 ## 🔄 Development Workflows
@@ -618,9 +631,13 @@ claude-commands/
 ├── agents/                # Specialized subagents
 │   └── pusher.md          # Git commit & push (haiku model)
 ├── skills/                # Auto-discovered skills (each a directory with SKILL.md)
-│   └── confluence-writer/ # Paste docs into Confluence without broken formatting
+│   ├── confluence-writer/ # Paste docs into Confluence without broken formatting
+│   │   ├── SKILL.md       # When-to-use triggers + method + gotchas
+│   │   └── template.html  # Clean-pasting HTML skeleton
+│   └── confluence-reader/ # Read a login-walled Confluence page (text + images)
 │       ├── SKILL.md       # When-to-use triggers + method + gotchas
-│       └── template.html  # Clean-pasting HTML skeleton
+│       ├── confluence_fetch.py  # Stdlib fetcher: URL/pageId -> text + images
+│       └── credentials.example  # Credentials-file template (PAT or user/pass)
 ├── cmd/
 │   └── dlv/               # Delve helper scripts for /dbg (copy into your Go project)
 │       ├── dlv_trace.sh   # Call + arg/return tracing
