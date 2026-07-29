@@ -77,6 +77,42 @@ Generate detailed diff analysis including:
   - Categorized changes (Added, Changed, Deprecated, Removed, Fixed, Security)
   - Detailed descriptions based on diff analysis and commit messages
 - Preserve existing changelog history below new entry
+- **Match the existing entries' conventions rather than the format's defaults.**
+  Read a previous entry before writing: whether headings are `## [vX.Y.Z] - DATE`
+  or plain, which optional sections the project actually uses (a "Known gaps" or
+  "Breaking changes" section is a house convention no template will suggest), and
+  how the prose is pitched. A new entry that is formatted differently from the ones
+  above it is the most visible thing in the file.
+
+#### 8a. Add the link reference definition — DO NOT SKIP
+
+**In "Keep a Changelog" format the `## [vX.Y.Z]` heading is a reference link, and
+the brackets alone do nothing.** It renders as a live link only if a matching
+definition exists, and those definitions live in a block at the **very bottom of
+the file**, hundreds or thousands of lines below the entry just written:
+
+```
+[v0.4.0]: https://github.com/<owner>/<repo>/releases/tag/v0.4.0
+[v0.3.0]: https://github.com/<owner>/<repo>/releases/tag/v0.3.0
+```
+
+Because the entry is added at the top and the definition belongs at the bottom,
+this is the step that gets missed — and the symptom is quiet: the new heading
+renders as the literal characters `[v0.4.0]` while every older version links
+correctly. Nothing errors and no linter complains.
+
+- Check for a definition block at the end of the file (`grep -nE '^\[.*\]:' CHANGELOG.md`)
+- **If one exists**, add a line for the new version, copying the URL shape of the
+  existing entries exactly — some projects point at `/releases/tag/vX.Y.Z`, others
+  at a `/compare/vA...vB` range. Preserve the block's ordering (usually newest
+  first)
+- **If none exists**, the headings are plain text in this project — do not
+  introduce a block, since that would change every existing heading's rendering
+- Verify before committing: every `## [vX.Y.Z]` heading has a matching `[vX.Y.Z]:`
+  definition, and no definition is an orphan pointing at an absent heading
+- Note the URL is a forward reference: it 404s until step 12 pushes the tag, and
+  until a GitHub release exists if the definitions point at `/releases/tag/`. That
+  is expected and is not a reason to omit the line
 
 ### 9. Update API_VERSION in .env file
 - Check if `.env` file exists in project root directory
