@@ -429,6 +429,23 @@ The **read** counterpart to `confluence-writer`. When an agent can't open a Conf
 
 **When it triggers:** any time you need to read a Confluence page/PRD that's behind login.
 
+### `issue-ticket-reader` - Read a Jira Bug/Issue Ticket (Text + Screenshots + Video Frames)
+
+The Jira counterpart to `confluence-reader`. When an agent is handed a ticket link it can't open, this pulls the **whole** ticket — not just the description, but the comment thread and attachments, which is usually where the actual bug report lives.
+
+**What it does:**
+- 🎯 **Core trick:** hit `/rest/api/2/issue/<KEY>?expand=renderedFields` with the user's credentials → description **plus every comment in thread order**, linked issues, subtasks, parent, labels/components/versions, as readable text
+- 🔗 **Resolves any URL form** to an issue key: `/browse/KEY-123`, `?selectedIssue=KEY-123`, `/projects/X/issues/KEY-123`, Cloud `*.atlassian.net/browse/…`, or a bare `KEY-123` with `--base-url`
+- 🖼️ Downloads **every attachment** locally; body text carries `[IMG: attachments/<file>]` markers mapped by attachment id, so screenshots are readable in the position they were embedded
+- 🎬 **Attached videos → sampled JPEG frames** via ffmpeg (`--frames N`), timestamp in each filename (`frame_03_0012.50s.jpg`) — the only way an agent gets anything out of a screen recording
+- 🔑 **Reuses the `confluence-reader` credentials** — Jira and Confluence normally sit behind one user directory, so if `confluence-reader` is set up this skill needs **zero** new setup (own `JIRA_PAT` / `~/.config/issue-ticket-reader/credentials` still take priority)
+- 🧾 Extras: `--changelog` (who moved the status, when), `--all-fields` (non-empty custom fields with human names — Sprint, Story Points), `--no-attachments` for a fast text-only read
+- 🐍 Ships `issue_fetch.py` — **stdlib only, no `pip install`**; works on Jira **Server/Data Center** (`api/2`, wiki markup) and **Cloud** (`api/3`, ADF)
+
+**Honest limits, documented in the SKILL.md rather than discovered later:** video **audio is never transcribed** (no local speech-to-text), so a verbally-explained bug is not readable from frames alone; sparse frame sampling can miss a transient error toast (raise `--frames`); and pdf/xlsx attachments are downloaded but not converted.
+
+**When it triggers:** any time you're pointed at a Jira ticket you need to actually read.
+
 ---
 
 ## 🔄 Development Workflows
@@ -634,10 +651,14 @@ claude-commands/
 │   ├── confluence-writer/ # Paste docs into Confluence without broken formatting
 │   │   ├── SKILL.md       # When-to-use triggers + method + gotchas
 │   │   └── template.html  # Clean-pasting HTML skeleton
-│   └── confluence-reader/ # Read a login-walled Confluence page (text + images)
-│       ├── SKILL.md       # When-to-use triggers + method + gotchas
-│       ├── confluence_fetch.py  # Stdlib fetcher: URL/pageId -> text + images
-│       └── credentials.example  # Credentials-file template (PAT or user/pass)
+│   ├── confluence-reader/ # Read a login-walled Confluence page (text + images)
+│   │   ├── SKILL.md       # When-to-use triggers + method + gotchas
+│   │   ├── confluence_fetch.py  # Stdlib fetcher: URL/pageId -> text + images
+│   │   └── credentials.example  # Credentials-file template (PAT or user/pass)
+│   └── issue-ticket-reader/ # Read a Jira ticket (text + comments + attachments)
+│       ├── SKILL.md       # When-to-use triggers + method + documented limits
+│       ├── issue_fetch.py # Stdlib fetcher: URL/KEY -> text, images, video frames
+│       └── credentials.example  # Jira creds template (falls back to confluence-reader's)
 ├── cmd/
 │   └── dlv/               # Delve helper scripts for /dbg (copy into your Go project)
 │       ├── dlv_trace.sh   # Call + arg/return tracing

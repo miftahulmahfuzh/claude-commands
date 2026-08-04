@@ -1,6 +1,8 @@
 .worktrees/
 docs/plans/
 
-# confluence-reader: never commit a filled-in credentials file (the .example is fine)
+# confluence-reader / issue-ticket-reader: never commit a filled-in credentials file
+# (the .example templates are fine — only a file named exactly `credentials` is secret)
 **/confluence-reader/credentials
+**/issue-ticket-reader/credentials
 credentials
