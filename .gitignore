@@ -6,3 +6,7 @@ docs/plans/
 **/confluence-reader/credentials
 **/issue-ticket-reader/credentials
 credentials
+
+# Python bytecode from running the skills' selftests
+__pycache__/
+*.pyc
