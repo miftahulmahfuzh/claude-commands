@@ -119,8 +119,15 @@ class Entry:
 
 class TodoFile:
     def __init__(self, path, root):
-        self.path = Path(path)
-        self.rel = str(self.path.relative_to(root))
+        # Both resolved: a caller passing a relative path (`.workflows/todos.md`)
+        # with an absolute root is the normal case from a CLI argument, and
+        # relative_to raised on it.
+        self.path = Path(path).resolve()
+        root = Path(root).resolve()
+        try:
+            self.rel = str(self.path.relative_to(root))
+        except ValueError:
+            self.rel = str(self.path)
         self.text = self.path.read_text(encoding="utf-8")
         self.lines = self.text.splitlines()
         code = PKG_CODE_RE.search(self.text)

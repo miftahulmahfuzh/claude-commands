@@ -402,7 +402,7 @@ This agent is also invoked internally by other commands (like `/do` & `/implemen
 
 ## 🧠 Available Skills
 
-Skills live in `skills/<name>/SKILL.md` and are auto-discovered by Claude Code based on their `description` triggers — you don't invoke them with a slash. Each skill is a directory so it can ship supporting assets (templates, scripts) alongside the guidance.
+Skills live in `skills/<name>/SKILL.md` and are auto-discovered by Claude Code based on their `description` triggers. Most fire on their own from what you're doing; the task-tracking ones below are also directly invocable by name (`/task 14`, `/sync-todos-into-gitlab-board <file>`) because you usually know the card you want. Each skill is a directory so it can ship supporting assets (templates, scripts) alongside the guidance.
 
 ### `confluence-writer` - Paste Docs into Confluence Without Broken Formatting
 
@@ -445,6 +445,57 @@ The Jira counterpart to `confluence-reader`. When an agent is handed a ticket li
 **Honest limits, documented in the SKILL.md rather than discovered later:** video **audio is never transcribed** (no local speech-to-text), so a verbally-explained bug is not readable from frames alone; sparse frame sampling can miss a transient error toast (raise `--frames`); and pdf/xlsx attachments are downloaded but not converted.
 
 **When it triggers:** any time you're pointed at a Jira ticket you need to actually read.
+
+### `task` - Task Cards on GitHub Projects or GitLab Issues
+
+Replaces keeping ideas in a notes app where Claude Code can't see them. Capture a
+bug/feature/idea in a browser or on a phone, then `/task <id>` in a fresh session
+fetches it, brainstorms it, writes the plan, links the plan path back onto the
+card, and walks it **Open → In Progress → Completed**. Months later a bug goes in
+as a comment, the card returns to Open, and round two starts from the newest
+comment rather than the stale body.
+
+**One loop, two backends,** chosen from the `origin` remote's host:
+
+| | Personal repos | Work repos |
+|---|---|---|
+| Cards | GitHub Issues + a Projects board named `Tasks` | GitLab Issues (self-hosted) |
+| Stage | the board's **Status** field | labels `status::open` / `status::in-progress` / `status::completed` |
+| Kanban | one board spanning repos | one board **per project** (`board --ensure`) |
+| Development | the skill runs the loop | mints a TaskID and hands off to **`/do`** |
+
+**What it does:**
+- 🎫 **Reads the whole card** — body **and every comment in order**. On a returning card the body is the original idea and the newest comment is the bug report; reading only the body is the main way this fails quietly
+- 🔁 **Detects the round** from the plan block, so a second visit brainstorms only the delta
+- 📝 **Links the plan** in a marker-delimited, append-only block in the issue **body**, not a comment (comments get buried under bug reports)
+- 🚦 **Moves the card** on plan approval without asking — approving the plan *is* the decision to start — but reaches Completed only when the user says so **and** verification actually passed
+- 🧮 **Owns the TaskID corpus** via `todos.py`: `scan`, `validate`, `mint`, `rename` over every `.workflows/todos.md`, with a rename ledger because TaskIDs appear in commit messages that can't be rewritten
+- 🩺 `doctor` on either backend checks auth, scopes, board, labels and columns, and names the fix for whatever is missing
+
+**Never closes the issue.** `Completed` is the stage only: GitHub Projects auto-archives closed items, so the reopen loop would fight the board's own automation.
+
+**Three things measured rather than assumed** (each broke something first): GitLab CE doesn't enforce scoped-label exclusivity, so a transition rewrites the whole label set in one call and verifies it; in `todos.md` the checkbox is the stage **only** under `## Active Tasks`, since the rolling summary and activity log record what was true at the time; and package codes aren't unique, so TaskID uniqueness is only ever checked on the whole id across every file.
+
+**Layout:** `taskcore.py` (plan-block codec, stages, reference parsing — shared) · `task_gh.py` (gh CLI) · `task_gl.py` (GitLab REST via urllib, no `glab` needed) · `todos.py`. Every module has an offline `selftest` — no token, no network.
+
+**Setup:** GitHub needs `gh auth refresh -s project,read:project`; GitLab needs a PAT with the `api` scope in `~/.config/task-skill/gitlab` (no admin rights — it inherits your own permissions), then `labels --ensure` and `board --ensure` per project.
+
+### `sync-todos-into-gitlab-board` - Mirror todos.md onto a GitLab Board
+
+`/sync-todos-into-gitlab-board .workflows/todos.md` — one GitLab issue per live task, each landing in the board column its stage says. `todos.md` stays the source of truth for execution; the board is a window onto it, and each card says so and names `/do <TaskID>`.
+
+**What it does:**
+- 🆔 **TaskID is the identity**, carried in the issue title, so re-running updates rather than duplicates — a second run reports every card unchanged
+- 🗂️ **Respects stages**: `- [ ]` → **Open**, `- [ ]` + `Status: in_progress` → **In Progress**, `- [x]` → **Completed**. The checkbox wins on done-ness (`Status:` is missing from 28 live entries) but `in_progress` is information the checkbox can't carry, and mapping it to Open would file started work as untouched
+- 🧹 **Repairs non-canonical TaskIDs first**, split two ways: ones with an entry go to `todos.py rename` (deterministic, ~60 assertions, stamps `Former ID`, writes a ledger); ones surviving only as a bare reference in a log section get **one subagent each**, because there's no entry to rename and no single right answer
+- 🚧 **`plan` is the default and writes nothing** — creating a GitLab issue needs **Owner** to delete and a Maintainer can only close, so the first run on a repo should be a small `--limit` pilot
+- 🙅 **Won't clobber your notes**: a card body is only rewritten when the source marker is missing, or with explicit `--refresh-bodies`
+
+**Ignores echoes.** A `todos.md` carries a rolling summary and an append-only activity log in which the same id repeats. Only entries under `## Active Tasks` become issues — the root file has **27 live entries and 28 echoes**, so missing this roughly doubles the issue count with permanent duplicates.
+
+**Honest cost, documented rather than discovered:** a closed GitLab issue moves to the board's Closed column, out of `status::completed` — so finished work sits as an *open* issue carrying the completed label, which inflates the project's open-issue count. That's the price of a label board.
+
+**When it triggers:** asking to sync/push/mirror a `todos.md` onto GitLab, or wondering why a task isn't on the board.
 
 ---
 
@@ -552,6 +603,55 @@ GOTRACEBACK=crash /tmp/agentic        # writes a core file on panic
 
 ---
 
+### Task-Tracking Workflow with `/task`
+
+The gap this fills: an idea arrives away from the keyboard, goes into a notes app,
+and Claude Code never sees it. `/task` makes the browser the front door.
+
+**Personal repos — the skill runs the whole loop:**
+
+```bash
+# In a browser (or the GitHub mobile app): + on the Tasks board's Open column.
+# A draft item needs no repo at all — that's the "notes app" case.
+
+/task 14                    # fetch, read every comment, brainstorm
+                            # on plan approval: writes the plan, links it on the
+                            # card, moves to In Progress — no prompt
+                            # ... build ...
+                            # Completed only once verification actually passed
+```
+
+**Work repos that already have `.workflows/todos.md` — `/task` is the front door,
+not a replacement:**
+
+```
+GitLab issue (browser/phone)
+      │  /task 7
+      ▼
+brainstorm ─► mint a canonical TaskID into the right package's todos.md
+      │       mirror the stage onto the card
+      ▼
+/do <TaskID>                 # the existing five-subagent pipeline, unchanged
+```
+
+That repo's 33 `todos.md` files and `/do` stay authoritative. `/task` adds the
+browser-visible half; it does not re-implement the executor.
+
+**Going the other way** — populate the board from work already tracked:
+
+```bash
+/sync-todos-into-gitlab-board .workflows/todos.md
+# plan first (writes nothing), then apply. Active -> Open, in_progress ->
+# In Progress, done -> Completed. Re-running is a no-op.
+```
+
+**Why the board never leads reality:** a card sits in `In Progress` only while
+genuinely being worked, and reaches `Completed` only when the user says the work
+is done *and* verification passed. A card in the wrong column is the one failure
+this can't absorb, because you'd trust the board instead of re-reading the code.
+
+---
+
 ## 🆚 `/implement` vs `/do`: When to Use Which
 
 ### Quick Decision Tree
@@ -655,10 +755,20 @@ claude-commands/
 │   │   ├── SKILL.md       # When-to-use triggers + method + gotchas
 │   │   ├── confluence_fetch.py  # Stdlib fetcher: URL/pageId -> text + images
 │   │   └── credentials.example  # Credentials-file template (PAT or user/pass)
-│   └── issue-ticket-reader/ # Read a Jira ticket (text + comments + attachments)
-│       ├── SKILL.md       # When-to-use triggers + method + documented limits
-│       ├── issue_fetch.py # Stdlib fetcher: URL/KEY -> text, images, video frames
-│       └── credentials.example  # Jira creds template (falls back to confluence-reader's)
+│   ├── issue-ticket-reader/ # Read a Jira ticket (text + comments + attachments)
+│   │   ├── SKILL.md       # When-to-use triggers + method + documented limits
+│   │   ├── issue_fetch.py # Stdlib fetcher: URL/KEY -> text, images, video frames
+│   │   └── credentials.example  # Jira creds template (falls back to confluence-reader's)
+│   ├── task/              # Task cards on GitHub Projects or GitLab Issues
+│   │   ├── SKILL.md       # The loop: resolve -> brainstorm -> plan -> stages
+│   │   ├── DESIGN.md      # Decisions and the alternatives that were rejected
+│   │   ├── taskcore.py    # Shared: plan-block codec, stages, reference parsing
+│   │   ├── task_gh.py     # GitHub Issues + Projects v2, via the gh CLI
+│   │   ├── task_gl.py     # GitLab Issues, via REST + urllib (no glab needed)
+│   │   └── todos.py       # The .workflows/todos.md corpus: scan/validate/mint/rename
+│   └── sync-todos-into-gitlab-board/  # Mirror a todos.md onto a GitLab board
+│       ├── SKILL.md       # Repair -> plan -> apply, and the stage mapping
+│       └── sync_todos.py  # Idempotent sync; imports the task skill's modules
 ├── cmd/
 │   └── dlv/               # Delve helper scripts for /dbg (copy into your Go project)
 │       ├── dlv_trace.sh   # Call + arg/return tracing
