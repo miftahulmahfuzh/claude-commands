@@ -21,6 +21,7 @@ python3 $S/sync_todos.py plan   .workflows/todos.md            # what would happ
 python3 $S/sync_todos.py apply  .workflows/todos.md            # active tasks only
 python3 $S/sync_todos.py apply  .workflows/todos.md --include-completed
 python3 $S/sync_todos.py repair .workflows/todos.md            # non-canonical ids
+python3 $S/sync_todos.py audit                                 # one card per TaskID?
 python3 $S/sync_todos.py selftest                              # offline
 ```
 
@@ -118,7 +119,42 @@ have it; mapping those to Open would file started work as untouched. A ticked bo
 with a contradicting status is still Completed, and the disagreement is reported
 in `stageFrom` rather than silently resolved.
 
-## Three things that would go wrong quietly
+## One TaskID, one card
+
+todos.md TaskIDs are unique, so the board must never hold two cards for one id.
+Identity is read from **two channels**:
+
+1. the `P1-MN-A001 —` prefix in the issue **title**, which is what a human reads
+   and what the board shows;
+2. the `- TaskID:` line inside the `<!-- task:source -->` block in the body.
+
+The second exists because the first is editable. Retitle a card in the browser and
+drop the prefix, and a title-only match makes that card invisible to the next
+run — which then creates a second one for the same task. **Verified:** a card
+retitled to "someone renamed this card by hand" is still recognised by its body
+marker, and the sync proposes restoring its title rather than creating a duplicate.
+
+`index_cards` reports two failures of that mapping, and **`apply` refuses to write
+while either exists** rather than compounding it:
+
+- `duplicateCards` — one id held by two issues.
+- `idConflicts` — one issue claiming two ids, e.g. a hand-edited title over a
+  stale body. Identity is ambiguous there and picking one would be a guess.
+
+```bash
+python3 $S/sync_todos.py audit          # exit 0 if unique, 1 with the offenders
+```
+
+Fixing a duplicate needs a human: **a GitLab issue needs the Owner role to
+delete**, so a Maintainer should close the extra card and clear its stage label
+(which also takes it off a board with the closed column hidden). The skill will
+not choose which of two cards is the real one.
+
+**Verified on `ai/chatbot/agentic`:** 27 issues, 27 distinct TaskIDs, `unique:
+true`; two cards deliberately given the same id made `audit` exit 1 and `apply`
+refuse, naming both.
+
+## Three more things that would go wrong quietly
 
 - **Echoes are not tasks.** A todos.md carries a rolling summary (`### Today` /
   `This Week` / `This Month`) and an append-only `## Recent Activity` log in

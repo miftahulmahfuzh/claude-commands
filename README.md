@@ -486,7 +486,8 @@ comment rather than the stale body.
 `/sync-todos-into-gitlab-board .workflows/todos.md` — one GitLab issue per live task, each landing in the board column its stage says. `todos.md` stays the source of truth for execution; the board is a window onto it, and each card says so and names `/do <TaskID>`.
 
 **What it does:**
-- 🆔 **TaskID is the identity**, carried in the issue title, so re-running updates rather than duplicates — a second run reports every card unchanged
+- 🆔 **One TaskID, one card — enforced.** Identity is read from **two** channels, the title prefix *and* the `- TaskID:` line in the card's source block, because a title edited in the browser would otherwise hide the card and the next run would create a second one. `audit` exits non-zero on any id held twice or any card claiming two ids, and `apply` **refuses to write** while either exists rather than compounding it — fixing a duplicate needs a human, since the skill won't guess which of two cards is the real one
+- 🔁 **Re-running changes nothing** — a second run over an in-sync board reports every card unchanged, verified across 27 cards
 - 🗂️ **Respects stages**: `- [ ]` → **Open**, `- [ ]` + `Status: in_progress` → **In Progress**, `- [x]` → **Completed**. The checkbox wins on done-ness (`Status:` is missing from 28 live entries) but `in_progress` is information the checkbox can't carry, and mapping it to Open would file started work as untouched
 - 🧹 **Repairs non-canonical TaskIDs first**, split two ways: ones with an entry go to `todos.py rename` (deterministic, ~60 assertions, stamps `Former ID`, writes a ledger); ones surviving only as a bare reference in a log section get **one subagent each**, because there's no entry to rename and no single right answer
 - 🚧 **`plan` is the default and writes nothing** — creating a GitLab issue needs **Owner** to delete and a Maintainer can only close, so the first run on a repo should be a small `--limit` pilot

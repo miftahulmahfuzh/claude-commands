@@ -7,9 +7,10 @@ Stdlib only. Reuses the /task skill's modules rather than re-parsing anything:
   plan   FILE            what would happen; writes nothing (the default)
   apply  FILE            create and update issues
   repair FILE            report non-canonical ids, split by whether `rename` can fix them
+  audit                  is the board still one card per TaskID? exit 1 if not
   selftest               offline assertions
 
-Three properties this has to hold, each of which is a way it could go wrong
+Four properties this has to hold, each of which is a way it could go wrong
 quietly:
 
   * **Echoes are not tasks.** A todos.md carries a rolling summary and an
@@ -17,8 +18,15 @@ quietly:
     entries under `## Active Tasks` become issues; the root file has 27 live
     entries and 28 echoes, so ignoring this roughly doubles the issue count with
     duplicates.
-  * **Re-running must not duplicate.** The TaskID is the identity, carried in the
-    issue title and matched on the way back in. A second run updates or skips.
+  * **One TaskID, one card — always.** todos.md TaskIDs are unique, so the board
+    must never hold two cards for one id. Identity is read from *two* channels,
+    the title prefix and the `- TaskID:` line in the source block, because a
+    title edited in the browser would otherwise hide the card from the next run
+    and a second one would be created. `index_cards` reports any id held twice
+    and any card claiming two ids, and `apply` **refuses to write** while either
+    exists rather than compounding it.
+  * **Re-running changes nothing.** A second run over an in-sync board reports
+    every card unchanged: verified across 27 cards.
   * **It is close to irreversible.** Deleting a GitLab issue needs Owner; a
     Maintainer can only close. So `plan` is the default and `apply` is explicit.
 """
@@ -47,6 +55,8 @@ from todos import ID_RE, TodoFile, Corpus  # noqa: E402
 SOURCE_OPEN = "<!-- task:source -->"
 SOURCE_CLOSE = "<!-- /task:source -->"
 TITLE_ID_RE = re.compile(r"^\s*(P[0-4]-[A-Z]{1,4}-[A-Z0-9]+)\b")
+# The id recorded inside the source block, the second identity channel.
+BODY_ID_RE = re.compile(r"^- TaskID: `(P[0-4]-[A-Z]{1,4}-[A-Z0-9]+)`", re.M)
 
 # Entry fields worth carrying onto the card, in the order a reader wants them.
 # `Plan` is handled separately -- it goes in the plan block, not the prose.
@@ -125,14 +135,49 @@ def load_entries(path, include_completed):
     return f, live, echoes, chosen
 
 
-def existing_by_taskid(api, project):
-    """Index the project's issues by the TaskID in their title."""
-    out = {}
-    for i in api.paged(f"projects/{enc(project)}/issues", params={"state": "all"}):
-        m = TITLE_ID_RE.match(i.get("title") or "")
-        if m:
-            out.setdefault(m.group(1), i)
-    return out
+def card_task_ids(issue):
+    """Every TaskID an issue claims, from its title and its source block.
+
+    Two channels on purpose. The title is what a human reads and what the board
+    shows; the source block survives someone editing the title in the browser.
+    With only the title, dropping the `P1-MN-…` prefix by hand makes the card
+    invisible to the next sync, which then creates a second one.
+    """
+    claims = {}
+    m = TITLE_ID_RE.match(issue.get("title") or "")
+    if m:
+        claims.setdefault(m.group(1), []).append("title")
+    for tid in BODY_ID_RE.findall(issue.get("description") or ""):
+        claims.setdefault(tid, []).append("body")
+    return claims
+
+
+def index_cards(api, project):
+    """Map TaskID -> issue, and report every way that mapping is not a function.
+
+    `duplicates` is the property the sync exists to protect: todos.md TaskIDs are
+    unique, so the board must never hold two cards for one id. `conflicts` is an
+    issue claiming two different ids (a hand-edited title over a stale body),
+    where identity is ambiguous and guessing would pick one arbitrarily.
+    """
+    index, duplicates, conflicts = {}, {}, []
+    for issue in api.paged(f"projects/{enc(project)}/issues", params={"state": "all"}):
+        claims = card_task_ids(issue)
+        if not claims:
+            continue
+        if len(claims) > 1:
+            conflicts.append({
+                "number": issue.get("iid"),
+                "title": issue.get("title"),
+                "claims": {tid: srcs for tid, srcs in sorted(claims.items())},
+            })
+        for tid in claims:
+            seen = index.get(tid)
+            if seen is None:
+                index[tid] = issue
+            elif seen.get("iid") != issue.get("iid"):
+                duplicates.setdefault(tid, [seen.get("iid")]).append(issue.get("iid"))
+    return index, duplicates, conflicts
 
 
 def diff_entry(entry, issue, todos_rel, refresh_bodies=False):
@@ -176,7 +221,7 @@ def run(path, project, apply=False, include_completed=False, limit=None,
             f"python3 {TASK_SKILL}/task_gl.py labels --project {project} --ensure"
         )
 
-    existing = existing_by_taskid(api, project)
+    existing, duplicates, conflicts = index_cards(api, project)
     if limit:
         chosen = chosen[:limit]
 
@@ -194,11 +239,28 @@ def run(path, project, apply=False, include_completed=False, limit=None,
         "toUpdate": [],
         "unchanged": [],
         "nonCanonical": [e.task_id for e in chosen if not e.canonical],
+        "duplicateCards": duplicates,
+        "idConflicts": conflicts,
         "stageCounts": {},
     }
     for entry in chosen:
         st, _why = stage_for(entry)
         result["stageCounts"][st] = result["stageCounts"].get(st, 0) + 1
+
+    if apply and (duplicates or conflicts):
+        lines = []
+        for tid, iids in sorted(duplicates.items()):
+            lines.append(f"  {tid}: cards #" + ", #".join(str(n) for n in iids))
+        for c in conflicts:
+            lines.append(f"  card #{c['number']} claims {', '.join(sorted(c['claims']))}")
+        raise TaskError(
+            "Refusing to apply: the board already breaks TaskID uniqueness.\n"
+            + "\n".join(lines)
+            + "\n\nTaskIDs in todos.md are unique, so one id must mean one card. "
+              "Close or retitle the extra card(s) first — a GitLab issue needs the "
+              "Owner role to delete, so a Maintainer should close and clear the "
+              "stage label. `audit` lists them at any time."
+        )
 
     for entry in chosen:
         issue = existing.get(entry.task_id)
@@ -283,6 +345,27 @@ def repair_report(path):
         "mechanical": mechanical,
         "judgement": judgement,
         "mechanicalFix": "python3 %s/todos.py rename --apply" % TASK_SKILL,
+    }
+
+
+def audit(project):
+    """Report every TaskID the board holds more than once, plus stray cards."""
+    api = Api(*load_creds())
+    index, duplicates, conflicts = index_cards(api, project)
+    all_issues = api.paged(f"projects/{enc(project)}/issues", params={"state": "all"})
+    untracked = [
+        {"number": i.get("iid"), "title": i.get("title")}
+        for i in all_issues if not card_task_ids(i)
+    ]
+    return {
+        "project": project,
+        "issues": len(all_issues),
+        "cardsWithTaskId": len(all_issues) - len(untracked),
+        "distinctTaskIds": len(index),
+        "unique": not duplicates and not conflicts,
+        "duplicateCards": duplicates,
+        "idConflicts": conflicts,
+        "issuesWithoutTaskId": untracked,
     }
 
 
@@ -387,6 +470,69 @@ def cmd_selftest(_args):
     eq("refresh is a no-op when already identical",
        "body" in diff_entry(done, fresh, REL, refresh_bodies=True), False)
 
+    # ---- identity and uniqueness -------------------------------------------
+    def card(iid, title, body=""):
+        return {"iid": iid, "title": title, "description": body, "labels": [],
+                "state": "opened"}
+
+    src = lambda tid: f"{SOURCE_OPEN}\n- TaskID: `{tid}`\n{SOURCE_CLOSE}"
+
+    eq("id from title", list(card_task_ids(card(1, "P1-MN-A001 — x"))), ["P1-MN-A001"])
+    eq("id from body", list(card_task_ids(card(1, "renamed", src("P1-MN-A001")))),
+       ["P1-MN-A001"])
+    eq("title and body agreeing is one claim",
+       list(card_task_ids(card(1, "P1-MN-A001 — x", src("P1-MN-A001")))), ["P1-MN-A001"])
+    eq("both channels recorded",
+       card_task_ids(card(1, "P1-MN-A001 — x", src("P1-MN-A001")))["P1-MN-A001"],
+       ["title", "body"])
+    eq("no id at all", card_task_ids(card(1, "just an issue")), {})
+
+    class FakeApi:
+        def __init__(self, issues):
+            self.issues = issues
+
+        def paged(self, *_a, **_k):
+            return self.issues
+
+    # the clean case
+    idx, dups, confl = index_cards(FakeApi([
+        card(1, "P1-MN-A001 — x", src("P1-MN-A001")),
+        card(2, "P2-MN-T013 — y", src("P2-MN-T013")),
+    ]), "p")
+    eq("indexes both", sorted(idx), ["P1-MN-A001", "P2-MN-T013"])
+    eq("no duplicates", dups, {})
+    eq("no conflicts", confl, [])
+
+    # two cards for one id -- the property the sync exists to protect
+    _i, dups, _c = index_cards(FakeApi([
+        card(1, "P1-MN-A001 — x", src("P1-MN-A001")),
+        card(9, "P1-MN-A001 — x again", src("P1-MN-A001")),
+    ]), "p")
+    eq("duplicate detected", dups, {"P1-MN-A001": [1, 9]})
+
+    # a duplicate visible only through the body, the title having been edited
+    _i, dups, _c = index_cards(FakeApi([
+        card(1, "P1-MN-A001 — x", src("P1-MN-A001")),
+        card(9, "someone retitled this", src("P1-MN-A001")),
+    ]), "p")
+    eq("duplicate found via the body channel", dups, {"P1-MN-A001": [1, 9]})
+
+    # a retitled card is still found, so no second card gets created
+    idx, dups, _c = index_cards(FakeApi([
+        card(9, "someone retitled this", src("P1-MN-A001"))]), "p")
+    eq("retitled card still indexed", idx["P1-MN-A001"]["iid"], 9)
+    eq("retitled card is not a duplicate", dups, {})
+
+    # one card claiming two ids: ambiguous identity, never silently resolved
+    _i, _d, confl = index_cards(FakeApi([
+        card(1, "P1-MN-A001 — x", src("P2-MN-T013"))]), "p")
+    eq("conflict detected", len(confl), 1)
+    eq("conflict names both ids", sorted(confl[0]["claims"]), ["P1-MN-A001", "P2-MN-T013"])
+
+    # untracked issues are ignored, not adopted
+    idx, dups, confl = index_cards(FakeApi([card(5, "a teammate's bug report")]), "p")
+    eq("untracked ignored", (idx, dups, confl), ({}, {}, []))
+
     if failures:
         print("FAIL\n  " + "\n  ".join(failures), file=sys.stderr)
         return 1
@@ -417,6 +563,8 @@ def main(argv=None):
     q.add_argument("file")
     q.set_defaults(mode="repair")
 
+    sub.add_parser("audit", parents=[common]).set_defaults(mode="audit")
+
     sub.add_parser("selftest").set_defaults(mode="selftest")
 
     args = p.parse_args(argv)
@@ -431,6 +579,10 @@ def main(argv=None):
         project = args.project or project_hint()
         if not project:
             raise TaskError("Needs --project, or a GitLab origin remote in this directory.")
+        if args.mode == "audit":
+            out = audit(project)
+            print(json.dumps(out, indent=2))
+            return 0 if out["unique"] else 1
         out = run(args.file, project, apply=(args.mode == "apply"),
                   include_completed=args.include_completed, limit=args.limit,
                   refresh_bodies=args.refresh_bodies)
