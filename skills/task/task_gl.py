@@ -68,6 +68,9 @@ STAGE_LABELS = {
     "Completed": ("status::completed", "#4e9a51"),
 }
 STAGE_LABEL_NAMES = [v[0] for v in STAGE_LABELS.values()]
+# The labels that get their own board column. Completed does not: closed issues
+# populate GitLab's built-in Closed list, and a label list shows open issues only.
+BOARD_COLUMN_LABELS = [STAGE_LABELS["Open"][0], STAGE_LABELS["In Progress"][0]]
 
 
 # ------------------------------------------------------------------------ creds
@@ -183,6 +186,38 @@ def current_stage(labels):
     return stage, present
 
 
+# Completed is carried by GitLab's own issue state, not only by a label.
+#
+# Measured: a label list on a board shows *open* issues only, and the project's
+# default issue list shows open issues only. So a completed card that stays open
+# sits in a shared repo's issue list forever, and closing it empties the
+# status::completed column. Using the built-in Closed column for done-ness fixes
+# both at once, and makes state the single source of done rather than a label
+# duplicating it. The label is still applied, because it survives closing and so
+# stays useful as a filter.
+CLOSED_STAGE = "Completed"
+
+
+def effective_stage(issue):
+    """The stage the board actually shows for an issue.
+
+    A closed issue appears in the Closed column whatever its labels say, so
+    closed *is* Completed. Reading the labels alone would report a closed card as
+    Open and every sync would try to "fix" it forever.
+    """
+    if (issue.get("state") or "").lower() == "closed":
+        return CLOSED_STAGE, [l for l in (issue.get("labels") or []) if l in STAGE_LABEL_NAMES]
+    return current_stage(list(issue.get("labels") or []))
+
+
+def stage_write(stage, existing_labels):
+    """The PUT body that puts an issue in `stage`: labels plus a state change."""
+    kept = [l for l in existing_labels if l not in STAGE_LABEL_NAMES]
+    body = {"labels": ",".join(kept + [STAGE_LABELS[stage][0]])}
+    body["state_event"] = "close" if stage == CLOSED_STAGE else "reopen"
+    return body
+
+
 def project_hint():
     """The project path of the current directory's origin remote, if any."""
     import subprocess
@@ -217,7 +252,7 @@ def resolve_issue(api, ref, project_override=None):
 
 def issue_view(api, path, issue, with_notes=True):
     labels = list(issue.get("labels") or [])
-    stage, present = current_stage(labels)
+    stage, present = effective_stage(issue)
     notes = []
     if with_notes:
         raw = api.paged(
@@ -352,8 +387,14 @@ def cmd_doctor(args):
                 lists = api.paged(f"projects/{enc(target)}/boards/{b['id']}/lists")
                 cols = [(l.get("label") or {}).get("name") for l in
                         sorted(lists, key=lambda x: x.get("position") or 0)]
-                missing = [n for n in STAGE_LABEL_NAMES if n not in cols]
+                missing = [n for n in BOARD_COLUMN_LABELS if n not in cols]
                 report["boardUrl"] = f"{creds['host']}/{target}/-/boards/{b['id']}"
+                if b.get("hide_closed_list"):
+                    raise TaskError(
+                        "The board's Closed column is hidden, but Completed cards are "
+                        "closed issues and that column is where they appear. Fix with: "
+                        f"task_gl.py board --project {target} --ensure"
+                    )
                 if missing:
                     raise TaskError(
                         f"Board {b.get('name')!r} is missing column(s) {', '.join(missing)}. "
@@ -365,25 +406,26 @@ def cmd_doctor(args):
                 # Reported rather than failed: in a shared repo a teammate's
                 # ordinary issue has no stage labels, and a doctor that goes red
                 # for that is a doctor nobody reads.
-                if b.get("hide_backlog_list") or b.get("hide_closed_list"):
+                if b.get("hide_backlog_list"):
+                    # Only an OPEN issue with no stage label is off the board now:
+                    # closed ones live in the visible Closed column.
                     issues = api.paged(f"projects/{enc(target)}/issues",
-                                       params={"state": "all"})
+                                       params={"state": "opened"})
                     invisible = [
                         i["iid"] for i in issues
                         if not [l for l in (i.get("labels") or [])
                                 if l in STAGE_LABEL_NAMES]
                     ]
-                    closed = [i["iid"] for i in issues if i.get("state") == "closed"]
-                    if invisible or closed:
+                    if invisible:
                         report["hiddenFromBoard"] = {
-                            "noStageLabel": invisible,
-                            "closed": closed,
-                            "why": "the backlog and closed columns are hidden, so these "
-                                   "issues do not appear on the board",
+                            "openWithNoStageLabel": invisible,
+                            "why": "the backlog column is hidden, so an open issue with "
+                                   "no stage label appears in no column",
                         }
-                cols_note = "3 columns, no Open/Closed doubles" if (
-                    b.get("hide_backlog_list") and b.get("hide_closed_list")
-                ) else "default Open/Closed columns still shown"
+                cols_note = (
+                    "2 label columns + built-in Closed" if b.get("hide_backlog_list")
+                    else "backlog column still shown, duplicating status::open"
+                )
                 return f"{b.get('name')!r} (id {b['id']}), {cols_note}, columns {cols}"
 
             check("kanban board", board)
@@ -471,14 +513,19 @@ def cmd_board(args):
                             body={"name": BOARD_NAME})
         created_board = True
 
+    # The board is: status::open | status::in-progress | Closed.
+    #
+    # The backlog ("Open") column is hidden because status::open already is it.
+    # The Closed column is SHOWN and is the Completed column: a label list only
+    # ever shows open issues, so a status::completed list would sit permanently
+    # empty once completed cards are closed -- and they are closed so they leave
+    # the project's issue list, which a shared repo's other users read.
     hidden = False
-    if args.ensure and not (board.get("hide_backlog_list") and board.get("hide_closed_list")):
-        # GitLab ships a board with an "Open" (backlog) and a "Closed" column,
-        # both redundant here: status::open already is the open column, and
-        # status::completed already is the done one. Three columns, no doubles.
+    if args.ensure and not (board.get("hide_backlog_list") and
+                            board.get("hide_closed_list") is False):
         board = api.request(
             "PUT", f"projects/{enc(path)}/boards/{board['id']}",
-            body={"hide_backlog_list": True, "hide_closed_list": True},
+            body={"hide_backlog_list": True, "hide_closed_list": False},
         )
         hidden = True
 
@@ -497,8 +544,9 @@ def cmd_board(args):
     added = []
     if args.ensure:
         # Created in STAGES order so the columns read left to right the way the
-        # loop moves through them.
-        for name in STAGE_LABEL_NAMES:
+        # loop moves through them. Completed is deliberately absent: it is the
+        # built-in Closed column, which no label list can stand in for.
+        for name in BOARD_COLUMN_LABELS:
             if name in have:
                 continue
             api.request("POST", f"projects/{enc(path)}/boards/{board['id']}/lists",
@@ -541,7 +589,7 @@ def cmd_list(args):
     issues = api.paged(path, params=params, limit=args.limit)
     out = []
     for i in issues:
-        stage, present = current_stage(list(i.get("labels") or []))
+        stage, present = effective_stage(i)
         plans = parse_plan_block(i.get("description") or "")
         out.append({
             "project": (i.get("references") or {}).get("full", "").split("#")[0] or target,
@@ -587,33 +635,46 @@ def cmd_create(args):
 def cmd_status(args):
     api = Api(*load_creds())
     path, issue = resolve_issue(api, args.ref, args.project)
-    want = resolve_stage(STAGE_LABEL_NAMES, args.name)
-    labels = list(issue.get("labels") or [])
-    stage_now, present = current_stage(labels)
+    want = None
+    for stage in STAGES:
+        if resolve_stage(STAGE_LABEL_NAMES, args.name) == STAGE_LABELS[stage][0]:
+            want = stage
+            break
+    if want is None:
+        raise TaskError(f"Stage {args.name!r} is not one of {', '.join(STAGES)}.")
 
-    if present == [want]:
-        print(json.dumps({"changed": False, "stage": args.name, "labels": labels}, indent=2))
+    labels = list(issue.get("labels") or [])
+    stage_now, present = effective_stage(issue)
+    want_label = STAGE_LABELS[want][0]
+    want_closed = want == CLOSED_STAGE
+    is_closed = (issue.get("state") or "").lower() == "closed"
+
+    if stage_now == want and present == [want_label] and is_closed == want_closed:
+        print(json.dumps({"changed": False, "stage": want, "state": issue.get("state"),
+                          "labels": labels}, indent=2))
         return 0
 
-    # Rewrite the whole label set in one PUT. On Community Edition nothing
-    # removes the previous status:: label for us, and `add_labels` alone would
-    # leave the issue in two stages at once -- visible as two board columns.
-    kept = [l for l in labels if l not in STAGE_LABEL_NAMES]
-    new_labels = kept + [want]
+    # One PUT for both halves. On Community Edition nothing removes the previous
+    # status:: label for us, and the state has to move in the same breath: a
+    # closed issue is what the board's Closed column shows, so a Completed card
+    # that stayed open would sit in the project's issue list forever.
     updated = api.request(
         "PUT", f"projects/{enc(path)}/issues/{issue['iid']}",
-        body={"labels": ",".join(new_labels)},
+        body=stage_write(want, labels),
     )
     after = list(updated.get("labels") or [])
-    stage_after, present_after = current_stage(after)
-    if present_after != [want]:
+    stage_after, present_after = effective_stage(updated)
+    if present_after != [want_label] or stage_after != want:
         raise TaskError(
-            f"Stage label set is {present_after} after the update, expected [{want}]. "
-            f"Nothing else changed; re-run or fix the labels by hand."
+            f"After the update the card reads stage {stage_after!r} with labels "
+            f"{present_after} and state {updated.get('state')!r}, expected {want!r} "
+            f"with [{want_label}]. Nothing else changed; re-run or fix it by hand."
         )
     print(json.dumps(
         {"changed": True, "from": stage_now, "to": stage_after,
-         "removed": [l for l in present if l != want], "labels": after},
+         "state": updated.get("state"),
+         "closed": (updated.get("state") or "").lower() == "closed",
+         "removed": [l for l in present if l != want_label], "labels": after},
         indent=2,
     ))
     return 0
@@ -682,6 +743,35 @@ def cmd_selftest(args):
         failures.append("unknown stage should raise")
     except TaskError:
         pass
+
+    # Completed is carried by the issue state, so closed reads as Completed
+    # whatever the labels say -- otherwise a closed card reads Open and every
+    # sync tries to "fix" it forever.
+    eq("closed reads Completed",
+       effective_stage({"state": "closed", "labels": ["status::completed"]})[0], "Completed")
+    eq("closed with a stale open label still reads Completed",
+       effective_stage({"state": "closed", "labels": ["status::open"]})[0], "Completed")
+    eq("closed with no labels reads Completed",
+       effective_stage({"state": "closed", "labels": []})[0], "Completed")
+    eq("open reads from its label",
+       effective_stage({"state": "opened", "labels": ["status::in-progress"]})[0],
+       "In Progress")
+    eq("open with no stage label reads None",
+       effective_stage({"state": "opened", "labels": ["bug"]})[0], None)
+
+    # writing a stage moves the labels and the state together
+    w = stage_write("Completed", ["bug", "status::open"])
+    eq("completed closes", w["state_event"], "close")
+    eq("completed keeps other labels", w["labels"], "bug,status::completed")
+    w = stage_write("In Progress", ["bug", "status::completed"])
+    eq("in progress reopens", w["state_event"], "reopen")
+    eq("in progress swaps the label", w["labels"], "bug,status::in-progress")
+    eq("open reopens", stage_write("Open", [])["state_event"], "reopen")
+
+    # the board has two label columns; Completed is the built-in Closed list
+    eq("board columns", BOARD_COLUMN_LABELS, ["status::open", "status::in-progress"])
+    eq("completed is not a board column",
+       STAGE_LABELS["Completed"][0] in BOARD_COLUMN_LABELS, False)
 
     # path encoding for nested groups
     eq("nested encode", enc("ai/chatbot/agentic"), "ai%2Fchatbot%2Fagentic")

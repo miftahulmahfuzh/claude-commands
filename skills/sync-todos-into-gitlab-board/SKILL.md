@@ -144,10 +144,17 @@ Everything else is corrected:
 
 | todos.md | card | sync does |
 |---|---|---|
-| `[x]` | Open or In Progress | → **Completed** (the `/do` case) |
-| `[ ]` | Completed | → **Open** (reopened) |
-| `[ ]` | In Progress | **nothing** — a live claim |
+| `[x]` | open (Open or In Progress) | label Completed **and close** (the `/do` case) |
+| `[ ]` | closed | **reopen** and label Open (reopened task) |
+| `[ ]` | open, In Progress | **nothing** — a live `/task` claim |
+| `[x]` | closed but labelled `status::open` | fix the label |
+| `[x]` | open but labelled `status::completed` | **close it** |
 | any | two stage labels | → the wanted one (always drift) |
+
+**Completed is carried by the issue state, so state is half the comparison.** A
+card open-but-labelled-completed, or closed-but-labelled-open, is drift even
+though one half already agrees — a bug the offline assertions caught after I first
+compared labels alone.
 
 ## Stages
 
@@ -216,11 +223,13 @@ refuse, naming both.
   *does* discard card notes and is therefore opt-in. That flag needs the real
   source path in the comparison: with an empty one, every card differs from
   itself and every run rewrites everything.
-- **Completed cards stay open.** A closed GitLab issue moves to the board's
-  Closed column, out of `status::completed`. So finished work sits as an open
-  issue carrying the completed label, which inflates the project's open-issue
-  count. That is the cost of using a label board; tell the user rather than
-  letting them discover it.
+- **Completed cards are closed, and that is deliberate.** A GitLab label list
+  shows open issues only, so a completed card left open sat in the project's
+  issue list forever — the team saw 55 open issues, 44 of them finished. Closing
+  drops that to 11 and puts the card in the board's built-in **Closed** column,
+  which is why `board --ensure` keeps that column visible and creates only two
+  label columns. `POST /issues` cannot set the state, so an already-finished task
+  is created open and then closed: two calls, unavoidable.
 
 ## Verified state
 

@@ -14,8 +14,8 @@ here by id, brainstormed, planned, built, and moved through **Open → In Progre
 | | Personal repos | Work repos |
 |---|---|---|
 | Cards live in | GitHub Issues + a Projects board named `Tasks` | GitLab Issues on the self-hosted instance |
-| Stage carried by | the board's **Status** field | labels `status::open` / `status::in-progress` / `status::completed` |
-| Kanban view | one user-level Projects board, spanning repos | one board **per project** (`board --ensure`) |
+| Stage carried by | the board's **Status** field | labels for Open/In Progress; **Completed = the issue is closed** |
+| Kanban view | one user-level Projects board, spanning repos | one board **per project**: 2 label columns + built-in Closed |
 | Cross-project view | the same board | the **group issue list**, filtered by label |
 | Helper | `task_gh.py` | `task_gl.py` |
 | Development loop | this skill runs it | this skill mints a TaskID and hands off to **`/do`** |
@@ -166,19 +166,42 @@ python3 $S/task_gl.py comment <ref> "Done in <sha>. Verified: <commands that pas
 python3 $S/task_gl.py status <ref> Completed
 ```
 
+On GitLab that second command **closes the issue** as well as labelling it, which
+is what moves it into the Closed column and out of the project's issue list.
+Reopening later (`status <ref> Open`) reopens the issue too.
+
 If verification fails, say so and leave the card in `In Progress`. A card in the
 wrong column is the one failure this system cannot absorb, because the user
 trusts the board instead of re-reading the code.
 
-## Never close the issue
+## Closing: the two backends differ, and the reason is measured
 
-`Completed` is the **stage only**. Neither helper has a `close` subcommand.
+**GitHub — never close.** `Completed` is the Status field only, and `task_gh.py`
+has no `close` subcommand. Projects ships an **auto-archive** workflow on closed
+items: a closed issue disappears off the board, so the reopen loop would fight
+the board's own automation every time a bug comes back.
 
-On GitHub, Projects ships an **auto-archive** workflow on closed items: a closed
-issue disappears off the board, and the reopen loop would then fight the board's
-own automation every time a bug comes back. On GitLab the reason is different but
-points the same way — closing is a second, redundant state beside the label, and
-two sources of truth for one fact drift.
+**GitLab — Completed *is* closed.** `task_gl.py status <ref> Completed` sets the
+label **and** closes the issue, in one PUT; `Open` and `In Progress` reopen it.
+This reverses what this file said earlier, on evidence:
+
+- A GitLab **label list shows open issues only**, and the project's default issue
+  list shows open issues only. So a completed card that stayed open sat in a
+  shared repo's issue list forever — `ai/chatbot/agentic` was showing **55 open
+  issues** to the team, 44 of them finished work.
+- Closing fixes that but empties a `status::completed` label column. Measured:
+  after closing, `state=opened&labels=status::completed` returns **0**.
+- So the third column is GitLab's **built-in Closed list**, not a label list.
+  `board --ensure` therefore creates only two label columns and leaves
+  `hide_closed_list` **false**.
+
+`effective_stage()` reads a closed issue as Completed **whatever its labels say** —
+without that, a closed card reads as Open and every sync tries to "fix" it
+forever. The `status::completed` label is still applied, because it survives
+closing and stays useful as a filter.
+
+Result on `ai/chatbot/agentic`: the team's issue list went **55 → 11**, and the
+board reads `status::open` (11) | `status::in-progress` (0) | Closed (44).
 
 ## The reopen loop
 
@@ -239,14 +262,16 @@ python3 $S/task_gl.py board  --project <path> --ensure   # the kanban board + co
 
 Both are idempotent, and `doctor` prints the board URL plus the cross-project one.
 
-`board --ensure` also **hides GitLab's default Open and Closed columns**, which
-are redundant here: `status::open` already *is* the open column and
-`status::completed` already is the done one, so leaving them gives a five-column
-board with two doubles. The cost is that a card carrying **no** stage label, or a
-closed one, is then not on the board at all rather than parked in a visible
-column — so `doctor` reports those under `hiddenFromBoard`. It reports rather than
-fails, because in a shared repo a teammate's ordinary issue has no stage labels,
-and a doctor that goes red for that is a doctor nobody reads.
+`board --ensure` shapes the board as **`status::open` | `status::in-progress` |
+Closed**. It hides the backlog ("Open") column, which duplicates `status::open`,
+and keeps the **Closed** column visible because that is where Completed cards
+live — see the closing section above for why a `status::completed` label column
+cannot do that job.
+
+The remaining cost is that an **open** issue carrying no stage label appears in no
+column, so `doctor` reports those under `hiddenFromBoard`. It reports rather than
+fails: in a shared repo a teammate's ordinary issue has no stage labels, and a
+doctor that goes red for that is a doctor nobody reads.
 
 **Two Community Edition limits, both measured on this instance rather than
 inferred from the docs:**

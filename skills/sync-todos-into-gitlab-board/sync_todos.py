@@ -57,10 +57,11 @@ from task_gl import (  # noqa: E402
     STAGE_LABELS,
     STAGE_LABEL_NAMES,
     Api,
-    current_stage,
+    effective_stage,
     enc,
     load_creds,
     project_hint,
+    stage_write,
 )
 from todos import ID_RE, TodoFile, Corpus  # noqa: E402
 
@@ -199,29 +200,24 @@ def index_cards(api, project):
     return index, duplicates, conflicts
 
 
-def _stage_ok(want_stage, have_stage, present):
-    """Is the card's current stage acceptable for what todos.md says?
+def _labels_ok(want_stage, have_stage, present, want_label):
+    """Is the card's stage LABEL acceptable for what todos.md says?
 
-    todos.md is primary — with one exception that matters. An unticked entry
-    means "not finished", which is true both of work nobody has started and of
-    work a `/task` session is actively doing right now. todos.md has no way to
-    say the difference: a claim by `/task` writes only to the board.
+    Exactly one stage label, and it must be the wanted one — with a single
+    tolerated mismatch: a card In Progress while todos.md says Open. An unticked
+    entry means "not finished", true both of untouched work and of work a `/task`
+    session is doing right now, and todos.md cannot express the difference because
+    a claim writes to the board only. Without this, every sync would drag a live
+    session's card back to Open.
 
-    So when todos.md wants Open, a card already In Progress is left alone —
-    otherwise every sync would yank a live session's card back to Open. Any
-    other disagreement is drift and gets corrected: a card in Open or In Progress
-    whose task is now `[x]` (the `/do` case), and a card still in Completed whose
-    task has been reopened.
-
-    `present` is required because none of the above applies unless the card
-    carries exactly one stage label. Two at once is the Community Edition failure
-    mode and is always drift, even when one of them is the wanted one.
+    Two labels at once is the Community Edition failure mode and never acceptable,
+    even when one of them is the wanted one.
     """
     if len(present) != 1:
         return False
-    if want_stage == have_stage:
-        return True
-    return want_stage == "Open" and have_stage == "In Progress"
+    if present != [want_label]:
+        return want_stage == "Open" and have_stage == "In Progress"
+    return True
 
 
 def diff_entry(entry, issue, todos_rel, refresh_bodies=False):
@@ -232,9 +228,17 @@ def diff_entry(entry, issue, todos_rel, refresh_bodies=False):
         changes["title"] = want_title
     want_stage, why = stage_for(entry)
     want_label = STAGE_LABELS[want_stage][0]
-    have_stage, present = current_stage(list(issue.get("labels") or []))
-    if present != [want_label] and not _stage_ok(want_stage, have_stage, present):
-        changes["stage"] = {"from": have_stage, "to": want_stage, "because": why}
+    have_stage, present = effective_stage(issue)
+    # Completed is carried by the issue state, so the state is half the comparison.
+    # A card open but labelled completed, or closed but labelled open, is drift
+    # even though one of the two halves already agrees.
+    is_closed = (issue.get("state") or "").lower() == "closed"
+    want_closed = want_stage == "Completed"
+    if is_closed != want_closed or not _labels_ok(want_stage, have_stage, present, want_label):
+        changes["stage"] = {
+            "from": have_stage, "to": want_stage, "because": why,
+            "closed": {"is": is_closed, "want": want_closed},
+        }
     # The body is only rewritten when the source block is absent or stale --
     # never on every run, because a human may have added notes to the card and
     # clobbering those would make the sync hostile to use.
@@ -343,8 +347,16 @@ def run(path, project, apply=False, include_completed=False, limit=None,
                         "labels": STAGE_LABELS[stage][0],
                     },
                 )
+                # POST /issues cannot set the state, so an already-finished task
+                # is created open and then closed. Two calls, unavoidable.
+                if stage == "Completed":
+                    created = api.request(
+                        "PUT", f"projects/{enc(project)}/issues/{created['iid']}",
+                        body={"state_event": "close"},
+                    )
                 record["number"] = created.get("iid")
                 record["url"] = created.get("web_url")
+                record["state"] = created.get("state")
             result["toCreate"].append(record)
             continue
 
@@ -360,9 +372,11 @@ def run(path, project, apply=False, include_completed=False, limit=None,
             if "body" in changes:
                 body_payload["description"] = issue_body(entry, todos_rel)
             if "stage" in changes:
-                kept = [l for l in (issue.get("labels") or []) if l not in STAGE_LABEL_NAMES]
-                body_payload["labels"] = ",".join(
-                    kept + [STAGE_LABELS[changes["stage"]["to"]][0]]
+                # stage_write moves the label and the open/closed state together:
+                # Completed means the issue is closed, which is what puts it in
+                # the board's Closed column and out of the project's issue list.
+                body_payload.update(
+                    stage_write(changes["stage"]["to"], issue.get("labels") or [])
                 )
             updated = api.request(
                 "PUT", f"projects/{enc(project)}/issues/{issue['iid']}", body=body_payload
@@ -494,7 +508,7 @@ def cmd_selftest(_args):
     # diff: nothing to do when title, stage and source block already agree
     REL = ".workflows/todos.md"
     issue = {"title": "P1-MN-A001 — Do the thing", "labels": ["status::open"],
-             "description": issue_body(e, REL)}
+             "description": issue_body(e, REL), "state": "opened"}
     eq("no diff when in sync", diff_entry(e, issue, REL), {})
     eq("stage drift detected",
        "stage" in diff_entry(e, {**issue, "labels": ["status::completed"]}, REL), True)
@@ -526,7 +540,8 @@ def cmd_selftest(_args):
     # --refresh-bodies: off by default, so a card with notes is left alone even
     # when the body no longer matches todos.md
     stale = {"title": issue_title(done), "labels": ["status::completed"],
-             "description": issue_body(done, REL) + "\n\nA human note.\n"}
+             "description": issue_body(done, REL) + "\n\nA human note.\n",
+             "state": "closed"}
     eq("stale body untouched by default", "body" in diff_entry(done, stale, REL), False)
     eq("refresh rewrites it",
        "body" in diff_entry(done, stale, REL, refresh_bodies=True), True)
@@ -538,6 +553,18 @@ def cmd_selftest(_args):
     def card(iid, title, body=""):
         return {"iid": iid, "title": title, "description": body, "labels": [],
                 "state": "opened"}
+
+    # a closed card reads as Completed, so a ticked task is in sync with it
+    closed_card = {"title": issue_title(done), "labels": ["status::completed"],
+                   "description": issue_body(done, REL), "state": "closed"}
+    eq("ticked task vs closed card: no drift",
+       "stage" in diff_entry(done, closed_card, REL), False)
+    open_but_labelled = {**closed_card, "state": "opened"}
+    eq("ticked task vs OPEN card with the completed label: drift",
+       diff_entry(done, open_but_labelled, REL)["stage"]["to"], "Completed")
+    reopened_task = E("P0-MN-T005", "Fix templates", done=False, fields={"Status": "active"})
+    eq("reopened task vs closed card: pull back to Open",
+       diff_entry(reopened_task, closed_card, REL)["stage"]["to"], "Open")
 
     src = lambda tid: f"{SOURCE_OPEN}\n- TaskID: `{tid}`\n{SOURCE_CLOSE}"
 
@@ -602,7 +629,7 @@ def cmd_selftest(_args):
     ticked = E("P0-MN-T005", "Fix templates", done=True,
                fields={"Status": "completed", "Completed": "2026-08-12"})
     card_open = {"title": issue_title(ticked), "labels": ["status::open"],
-                 "description": issue_body(ticked, REL)}
+                 "description": issue_body(ticked, REL), "state": "opened"}
     ch = diff_entry(ticked, card_open, REL)
     eq("/do case: card moves to Completed", ch["stage"]["to"], "Completed")
     eq("/do case: from Open", ch["stage"]["from"], "Open")
@@ -613,7 +640,7 @@ def cmd_selftest(_args):
     # A card reopened in todos.md but still Completed on the board
     reopened = E("P0-MN-T005", "Fix templates", done=False, fields={"Status": "active"})
     card_done = {"title": issue_title(reopened), "labels": ["status::completed"],
-                 "description": issue_body(reopened, REL)}
+                 "description": issue_body(reopened, REL), "state": "closed"}
     eq("reopened task pulls the card back to Open",
        diff_entry(reopened, card_done, REL)["stage"]["to"], "Open")
 
@@ -621,18 +648,24 @@ def cmd_selftest(_args):
     # "being worked right now", so In Progress must not be reverted to Open.
     active = E("P1-MN-T009", "Compression", done=False, fields={"Status": "active"})
     claimed = {"title": issue_title(active), "labels": ["status::in-progress"],
-               "description": issue_body(active, REL)}
+               "description": issue_body(active, REL), "state": "opened"}
     eq("a live claim is not dragged back to Open",
        "stage" in diff_entry(active, claimed, REL), False)
-    eq("_stage_ok: Open wanted, In Progress held",
-       _stage_ok("Open", "In Progress", ["status::in-progress"]), True)
-    eq("_stage_ok: Completed wanted, In Progress held is drift",
-       _stage_ok("Completed", "In Progress", ["status::in-progress"]), False)
-    eq("_stage_ok: In Progress wanted, Open held is drift",
-       _stage_ok("In Progress", "Open", ["status::open"]), False)
-    eq("_stage_ok: two labels is always drift",
-       _stage_ok("Open", "Open", ["status::open", "status::completed"]), False)
-    eq("_stage_ok: no label is drift", _stage_ok("Open", None, []), False)
+    eq("_labels_ok: Open wanted, In Progress held is tolerated",
+       _labels_ok("Open", "In Progress", ["status::in-progress"], "status::open"), True)
+    eq("_labels_ok: Completed wanted, In Progress held is drift",
+       _labels_ok("Completed", "In Progress", ["status::in-progress"], "status::completed"),
+       False)
+    eq("_labels_ok: In Progress wanted, Open held is drift",
+       _labels_ok("In Progress", "Open", ["status::open"], "status::in-progress"), False)
+    eq("_labels_ok: two labels is always drift",
+       _labels_ok("Open", "Open", ["status::open", "status::completed"], "status::open"),
+       False)
+    eq("_labels_ok: no label is drift", _labels_ok("Open", None, [], "status::open"), False)
+    eq("_labels_ok: right label, right stage",
+       _labels_ok("Completed", "Completed", ["status::completed"], "status::completed"), True)
+    eq("_labels_ok: closed but labelled open is drift",
+       _labels_ok("Completed", "Completed", ["status::open"], "status::completed"), False)
 
     if failures:
         print("FAIL\n  " + "\n  ".join(failures), file=sys.stderr)
