@@ -22,6 +22,8 @@ python3 $S/sync_todos.py apply  .workflows/todos.md            # active tasks on
 python3 $S/sync_todos.py apply  .workflows/todos.md --include-completed
 python3 $S/sync_todos.py repair .workflows/todos.md            # non-canonical ids
 python3 $S/sync_todos.py audit                                 # one card per TaskID?
+python3 $S/sync_todos.py apply .workflows/todos.md --limit 10   # take it in bites
+python3 $S/sync_todos.py apply .workflows/todos.md --yes        # allow a big create
 python3 $S/sync_todos.py selftest                              # offline
 ```
 
@@ -90,17 +92,62 @@ guess is worse than one that admits it is wrong.
 python3 $S/sync_todos.py plan <file> [--include-completed]
 ```
 
-Report `liveEntries`, `echoesIgnored`, `stageCounts`, and the create/update/
-unchanged split. If `nonCanonical` is non-empty, go back to step 1.
+Report `liveEntries`, `echoesIgnored`, `stageCounts`, `todosSectionConflicts` and
+the create/update/unchanged split. If `nonCanonical` is non-empty, go back to
+step 1. **Show the user the create count before applying** — that number is how
+many permanent issues appear in a repo they may not be able to delete from.
 
 ### 3. Apply
 
 ```bash
-python3 $S/sync_todos.py apply <file> [--include-completed] [--limit N]
+python3 $S/sync_todos.py apply <file> [--include-completed] [--limit N] [--yes]
 ```
 
+`apply` refuses above `--max-create` (default 10) unless `--yes` is passed, so a
+large create is a decision rather than a side effect.
+
 Then verify against the API rather than trusting the exit code: per-column issue
-counts, and that no card carries two stage labels.
+counts, and that no card carries two stage labels. **Run the subcommands too** —
+a green `selftest` proved nothing about `audit`, which had a `NameError` on a line
+the offline assertions never reach.
+
+## todos.md is primary — and that spans two sections
+
+**`/do` does not just tick the box; it MOVES the entry** out of `## Active Tasks`
+into `## Completed Tasks`. So a task's current state lives in one of two places:
+
+| Section | Means | Kind |
+|---|---|---|
+| `## Active Tasks` | unfinished | `active` |
+| `## Completed Tasks` | finished — `/do` moved it here | `completed` |
+| `## Recent Activity`, `## Summary`, `## Quick Stats` | what was true *then* | `log` |
+
+`TodoFile.tasks()` returns one entry per TaskID across the first two, preferring
+the active section, and drops ids that appear only in a log. **Reading only the
+active section is the bug this replaced:** a task completed via `/do` disappeared
+from the sync entirely, so nothing ever moved its card to Completed.
+
+A task present in *both* an active and a completed section is reported as
+`todosSectionConflicts` — `/do` moves rather than copies, so that is an
+inconsistency, not a state. The active copy is preferred and the disagreement is
+surfaced.
+
+### The one exception
+
+An unticked entry means "not finished", which is true both of work nobody has
+started and of work a `/task` session is doing **right now**. todos.md cannot say
+the difference: a `/task` claim writes to the board only.
+
+So **when todos.md wants Open and the card is In Progress, the sync leaves it
+alone.** Without that, every sync would drag a live session's card back to Open.
+Everything else is corrected:
+
+| todos.md | card | sync does |
+|---|---|---|
+| `[x]` | Open or In Progress | → **Completed** (the `/do` case) |
+| `[ ]` | Completed | → **Open** (reopened) |
+| `[ ]` | In Progress | **nothing** — a live claim |
+| any | two stage labels | → the wanted one (always drift) |
 
 ## Stages
 
@@ -156,11 +203,13 @@ refuse, naming both.
 
 ## Three more things that would go wrong quietly
 
-- **Echoes are not tasks.** A todos.md carries a rolling summary (`### Today` /
-  `This Week` / `This Month`) and an append-only `## Recent Activity` log in
-  which the same id appears repeatedly. Only entries under `## Active Tasks`
-  become issues. The root file has **27 live entries and 28 echoes** — ignoring
-  this roughly doubles the issue count with permanent duplicates.
+- **Widening what counts as a task changes the blast radius — re-plan.** Moving
+  from the active section alone to `tasks()` took the root file from 26 entries
+  to **55**, because `## Completed Tasks` holds 29 genuinely distinct finished
+  tasks rather than echoes of the active ones. The `apply` that followed created
+  28 permanent cards in a shared repo with no warning. `apply` now refuses above
+  `--max-create` (default 10) unless `--yes` is passed. Always re-run `plan`
+  after anything that changes what the parser sees.
 - **Bodies are not rewritten by default.** A human may add notes to a card, and
   clobbering them every run would make the sync hostile. The body is only
   written when the source marker is absent — or with `--refresh-bodies`, which
@@ -175,9 +224,15 @@ refuse, naming both.
 
 ## Verified state
 
-First real run, `ai/chatbot/agentic`, `.workflows/todos.md`: 27 cards — 12 Open,
-15 Completed — from 27 live entries with 28 echoes ignored; re-run reports 27
-unchanged; every card carries exactly one stage label.
+`ai/chatbot/agentic`, `.workflows/todos.md`: **55 cards — 11 Open, 44
+Completed** — from 55 tasks across both sections; re-run reports 55 unchanged;
+every card carries exactly one stage label; `audit` reports 55 distinct TaskIDs
+and `unique: true`.
+
+The `/do` path is verified directly rather than argued: card #1 was moved back to
+Open by hand while its todos.md entry read `[x]` under `## Completed Tasks`, and
+the next sync moved it to Completed with
+`{"from": "Open", "to": "Completed", "because": "checkbox"}`.
 
 Board: `https://git.tuntun.co.id/ai/chatbot/agentic/-/boards/10`
 

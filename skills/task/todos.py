@@ -4,22 +4,28 @@
 The canonical TaskID is `P<0-4>-<PKG>-<L><NNN>` — one letter, three digits.
 Anything else is an outlier and `validate` reports it.
 
-Two facts about the real corpus drive the parsing, both measured rather than
+Four facts about the real corpus drive the parsing, all measured rather than
 assumed:
 
-  * **The checkbox is the stage — but only under `## Active Tasks`.** Across 33
-    files `Completed:` appears 475 times and `Status:` only 146, so keying on
-    `Status:` shows most of the history as stageless. The catch is that a file
-    also carries a rolling summary (`### Today` / `This Week` / `This Month`, so
-    one task legitimately appears in several buckets) and an append-only
-    `## Recent Activity` log. In those sections the checkbox records what
-    happened *at the time*, not now: in `chatbot/queue`, `P1-QU-A000` is `- [x]`
-    under Completed and `- [ ]` under Recent Activity. Only entries in the
-    authoritative section describe the present.
+  * **A section is one of three kinds, and `TodoFile.tasks()` is how you get the
+    real task list.** `## Active Tasks` holds unfinished work. `## Completed
+    Tasks` is where **`/do` MOVES an entry when it finishes** — still a real,
+    current entry, whose `[x]` is the fact that the task is done. Everything else
+    (`## Recent Activity`, `## Summary`, `## Quick Stats`) is a log: prose and
+    dated snapshots that repeat ids and record what was true then. Treating the
+    completed section as a log made a task finished via `/do` invisible, so
+    nothing could move its board card to Completed.
+  * **The checkbox is the stage, and `Status:` is not.** Across 33 files
+    `Completed:` appears 475 times and `Status:` only 146, so keying on `Status:`
+    shows most of the history as stageless. In a *log* section the checkbox
+    records what happened at the time rather than now: in `chatbot/queue`,
+    `P1-QU-A000` is `- [x]` under Completed and `- [ ]` under Recent Activity.
   * **The same ID therefore appears many times per file, legitimately.** All 55
     repeated IDs in the corpus repeat *within* one file and none across files,
-    which is what distinguishes a summary echo from a real collision. Duplicate
-    detection only ever compares authoritative entries.
+    which is what distinguishes a summary echo from a real collision. `tasks()`
+    collapses them to one entry, preferring the active section, and reports a
+    task present in both an active and a completed section as a conflict —
+    `/do` moves rather than copies, so that is an inconsistency, not a state.
   * **Package codes are not unique.** `TT` is claimed by both `tools/tooltest`
     and `tools/tooltypes`, `CMP` by both `chatbot/processing/comparison` and
     `cmd/test_lcmp`. Uniqueness is only ever checked on the whole TaskID across
@@ -56,14 +62,36 @@ ENTRY_RE = re.compile(
 REF_RE = re.compile(r"^\s*- \*\*(?P<id>P[0-4]-[A-Z]{1,4}-[A-Z0-9]+)\*\*:\s*(?P<text>.*)$")
 FIELD_RE = re.compile(r"^(?P<indent>\s+)- \*\*(?P<name>[^*]+)\*\*:\s*(?P<value>.*)$")
 SECTION_RE = re.compile(r"^###\s+\[(?P<priority>P[0-4])\]")
-# H2 only -- `## Active Tasks` is authoritative; `## Completed` and
-# `## Recent Activity` are a rolling summary and an append-only log.
 H2_RE = re.compile(r"^##\s+(?!#)\s*(?P<title>.+?)\s*$")
 AUTHORITATIVE_SECTION = "active tasks"
+
+# An H2 section is one of three kinds, and the distinction is load-bearing:
+#
+#   active     `## Active Tasks` -- unfinished work, the task's current home
+#   completed  `## Completed Tasks` -- where /do MOVES a task when it finishes.
+#              Still a real, current entry: the `[x]` there is the fact that the
+#              task is done. Treating it as an echo made a task completed via
+#              /do invisible, so nothing could move its board card to Completed.
+#   log        `## Recent Activity`, `## Summary`, `## Quick Stats` -- prose and
+#              dated snapshots that repeat ids and record what was true then.
+SECTION_ACTIVE = "active"
+SECTION_COMPLETED = "completed"
+SECTION_LOG = "log"
+
+
 PKG_CODE_RE = re.compile(r"^\*\*Package Code\*\*:\s*(?P<code>.+?)\s*$", re.MULTILINE)
 PKG_PATH_RE = re.compile(r"^\*\*Package Path\*\*:\s*(?P<path>.+?)\s*$", re.MULTILINE)
 
 FORMER_ID_FIELD = "Former ID"
+
+
+def section_kind(title):
+    t = (title or "").strip().lower()
+    if "active" in t:
+        return SECTION_ACTIVE
+    if "completed" in t or "done" in t:
+        return SECTION_COMPLETED
+    return SECTION_LOG
 
 
 class TodoError(Exception):
@@ -97,8 +125,22 @@ class Entry:
 
     @property
     def authoritative(self):
-        """True only under `## Active Tasks` -- the section describing now."""
+        """True only under `## Active Tasks` -- unfinished work."""
         return (self.section or "").strip().lower() == AUTHORITATIVE_SECTION
+
+    @property
+    def kind(self):
+        return section_kind(self.section)
+
+    @property
+    def current(self):
+        """True when this entry states the task's present state.
+
+        Both `## Active Tasks` and `## Completed Tasks` do -- one says unfinished,
+        the other says finished, and /do moves an entry from the first to the
+        second. Only log and summary sections are excluded.
+        """
+        return self.kind in (SECTION_ACTIVE, SECTION_COMPLETED)
 
     def to_dict(self):
         return {
@@ -137,6 +179,46 @@ class TodoFile:
         self.pkg_path = pkg_path.group("path").strip().strip("`").strip() if pkg_path else None
         self.package_dir = str(self.path.parent.parent.relative_to(root)) or "."
         self.entries, self.refs = parse_entries(self.lines, self.rel)
+
+    def tasks(self):
+        """One entry per TaskID: the file's actual task list, plus disagreements.
+
+        A TaskID can appear many times in one file -- once where it lives, and
+        again in every rolling-summary bucket and activity-log line. This picks
+        the entry that states the present: `## Active Tasks` if the task is there,
+        otherwise `## Completed Tasks`. Ids appearing only in a log section are
+        not tasks and are dropped.
+
+        `conflicts` is a task present in BOTH an active and a completed section.
+        /do *moves* an entry rather than copying it, so that should not happen;
+        when it does, the active copy is preferred (a reopen is the likelier
+        cause than a stale completion) and the disagreement is reported instead
+        of being silently resolved.
+        """
+        best, conflicts, reported = {}, [], set()
+        for e in self.entries:
+            if not e.current:
+                continue
+            seen = best.get(e.task_id)
+            if seen is None:
+                best[e.task_id] = e
+                continue
+            if seen.kind != e.kind:
+                # One conflict per TaskID, not one per echo: a task in Active
+                # plus three rolling-summary buckets would otherwise report the
+                # same disagreement three times.
+                if e.task_id not in reported:
+                    reported.add(e.task_id)
+                    conflicts.append({
+                        "taskId": e.task_id,
+                        "sections": sorted({seen.section, e.section}),
+                        "lines": sorted([seen.start + 1, e.start + 1]),
+                        "preferred": SECTION_ACTIVE,
+                    })
+                if e.kind == SECTION_ACTIVE:
+                    best[e.task_id] = e
+            # same kind twice is a rolling-summary echo: keep the first
+        return [best[k] for k in sorted(best)], conflicts
 
 
 def parse_entries(lines, rel="<memory>"):
@@ -754,7 +836,12 @@ FIXTURE_ROOT = """# Todos: Fixture
 
 ---
 
-## Completed
+## Completed Tasks
+
+### Recently Completed
+- [x] **P1-MN-D001** Finished by /do and moved out of Active Tasks
+  - **Completed**: 2026-08-12
+  - **Method**: did the thing
 
 ### This Week
 - [x] **P1-MN-L003** Web search language parameter
@@ -817,8 +904,9 @@ def cmd_selftest(args):
 
         c = Corpus(tmp)
         eq("files", len(c.files), 2)
-        # 5 authoritative entries + 3 echoes (L003 twice, TZ013 once)
-        eq("entries", len(c.entries), 8)
+        # 5 in Active Tasks + 3 in Completed Tasks (D001 + two L003 buckets)
+        # + 1 Recent Activity echo of TZ013
+        eq("entries", len(c.entries), 9)
         eq("authoritative entries", len(c.authoritative_entries), 5)
         eq("active", sum(1 for e in c.authoritative_entries if not e.done), 3)
         eq("completed", sum(1 for e in c.authoritative_entries if e.done), 2)
@@ -829,7 +917,7 @@ def cmd_selftest(args):
         eq("indexed entry is authoritative", c.by_id["P0-MN-TZ013"].authoritative, True)
         eq("echo section recorded",
            sorted({e.section for e in c.entries if e.task_id == "P1-MN-L003"}),
-           ["Active Tasks", "Completed"])
+           ["Active Tasks", "Completed Tasks"])
         eq("outliers deduped", len(c.outliers), 2)
 
         # the checkbox is the stage, even when Status: disagrees or is absent
@@ -873,6 +961,43 @@ def cmd_selftest(args):
         # must not block: no new id is ever minted in a Recent Activity block.
         hist = [p for p in validate(c) if p["kind"] == "historical_reference"]
         eq("summary ref is historical", [p["taskId"] for p in hist], ["P2-MN-TZ019"])
+
+        # section kinds, and the /do case: a finished task MOVES to a completed
+        # section and must stay a real task there
+        eq("kind active", section_kind("Active Tasks"), SECTION_ACTIVE)
+        eq("kind completed tasks", section_kind("Completed Tasks"), SECTION_COMPLETED)
+        eq("kind completed", section_kind("Completed"), SECTION_COMPLETED)
+        eq("kind log", section_kind("Recent Activity"), SECTION_LOG)
+        eq("kind summary", section_kind("Summary"), SECTION_LOG)
+        eq("kind none", section_kind(None), SECTION_LOG)
+        root = [f for f in c.files if f.rel.endswith("todos.md") and f.pkg_code == "MN"][0]
+        tasks, sec_conflicts = root.tasks()
+        ids = {t.task_id for t in tasks}
+
+        # THE /do CASE: a task that exists only under `## Completed Tasks`,
+        # having been moved there when it finished. It must still be a task, and
+        # it must read as done -- otherwise nothing moves its board card.
+        eq("completed-only task survives", "P1-MN-D001" in ids, True)
+        d001 = next(t for t in tasks if t.task_id == "P1-MN-D001")
+        eq("completed-only reads as done", d001.done, True)
+        eq("completed-only is current", d001.current, True)
+        eq("completed-only is NOT authoritative", d001.authoritative, False)
+        eq("completed-only kind", d001.kind, SECTION_COMPLETED)
+        eq("its Completed date is available", d001.fields.get("Completed"), "2026-08-12")
+
+        eq("one entry per id", len(tasks), len(ids))
+        eq("log-only id is not a task", "P2-MN-TZ019" in ids, False)
+        eq("rolling-summary echoes collapsed",
+           len([e for e in root.entries if e.task_id == "P1-MN-L003"]), 3)
+        eq("but only one L003 task", len([t for t in tasks if t.task_id == "P1-MN-L003"]), 1)
+
+        # L003 sits in BOTH Active Tasks and Completed Tasks: /do moves rather
+        # than copies, so that is an inconsistency, reported not resolved.
+        eq("section conflict reported", [c_["taskId"] for c_ in sec_conflicts], ["P1-MN-L003"])
+        eq("conflict names both sections", sec_conflicts[0]["sections"],
+           ["Active Tasks", "Completed Tasks"])
+        eq("active copy preferred",
+           next(t for t in tasks if t.task_id == "P1-MN-L003").kind, SECTION_ACTIVE)
         eq("historical never blocks", "historical_reference" in BLOCKING, False)
         eq("no blocking ref problem", [p for p in validate(c)
                                        if p["kind"] == "non_canonical_reference"], [])
@@ -923,7 +1048,7 @@ def cmd_selftest(args):
         c2 = Corpus(tmp)
         eq("no outliers left", len(c2.outliers), 0)
         eq("second map empty", build_rename_map(c2), {})
-        eq("entries preserved", len(c2.entries), 8)
+        eq("entries preserved", len(c2.entries), 9)
         eq("authoritative preserved", len(c2.authoritative_entries), 5)
         eq("no duplicates introduced", c2.duplicates, {})
         eq("stage preserved", c2.by_id["P1-MN-A001"].done, True)

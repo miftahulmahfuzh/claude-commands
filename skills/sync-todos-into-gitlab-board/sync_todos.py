@@ -10,14 +10,26 @@ Stdlib only. Reuses the /task skill's modules rather than re-parsing anything:
   audit                  is the board still one card per TaskID? exit 1 if not
   selftest               offline assertions
 
-Four properties this has to hold, each of which is a way it could go wrong
+Five properties this has to hold, each of which is a way it could go wrong
 quietly:
 
-  * **Echoes are not tasks.** A todos.md carries a rolling summary and an
-    append-only activity log in which the same id appears repeatedly. Only
-    entries under `## Active Tasks` become issues; the root file has 27 live
-    entries and 28 echoes, so ignoring this roughly doubles the issue count with
-    duplicates.
+  * **todos.md is primary, and that spans two sections.** `## Active Tasks` holds
+    unfinished work; `## Completed Tasks` is where **`/do` MOVES an entry when it
+    finishes**, and the `[x]` there is the fact that the task is done. Reading
+    only the active section made a task completed via `/do` vanish from the sync,
+    so nothing moved its card to Completed. `TodoFile.tasks()` spans both and
+    collapses rolling-summary echoes to one entry per TaskID; log sections
+    (`## Recent Activity`, `## Summary`) are never tasks.
+
+    The one thing todos.md cannot express is "being worked right now" — a `/task`
+    claim writes to the board only. So when todos.md wants Open, a card already
+    In Progress is left alone; every other disagreement is corrected.
+
+  * **Widening what the parser sees changes the blast radius.** Moving from the
+    active section to `tasks()` took the root file from 26 entries to 55, and the
+    `apply` that followed created 28 permanent cards in a shared repo with no
+    warning. `apply` now refuses above `--max-create` (default 10) unless `--yes`
+    is passed. Re-plan after any change to what counts as a task.
   * **One TaskID, one card — always.** todos.md TaskIDs are unique, so the board
     must never hold two cards for one id. Identity is read from *two* channels,
     the title prefix and the `- TaskID:` line in the source block, because a
@@ -128,11 +140,18 @@ def stage_for(entry):
 
 
 def load_entries(path, include_completed):
+    """The file's real task list: one entry per TaskID, echoes collapsed.
+
+    `tasks()` spans `## Active Tasks` *and* `## Completed Tasks`, because /do
+    moves a finished entry into the second one. Filtering to the active section
+    alone made a task completed via /do disappear from the sync, so its card
+    stayed wherever it was — the whole reason todos.md has to be primary.
+    """
     f = TodoFile(path, Path(path).resolve().parents[1])
-    live = [e for e in f.entries if e.authoritative]
+    live, section_conflicts = f.tasks()
     echoes = len(f.entries) - len(live)
     chosen = live if include_completed else [e for e in live if not e.done]
-    return f, live, echoes, chosen
+    return f, live, echoes, chosen, section_conflicts
 
 
 def card_task_ids(issue):
@@ -180,6 +199,31 @@ def index_cards(api, project):
     return index, duplicates, conflicts
 
 
+def _stage_ok(want_stage, have_stage, present):
+    """Is the card's current stage acceptable for what todos.md says?
+
+    todos.md is primary — with one exception that matters. An unticked entry
+    means "not finished", which is true both of work nobody has started and of
+    work a `/task` session is actively doing right now. todos.md has no way to
+    say the difference: a claim by `/task` writes only to the board.
+
+    So when todos.md wants Open, a card already In Progress is left alone —
+    otherwise every sync would yank a live session's card back to Open. Any
+    other disagreement is drift and gets corrected: a card in Open or In Progress
+    whose task is now `[x]` (the `/do` case), and a card still in Completed whose
+    task has been reopened.
+
+    `present` is required because none of the above applies unless the card
+    carries exactly one stage label. Two at once is the Community Edition failure
+    mode and is always drift, even when one of them is the wanted one.
+    """
+    if len(present) != 1:
+        return False
+    if want_stage == have_stage:
+        return True
+    return want_stage == "Open" and have_stage == "In Progress"
+
+
 def diff_entry(entry, issue, todos_rel, refresh_bodies=False):
     """What would change on an existing issue. Empty dict means nothing."""
     changes = {}
@@ -189,7 +233,7 @@ def diff_entry(entry, issue, todos_rel, refresh_bodies=False):
     want_stage, why = stage_for(entry)
     want_label = STAGE_LABELS[want_stage][0]
     have_stage, present = current_stage(list(issue.get("labels") or []))
-    if present != [want_label]:
+    if present != [want_label] and not _stage_ok(want_stage, have_stage, present):
         changes["stage"] = {"from": have_stage, "to": want_stage, "because": why}
     # The body is only rewritten when the source block is absent or stale --
     # never on every run, because a human may have added notes to the card and
@@ -208,9 +252,9 @@ def diff_entry(entry, issue, todos_rel, refresh_bodies=False):
 
 
 def run(path, project, apply=False, include_completed=False, limit=None,
-        refresh_bodies=False):
+        refresh_bodies=False, yes=False, max_create=10):
     api = Api(*load_creds())
-    f, live, echoes, chosen = load_entries(path, include_completed)
+    f, live, echoes, chosen, section_conflicts = load_entries(path, include_completed)
     todos_rel = f.rel
 
     labels_present = {l["name"] for l in api.paged(f"projects/{enc(project)}/labels")}
@@ -235,17 +279,35 @@ def run(path, project, apply=False, include_completed=False, limit=None,
         "selected": len(chosen),
         "includeCompleted": bool(include_completed),
         "refreshBodies": bool(refresh_bodies),
+        "maxCreate": max_create,
         "toCreate": [],
         "toUpdate": [],
         "unchanged": [],
         "nonCanonical": [e.task_id for e in chosen if not e.canonical],
         "duplicateCards": duplicates,
         "idConflicts": conflicts,
+        "todosSectionConflicts": section_conflicts,
         "stageCounts": {},
     }
     for entry in chosen:
         st, _why = stage_for(entry)
         result["stageCounts"][st] = result["stageCounts"].get(st, 0) + 1
+
+    # A blast-radius guard. Creating a GitLab issue is permanent for anyone
+    # without Owner, and the entry set can grow without the caller noticing --
+    # widening the parser from `## Active Tasks` to `tasks()` took the root file
+    # from 26 entries to 55, and the `apply` that followed created 28 cards in a
+    # shared repo with no warning. `plan` shows the number; this makes a large
+    # create an explicit decision instead of a side effect.
+    pending_creates = [e for e in chosen if e.task_id not in existing]
+    if apply and len(pending_creates) > max_create and not yes:
+        raise TaskError(
+            f"Refusing to apply: this would create {len(pending_creates)} new issues "
+            f"(threshold {max_create}). Creating a GitLab issue is permanent without "
+            f"the Owner role.\n"
+            f"Review `plan` output first, then either raise the bar with `--yes` or "
+            f"take it in bites with `--limit N`."
+        )
 
     if apply and (duplicates or conflicts):
         lines = []
@@ -365,6 +427,8 @@ def audit(project):
         "unique": not duplicates and not conflicts,
         "duplicateCards": duplicates,
         "idConflicts": conflicts,
+        # No todosSectionConflicts here: audit reads the board only, never a
+        # todos.md, so it has no section information to report.
         "issuesWithoutTaskId": untracked,
     }
 
@@ -533,6 +597,43 @@ def cmd_selftest(_args):
     idx, dups, confl = index_cards(FakeApi([card(5, "a teammate's bug report")]), "p")
     eq("untracked ignored", (idx, dups, confl), ({}, {}, []))
 
+    # ---- todos.md is primary, with one deliberate exception ----------------
+    # The /do case: task ticked in todos.md, card still sitting in Open.
+    ticked = E("P0-MN-T005", "Fix templates", done=True,
+               fields={"Status": "completed", "Completed": "2026-08-12"})
+    card_open = {"title": issue_title(ticked), "labels": ["status::open"],
+                 "description": issue_body(ticked, REL)}
+    ch = diff_entry(ticked, card_open, REL)
+    eq("/do case: card moves to Completed", ch["stage"]["to"], "Completed")
+    eq("/do case: from Open", ch["stage"]["from"], "Open")
+    card_inprog = {**card_open, "labels": ["status::in-progress"]}
+    eq("ticked beats a card left In Progress",
+       diff_entry(ticked, card_inprog, REL)["stage"]["to"], "Completed")
+
+    # A card reopened in todos.md but still Completed on the board
+    reopened = E("P0-MN-T005", "Fix templates", done=False, fields={"Status": "active"})
+    card_done = {"title": issue_title(reopened), "labels": ["status::completed"],
+                 "description": issue_body(reopened, REL)}
+    eq("reopened task pulls the card back to Open",
+       diff_entry(reopened, card_done, REL)["stage"]["to"], "Open")
+
+    # THE EXCEPTION: a /task session has claimed the card. todos.md cannot say
+    # "being worked right now", so In Progress must not be reverted to Open.
+    active = E("P1-MN-T009", "Compression", done=False, fields={"Status": "active"})
+    claimed = {"title": issue_title(active), "labels": ["status::in-progress"],
+               "description": issue_body(active, REL)}
+    eq("a live claim is not dragged back to Open",
+       "stage" in diff_entry(active, claimed, REL), False)
+    eq("_stage_ok: Open wanted, In Progress held",
+       _stage_ok("Open", "In Progress", ["status::in-progress"]), True)
+    eq("_stage_ok: Completed wanted, In Progress held is drift",
+       _stage_ok("Completed", "In Progress", ["status::in-progress"]), False)
+    eq("_stage_ok: In Progress wanted, Open held is drift",
+       _stage_ok("In Progress", "Open", ["status::open"]), False)
+    eq("_stage_ok: two labels is always drift",
+       _stage_ok("Open", "Open", ["status::open", "status::completed"]), False)
+    eq("_stage_ok: no label is drift", _stage_ok("Open", None, []), False)
+
     if failures:
         print("FAIL\n  " + "\n  ".join(failures), file=sys.stderr)
         return 1
@@ -554,6 +655,11 @@ def main(argv=None):
         q.add_argument("--include-completed", action="store_true",
                        help="also create cards for finished tasks")
         q.add_argument("--limit", type=int)
+        q.add_argument("--yes", action="store_true",
+                       help="allow more than --max-create new issues in one run")
+        q.add_argument("--max-create", type=int, default=10,
+                       help="refuse to create more than this many issues at once "
+                            "(default 10); creating one is permanent without Owner")
         q.add_argument("--refresh-bodies", action="store_true",
                        help="rewrite existing card bodies from todos.md; discards notes "
                             "added on the card")
@@ -585,7 +691,8 @@ def main(argv=None):
             return 0 if out["unique"] else 1
         out = run(args.file, project, apply=(args.mode == "apply"),
                   include_completed=args.include_completed, limit=args.limit,
-                  refresh_bodies=args.refresh_bodies)
+                  refresh_bodies=args.refresh_bodies, yes=args.yes,
+                  max_create=args.max_create)
         print(json.dumps(out, indent=2))
         if not out["apply"]:
             print("\nplan only -- nothing written. Re-run with `apply`.", file=sys.stderr)
