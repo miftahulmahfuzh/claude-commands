@@ -359,7 +359,32 @@ def cmd_doctor(args):
                         f"Board {b.get('name')!r} is missing column(s) {', '.join(missing)}. "
                         f"Fix with: task_gl.py board --project {target} --ensure"
                     )
-                return f"{b.get('name')!r} (id {b['id']}), columns {cols}"
+
+                # With the backlog and closed columns hidden, a card carrying no
+                # stage label -- or a closed one -- is not on the board at all.
+                # Reported rather than failed: in a shared repo a teammate's
+                # ordinary issue has no stage labels, and a doctor that goes red
+                # for that is a doctor nobody reads.
+                if b.get("hide_backlog_list") or b.get("hide_closed_list"):
+                    issues = api.paged(f"projects/{enc(target)}/issues",
+                                       params={"state": "all"})
+                    invisible = [
+                        i["iid"] for i in issues
+                        if not [l for l in (i.get("labels") or [])
+                                if l in STAGE_LABEL_NAMES]
+                    ]
+                    closed = [i["iid"] for i in issues if i.get("state") == "closed"]
+                    if invisible or closed:
+                        report["hiddenFromBoard"] = {
+                            "noStageLabel": invisible,
+                            "closed": closed,
+                            "why": "the backlog and closed columns are hidden, so these "
+                                   "issues do not appear on the board",
+                        }
+                cols_note = "3 columns, no Open/Closed doubles" if (
+                    b.get("hide_backlog_list") and b.get("hide_closed_list")
+                ) else "default Open/Closed columns still shown"
+                return f"{b.get('name')!r} (id {b['id']}), {cols_note}, columns {cols}"
 
             check("kanban board", board)
     else:
@@ -446,6 +471,17 @@ def cmd_board(args):
                             body={"name": BOARD_NAME})
         created_board = True
 
+    hidden = False
+    if args.ensure and not (board.get("hide_backlog_list") and board.get("hide_closed_list")):
+        # GitLab ships a board with an "Open" (backlog) and a "Closed" column,
+        # both redundant here: status::open already is the open column, and
+        # status::completed already is the done one. Three columns, no doubles.
+        board = api.request(
+            "PUT", f"projects/{enc(path)}/boards/{board['id']}",
+            body={"hide_backlog_list": True, "hide_closed_list": True},
+        )
+        hidden = True
+
     labels = {l["name"]: l["id"] for l in api.paged(f"projects/{enc(path)}/labels")}
     missing_labels = [n for n in STAGE_LABEL_NAMES if n not in labels]
     if missing_labels:
@@ -482,6 +518,9 @@ def cmd_board(args):
             "boardName": board.get("name"),
             "createdBoard": created_board,
             "addedColumns": added,
+            "hidDefaultColumns": hidden,
+            "hideBacklogList": board.get("hide_backlog_list"),
+            "hideClosedList": board.get("hide_closed_list"),
             "columns": columns,
             "boardUrl": f"{host}/{path}/-/boards/{board['id']}",
             "projectIssuesUrl": f"{host}/{path}/-/issues",

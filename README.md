@@ -468,7 +468,8 @@ comment rather than the stale body.
 - 🎫 **Reads the whole card** — body **and every comment in order**. On a returning card the body is the original idea and the newest comment is the bug report; reading only the body is the main way this fails quietly
 - 🔁 **Detects the round** from the plan block, so a second visit brainstorms only the delta
 - 📝 **Links the plan** in a marker-delimited, append-only block in the issue **body**, not a comment (comments get buried under bug reports)
-- 🚦 **Moves the card** on plan approval without asking — approving the plan *is* the decision to start — but reaches Completed only when the user says so **and** verification actually passed
+- 🚦 **Claims the card on fetch** — `/task 14` moves it to In Progress immediately, because running it *is* picking the card up and the board should say what's being worked on right now. If the session ends without proceeding, the skill moves it back to Open. Completed is reached only when the user says so **and** verification actually passed
+- 🧼 **Three columns, no doubles** — `board --ensure` hides GitLab's default Open and Closed columns, which duplicate `status::open` and `status::completed`. The cost is that an unlabelled or closed card is then off the board entirely, so `doctor` reports those under `hiddenFromBoard`
 - 🧮 **Owns the TaskID corpus** via `todos.py`: `scan`, `validate`, `mint`, `rename` over every `.workflows/todos.md`, with a rename ledger because TaskIDs appear in commit messages that can't be rewritten
 - 🩺 `doctor` on either backend checks auth, scopes, board, labels and columns, and names the fix for whatever is missing
 
@@ -614,9 +615,10 @@ and Claude Code never sees it. `/task` makes the browser the front door.
 # In a browser (or the GitHub mobile app): + on the Tasks board's Open column.
 # A draft item needs no repo at all — that's the "notes app" case.
 
-/task 14                    # fetch, read every comment, brainstorm
-                            # on plan approval: writes the plan, links it on the
-                            # card, moves to In Progress — no prompt
+/task 14                    # claims the card: moves to In Progress at once
+                            # reads every comment, brainstorms
+                            # on plan approval: writes the plan and links it on
+                            # the card — no prompt
                             # ... build ...
                             # Completed only once verification actually passed
 ```

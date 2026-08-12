@@ -1,6 +1,6 @@
 ---
 name: task
-description: Use when the user names a task card to work on — "/task 14", "fetch task 14", "task daily-words#14", "/task 7" in a GitLab repo, a pasted issue URL, "what's open?", "pick up that card again" — or when work finishes and a card needs moving. Drives task cards on GitHub Projects (personal repos) or GitLab Issues (work repos): reads the card and every comment, brainstorms it, writes or mints the implementation plan, links it back onto the card, moves it to In Progress, and moves it to Completed only once the work is verified. Handles the reopen loop, where a card comes back with a bug report in a new comment.
+description: Use when the user names a task card to work on — "/task 14", "fetch task 14", "task daily-words#14", "/task 7" in a GitLab repo, a pasted issue URL, "what's open?", "pick up that card again" — or when work finishes and a card needs moving. Drives task cards on GitHub Projects (personal repos) or GitLab Issues (work repos): claims the card by moving it to In Progress as soon as it is fetched, reads it and every comment, brainstorms it, writes or mints the implementation plan, links it back onto the card, and moves it to Completed only once the work is verified. Handles the reopen loop, where a card comes back with a bug report in a new comment.
 ---
 
 # Task
@@ -50,11 +50,26 @@ behaves oddly, and quote its output rather than diagnosing from a stack trace.
 
 ## The loop
 
-### 1. Resolve and read the whole card
+### 1. Resolve, read the whole card, and claim it
 
 ```bash
 python3 $S/task_gh.py resolve <ref>        # or task_gl.py
+python3 $S/task_gl.py status <ref> "In Progress"
 ```
+
+**Move the card to In Progress immediately, as part of fetching it** — not later.
+Running `/task <id>` *is* picking the card up, and the board's job is to say what
+is being worked on right now; a card that stays in Open while a session is
+actively brainstorming it makes the board lie to anyone else looking.
+
+Two consequences to honour rather than ignore:
+
+- **If the session ends without proceeding** — the plan is rejected, the idea
+  turns out to be wrong, the user changes direction — **move it back to Open
+  before finishing.** Leaving it In Progress is the failure mode this timing
+  introduces, and it is yours to prevent.
+- It is idempotent, so a card already In Progress reports `changed: false`. Bare
+  `/task` with no id is a listing and claims nothing.
 
 `<ref>` is `14`, `owner/repo#14`, `group/project#7`, an issue URL, and on GitHub
 also a `PVTI_…` item id or `draft:<part of the title>`.
@@ -93,10 +108,10 @@ Invoke the **brainstorming** skill: one question at a time, 2–3 approaches wit
 recommendation, the design in sections. The card's body and comments are starting
 context, not a spec — the user wrote it in a hurry.
 
-### 5. On plan approval, three writes and no prompt
+### 5. On plan approval, two writes and no prompt
 
-The moment the user approves the plan, do all three without asking. Approving the
-plan *is* the decision to start.
+The moment the user approves the plan, do both without asking. The stage was
+already claimed in step 1, so what remains is the plan and its link.
 
 **a. Write or mint the plan.** Detect the repo's own convention:
 
@@ -109,11 +124,10 @@ plan *is* the decision to start.
 On a return visit, **append a dated round section to the existing plan file**
 rather than starting a new one, and label the entry `<label> round <n>`.
 
-**b. Link it on the card**, then **c. move the card**:
+**b. Link it on the card:**
 
 ```bash
 python3 $S/task_gl.py plan <ref> P1-MN-A007 .workflows/plan/P1-MN-A007.md --date 2026-08-12
-python3 $S/task_gl.py status <ref> "In Progress"
 ```
 
 `plan` rewrites only the block between `<!-- task:plans -->` and
@@ -224,6 +238,15 @@ python3 $S/task_gl.py board  --project <path> --ensure   # the kanban board + co
 ```
 
 Both are idempotent, and `doctor` prints the board URL plus the cross-project one.
+
+`board --ensure` also **hides GitLab's default Open and Closed columns**, which
+are redundant here: `status::open` already *is* the open column and
+`status::completed` already is the done one, so leaving them gives a five-column
+board with two doubles. The cost is that a card carrying **no** stage label, or a
+closed one, is then not on the board at all rather than parked in a visible
+column — so `doctor` reports those under `hiddenFromBoard`. It reports rather than
+fails, because in a shared repo a teammate's ordinary issue has no stage labels,
+and a doctor that goes red for that is a doctor nobody reads.
 
 **Two Community Edition limits, both measured on this instance rather than
 inferred from the docs:**
