@@ -340,6 +340,28 @@ def cmd_doctor(args):
                 return f"all three stage labels present"
 
             check("stage labels", labels)
+
+            def board():
+                boards = api.paged(f"projects/{enc(target)}/boards")
+                if not boards:
+                    raise TaskError(
+                        f"No kanban board yet. Create it with: "
+                        f"task_gl.py board --project {target} --ensure"
+                    )
+                b = next((x for x in boards if x.get("name") == BOARD_NAME), boards[0])
+                lists = api.paged(f"projects/{enc(target)}/boards/{b['id']}/lists")
+                cols = [(l.get("label") or {}).get("name") for l in
+                        sorted(lists, key=lambda x: x.get("position") or 0)]
+                missing = [n for n in STAGE_LABEL_NAMES if n not in cols]
+                report["boardUrl"] = f"{creds['host']}/{target}/-/boards/{b['id']}"
+                if missing:
+                    raise TaskError(
+                        f"Board {b.get('name')!r} is missing column(s) {', '.join(missing)}. "
+                        f"Fix with: task_gl.py board --project {target} --ensure"
+                    )
+                return f"{b.get('name')!r} (id {b['id']}), columns {cols}"
+
+            check("kanban board", board)
     else:
         report["checks"].append({
             "name": "project", "ok": False,
@@ -348,13 +370,16 @@ def cmd_doctor(args):
 
     group = (state.get("project") or target or "").split("/")[0] or None
     if group:
-        report["boardUrl"] = (
+        # A distinct key: the project board URL is set by the board check above,
+        # and one name for both meant whichever ran last won.
+        report["groupIssuesUrl"] = (
             f"{creds['host']}/groups/{group}/-/issues"
             f"?label_name[]={urllib.parse.quote(STAGE_LABELS['In Progress'][0])}"
         )
         report["note"] = (
-            "Community Edition has no group boards, so the cross-project view is the "
-            "group issue list above, filtered by stage label."
+            "Community Edition has no group boards — verified, POST /groups/:id/boards "
+            "404s on this instance. boardUrl is one project's kanban; groupIssuesUrl is "
+            "the cross-project view, a filtered list rather than a board."
         )
     report["ok"] = all(c["ok"] for c in report["checks"])
     print(json.dumps(report, indent=2))
@@ -382,6 +407,85 @@ def cmd_labels(args):
             "created": created,
             "stageLabels": {s: (n in present) for s, (n, _c) in STAGE_LABELS.items()},
             "allLabels": present,
+        },
+        indent=2,
+    ))
+    return 0
+
+
+BOARD_NAME = os.environ.get("TASK_GITLAB_BOARD", "Tasks")
+
+
+def cmd_board(args):
+    """Inspect, or with --ensure create, the project's kanban board.
+
+    Community Edition allows one board per project and no group boards, so this
+    is the only actual kanban view available; the cross-project view is the
+    group issue list. The three columns are label lists in stage order, and
+    GitLab swaps the labels itself when a card is dragged between them.
+    """
+    api = Api(*load_creds())
+    path = args.project or project_hint()
+    if not path:
+        raise TaskError("board needs --project, or a GitLab origin remote in this directory.")
+
+    boards = api.paged(f"projects/{enc(path)}/boards")
+    board = next((b for b in boards if b.get("name") == BOARD_NAME), None) or (
+        boards[0] if boards else None
+    )
+    created_board = False
+    if board is None:
+        if not args.ensure:
+            print(json.dumps(
+                {"project": path, "board": None,
+                 "hint": f"No board yet. Create it with: task_gl.py board "
+                         f"--project {path} --ensure"},
+                indent=2))
+            return 0
+        board = api.request("POST", f"projects/{enc(path)}/boards",
+                            body={"name": BOARD_NAME})
+        created_board = True
+
+    labels = {l["name"]: l["id"] for l in api.paged(f"projects/{enc(path)}/labels")}
+    missing_labels = [n for n in STAGE_LABEL_NAMES if n not in labels]
+    if missing_labels:
+        raise TaskError(
+            f"Missing stage label(s) {', '.join(missing_labels)}. Run first: "
+            f"task_gl.py labels --project {path} --ensure"
+        )
+
+    have = {
+        (l.get("label") or {}).get("name")
+        for l in api.paged(f"projects/{enc(path)}/boards/{board['id']}/lists")
+    }
+    added = []
+    if args.ensure:
+        # Created in STAGES order so the columns read left to right the way the
+        # loop moves through them.
+        for name in STAGE_LABEL_NAMES:
+            if name in have:
+                continue
+            api.request("POST", f"projects/{enc(path)}/boards/{board['id']}/lists",
+                        body={"label_id": labels[name]})
+            added.append(name)
+
+    lists = api.paged(f"projects/{enc(path)}/boards/{board['id']}/lists")
+    columns = [
+        (l.get("label") or {}).get("name")
+        for l in sorted(lists, key=lambda x: x.get("position") or 0)
+    ]
+    host = api.host
+    print(json.dumps(
+        {
+            "project": path,
+            "boardId": board["id"],
+            "boardName": board.get("name"),
+            "createdBoard": created_board,
+            "addedColumns": added,
+            "columns": columns,
+            "boardUrl": f"{host}/{path}/-/boards/{board['id']}",
+            "projectIssuesUrl": f"{host}/{path}/-/issues",
+            "groupIssuesUrl": f"{host}/groups/{path.split('/')[0]}/-/issues",
         },
         indent=2,
     ))
@@ -618,6 +722,11 @@ def main(argv=None):
     q = add("labels")
     q.add_argument("--ensure", action="store_true", help="create any missing stage label")
     q.set_defaults(fn=cmd_labels)
+
+    q = add("board")
+    q.add_argument("--ensure", action="store_true",
+                   help="create the board and its three stage columns if absent")
+    q.set_defaults(fn=cmd_board)
 
     args = p.parse_args(argv)
     args.project = getattr(args, "project_after", None) or args.project

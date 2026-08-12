@@ -15,7 +15,8 @@ here by id, brainstormed, planned, built, and moved through **Open → In Progre
 |---|---|---|
 | Cards live in | GitHub Issues + a Projects board named `Tasks` | GitLab Issues on the self-hosted instance |
 | Stage carried by | the board's **Status** field | labels `status::open` / `status::in-progress` / `status::completed` |
-| Cross-project view | one user-level Projects board | the **group issue list**, filtered by label |
+| Kanban view | one user-level Projects board, spanning repos | one board **per project** (`board --ensure`) |
+| Cross-project view | the same board | the **group issue list**, filtered by label |
 | Helper | `task_gh.py` | `task_gl.py` |
 | Development loop | this skill runs it | this skill mints a TaskID and hands off to **`/do`** |
 
@@ -215,14 +216,33 @@ GITLAB_HOST=https://git.example.com
 GITLAB_TOKEN=glpat-…
 ```
 
-Then once per project: `python3 $S/task_gl.py labels --project <path> --ensure`.
+Then once per project, in this order — the board needs the labels to exist:
 
-**On Community Edition, scoped labels do not enforce exclusivity** — that is an
-EE feature. `status` writes the whole label set in one call so an issue is never
-in two stages at once, and verifies the result before reporting success. Group
-boards are EE too, so the cross-project view is the group issue list:
-`<host>/groups/<group>/-/issues?label_name[]=status::in-progress`. `doctor`
-prints that URL.
+```bash
+python3 $S/task_gl.py labels --project <path> --ensure   # the three stage labels
+python3 $S/task_gl.py board  --project <path> --ensure   # the kanban board + columns
+```
+
+Both are idempotent, and `doctor` prints the board URL plus the cross-project one.
+
+**Two Community Edition limits, both measured on this instance rather than
+inferred from the docs:**
+
+- **Scoped labels do not enforce exclusivity.** `status::in-progress` does not
+  remove `status::open`. `status` therefore writes the whole label set in one
+  call and verifies the result before reporting success; `add_labels` alone
+  leaves a card in two stages, visible as two board columns.
+- **There are no group boards.** `POST /groups/:id/boards` returns 404 —
+  and note that `GET` returns `200` with `[]`, which reads as "available but
+  empty" and is why this needed testing rather than reading. So there is **one
+  board per project**, and the cross-project view is the group *issue list*:
+  `<host>/groups/<group>/-/issues?label_name[]=status::in-progress`.
+
+On the board, dragging a card between two label lists is GitLab's own swap — it
+removes the source label and adds the destination's, which is the same
+one-stage-at-a-time rule `status` enforces. The **Backlog** column holds issues
+carrying none of the three labels, so anything appearing there is a card that
+missed a stage label rather than a real column of work.
 
 ## Layout
 
