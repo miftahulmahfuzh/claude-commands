@@ -502,6 +502,22 @@ comment rather than the stale body.
 
 **When it triggers:** asking to sync/push/mirror a `todos.md` onto GitLab, or wondering why a task isn't on the board.
 
+### `update-ats-cv` - Rebuild an ATS CV PDF, With the 1-Page Rule Enforced
+
+`/update-ats-cv <input.pdf> <what to change>` — parses your existing CV for content **and** visual style, then redraws it from a `*.cv.yaml` content model. The input PDF is never patched, which is exactly what makes "shave 4pt off that one gap" and "extend Skills to the right margin" answerable requests instead of guesswork.
+
+**What it does:**
+- 📏 **The page count is an invariant, not a hope.** `--autofit` walks a ladder of (gap, leading, font) triples from loosest to tightest and takes the **first** rung that fits — so a short CV breathes and a long one tightens. If nothing fits it **exits non-zero** saying how many body lines are over, rather than silently spilling onto page 2
+- 🎛️ **Every gap is a named token** (`sub_gap`, `head_rule`, `intro_bullets`, `entry_gap`…), so "the two degree lines are too far apart" maps to one number instead of a CSS hunt. Margins, leading, letter-spacing and column geometry are all addressable
+- 🔍 **`cv_extract.py` identifies the typeface by advance-width matching**, because CV builders ship flattened PDFs (`iLovePDF`, Chrome print) where font names are stripped to `Type3` and bold is *faked* by overprinting glyphs twice. Width-matching found Lora at 0.65% error where the metadata said nothing
+- 🤖 **ATS-correctness is verified, not assumed.** Text is emitted in **document order** — an earlier version batched glyphs by colour, which rendered pixel-identically but made a parser read every heading before any body text. Real Lora weights are used rather than synthetic bold, so extraction is clean
+- 👀 **`cv_preview.py --against old.pdf`** builds a before/after sheet, because fit numbers can't show you a widow line or an orphaned heading
+- 🧾 `SCHEMA.md` documents every tunable, plus the editing recipes for the asks that actually come up ("make Skills full width", "put Skills and Languages side by side")
+
+**Honest limits:** letter-spacing is applied to headings only — it extracts fine, but there's no reason to risk it on the text an ATS indexes. The layout engine covers the section vocabulary of a standard one-column CV (summary, entries with bullets/sub-rows, column grids); a sidebar or two-column body would need new block types. It needs `pymupdf` + `pyyaml`, unlike the stdlib-only reader skills.
+
+**When it triggers:** editing, restyling, retargeting or regenerating a CV/resume PDF.
+
 ---
 
 ## 🔄 Development Workflows
@@ -772,9 +788,16 @@ claude-commands/
 │   │   ├── task_gh.py     # GitHub Issues + Projects v2, via the gh CLI
 │   │   ├── task_gl.py     # GitLab Issues, via REST + urllib (no glab needed)
 │   │   └── todos.py       # The .workflows/todos.md corpus: scan/validate/mint/rename
-│   └── sync-todos-into-gitlab-board/  # Mirror a todos.md onto a GitLab board
-│       ├── SKILL.md       # Repair -> plan -> apply, and the stage mapping
-│       └── sync_todos.py  # Idempotent sync; imports the task skill's modules
+│   ├── sync-todos-into-gitlab-board/  # Mirror a todos.md onto a GitLab board
+│   │   ├── SKILL.md       # Repair -> plan -> apply, and the stage mapping
+│   │   └── sync_todos.py  # Idempotent sync; imports the task skill's modules
+│   └── update-ats-cv/     # Rebuild an ATS CV PDF from a YAML content model
+│       ├── SKILL.md       # Workflow + hard rules (1-page invariant, verify by looking)
+│       ├── SCHEMA.md      # Every cv.yaml key: page, theme, the vertical gap map
+│       ├── cv_render.py   # The layout engine: cv.yaml -> PDF, with --autofit
+│       ├── cv_extract.py  # Source PDF -> spans, rules, text + typeface identification
+│       ├── cv_preview.py  # PDF -> PNG, and the before/after comparison sheet
+│       └── assets/fonts/  # Vendored Lora 400/500/600/700 + italics (SIL OFL)
 ├── cmd/
 │   └── dlv/               # Delve helper scripts for /dbg (copy into your Go project)
 │       ├── dlv_trace.sh   # Call + arg/return tracing
