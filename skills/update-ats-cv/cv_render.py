@@ -31,12 +31,20 @@ FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "f
 
 PAGE_SIZES = {"A4": (595.28, 841.89), "LETTER": (612.0, 792.0)}
 
-# (gap_scale, leading_scale, font_scale) -- loosest first.  Autofit walks this in
-# order and stops at the first entry that fits, so the output is always as airy as
-# the content permits.  Font scale is touched last and never below 0.90, because
-# shrinking type is the most visible compromise.
+# Rungs that INFLATE the authored spacing.  Opt-in via --expand only.  They are not
+# in the default ladder because "loosest that fits" spends leftover room on padding:
+# a CV with space for two more bullets instead rendered with 8% fatter gaps
+# everywhere, which reads as wasted page, not as generous typography.  Leftover room
+# should go to content, and the author decides that -- so the default never enlarges
+# what the YAML asked for.
+EXPAND_RUNGS = [(1.15, 1.02, 1.00), (1.08, 1.00, 1.00)]
+
+# (gap_scale, leading_scale, font_scale) -- loosest first, capped at the authored
+# spacing.  Autofit walks this in order and stops at the first entry that fits.
+# Font scale is touched last and never below 0.90, because shrinking type is the
+# most visible compromise.
 FIT_LADDER = [
-    (1.15, 1.02, 1.00), (1.08, 1.00, 1.00), (1.00, 1.00, 1.00),
+    (1.00, 1.00, 1.00),
     (0.94, 1.00, 1.00), (0.88, 0.99, 1.00), (0.82, 0.98, 1.00),
     (0.76, 0.97, 1.00), (0.70, 0.96, 1.00), (0.64, 0.95, 1.00),
     (0.60, 0.94, 0.99), (0.56, 0.93, 0.98), (0.52, 0.92, 0.97),
@@ -226,6 +234,14 @@ class Layout:
             self.y += self.lead(size)
         return self.fonts.width(s, weight, size, italic, tracking)
 
+    def gap(self, amount):
+        """Advance by a vertical gap.  Negative is always a bug -- it means glyphs
+        overprint -- so it is clamped and reported rather than drawn."""
+        if amount < 0:
+            sys.stderr.write(f"warn: negative gap {amount:.2f}pt clamped to 0 (overlap avoided)\n")
+            amount = 0.0
+        self.y += amount
+
     def rule(self, x0, x1, color=None):
         h = self.theme["rule_height"]
         self.rects.append((fitz.Rect(x0, self.y, x1, self.y + h), color or self.theme["color"]["rule"]))
@@ -295,7 +311,7 @@ class Layout:
                          th["tracking"]["section"]))
         self.y += size * 1.22 + sp["head_rule"]
         self.rule(x0, x1)
-        self.y += sp["rule_body"]
+        self.gap(sp["rule_body"])
 
     def build(self):
         cv, th, sp = self.cv, self.theme, self.space
@@ -306,7 +322,7 @@ class Layout:
             self.centered([(hdr["name"], th["weight"]["name"], th["size"]["name"],
                             th["color"]["name"], False, th["tracking"]["name"])],
                           th["size"]["name"])
-            self.y += sp["header_contact"] - self.lead(th["size"]["name"]) + th["size"]["name"] * 1.05
+            self.gap(sp["header_contact"] - self.lead(th["size"]["name"]) + th["size"]["name"] * 1.05)
 
         # --- contact ----------------------------------------------------
         contact = hdr.get("contact") or []
@@ -324,7 +340,7 @@ class Layout:
             y_before = self.y
             self.centered(runs, size)
             self._underline_links(contact, sep, size, y_before)
-            self.y += sp["contact_summary"] - self.lead(size) + size * 1.05
+            self.gap(sp["contact_summary"] - self.lead(size) + size * 1.05)
 
         # --- summary ----------------------------------------------------
         if cv.get("summary"):
@@ -338,10 +354,10 @@ class Layout:
         for sec in cv.get("sections", []):
             kind = sec.get("type", "entries")
             if kind == "columns":
-                self.y += sp["section_top"]
+                self.gap(sp["section_top"])
                 self._columns(sec)
             else:
-                self.y += sp["section_top"]
+                self.gap(sp["section_top"])
                 self.section_heading(sec.get("title", ""))
                 self._entries(sec)
         return self.y - self.top
@@ -372,7 +388,7 @@ class Layout:
         th, sp = self.theme, self.space
         for i, entry in enumerate(sec.get("entries", [])):
             if i:
-                self.y += sp["entry_gap"]
+                self.gap(sp["entry_gap"])
             title_bits = [b for b in (entry.get("role"), entry.get("org")) if b]
             title = entry.get("title") or "  •  ".join(title_bits)
             if title:
@@ -383,25 +399,30 @@ class Layout:
             meta_bits = [b for b in (entry.get("period"), entry.get("location")) if b]
             meta = entry.get("meta") or "  |  ".join(meta_bits)
             if meta:
-                self.y += sp["title_meta"]
+                self.gap(sp["title_meta"])
                 self.text(self.x0, th["size"]["meta"], th["weight"]["meta"],
                           th["color"]["muted"], meta, advance=False)
                 self.y += th["size"]["meta"] * 1.05
+            # Gaps are added raw: `self.y` already sits at the bottom of whatever was
+            # drawn last, so a token means exactly the whitespace it names.  An earlier
+            # version subtracted a fraction of the font size here to reproduce the
+            # source PDF's measured gaps, which silently went NEGATIVE once the tokens
+            # were tightened -- the date line then overprinted the text beneath it.
+            # Any calibration belongs in the token values, never in the layout.
             if entry.get("intro"):
-                self.y += sp["meta_body"] - th["size"]["meta"] * 1.05 + th["size"]["meta"] * 0.35
+                self.gap(sp["meta_body"])
                 self.paragraph([(entry["intro"].strip(), th["weight"]["body"], th["size"]["body"],
                                  th["color"]["body"], False)], self.x0, self.width,
                                justify=False, size_hint=th["size"]["body"])
             bullets = entry.get("bullets") or []
             if bullets:
-                self.y += sp["intro_bullets"] - th["size"]["body"] * 0.35 if entry.get("intro") \
-                    else sp["meta_body"] - th["size"]["meta"] * 0.65
+                self.gap(sp["intro_bullets"] if entry.get("intro") else sp["meta_body"])
                 self._bullets(bullets)
             for j, sub in enumerate(entry.get("rows") or []):
                 if j:
-                    self.y += sp["sub_gap"]
+                    self.gap(sp["sub_gap"])
                 else:
-                    self.y += sp["title_meta"]
+                    self.gap(sp["title_meta"])
                 self._row(sub)
 
     def _row(self, sub):
@@ -430,7 +451,7 @@ class Layout:
         tw = width - th["bullet_indent"]
         for i, b in enumerate(bullets):
             if i:
-                self.y += sp["bullet_gap"] if item_gap is None else item_gap
+                self.gap(sp["bullet_gap"] if item_gap is None else item_gap)
             runs = runs_of(b, th)
             size = th["size"]["body"]
             font = self.fonts.get(th["weight"]["body"])[0]
@@ -483,7 +504,7 @@ class Layout:
                 cx = gx0 + ci * (colw + gutter)
                 for k, item in enumerate(chunk):
                     if k:
-                        self.y += sp["column_item"] - th["size"]["column"] * th["leading"]
+                        self.gap(sp["column_item"] - th["size"]["column"] * th["leading"])
                     self._bullets([item], x0=cx, width=colw)
                 col_bottom = max(col_bottom, self.y)
             max_y = max(max_y, col_bottom)
@@ -548,7 +569,11 @@ def main():
     ap.add_argument("source")
     ap.add_argument("-o", "--out", required=True)
     ap.add_argument("--autofit", action="store_true",
-                    help="search the fit ladder for the loosest spacing that stays on one page")
+                    help="search the fit ladder for the loosest spacing that stays on one page, "
+                         "never exceeding the spacing the YAML asked for")
+    ap.add_argument("--expand", action="store_true",
+                    help="also allow rungs that INFLATE the authored spacing, to fill a page a "
+                         "short CV would otherwise leave half empty")
     ap.add_argument("--report", action="store_true", help="print fit diagnostics to stderr")
     args = ap.parse_args()
 
@@ -567,6 +592,8 @@ def main():
     avail = (ph - m["top"] - m["bottom"]) * max_pages
 
     ladder = FIT_LADDER if args.autofit else [(1.0, 1.0, 1.0)]
+    if args.autofit and args.expand:
+        ladder = EXPAND_RUNGS + ladder
     chosen, height = None, None
     for gap_s, lead_s, font_s in ladder:
         t, s = scaled(theme, space, gap_s, lead_s, font_s)
@@ -597,10 +624,15 @@ def main():
     doc.save(args.out, deflate=True, garbage=4)
 
     slack = avail - height
-    msg = (f"fit: gap={gap_s:.2f} leading={lead_s:.2f} font={font_s:.2f} | "
-           f"height={height:.1f}pt avail={avail:.1f}pt slack={slack:.1f}pt "
-           f"(~{slack / (t['size']['body'] * t['leading']):.1f} body lines) | pages={doc.page_count}\n")
-    sys.stderr.write(msg)
+    lines_free = slack / (t["size"]["body"] * t["leading"])
+    sys.stderr.write(
+        f"fit: gap={gap_s:.2f} leading={lead_s:.2f} font={font_s:.2f} | "
+        f"height={height:.1f}pt avail={avail:.1f}pt slack={slack:.1f}pt "
+        f"(~{lines_free:.1f} body lines) | pages={doc.page_count}\n")
+    if lines_free >= 2.0:
+        sys.stderr.write(
+            f"note: ~{lines_free:.1f} body lines of page are unused. Prefer ADDING content over "
+            f"leaving it blank; --expand would pad the gaps instead.\n")
     if doc.page_count > max_pages:
         sys.stderr.write("FAIL: page count exceeded\n")
         return 2

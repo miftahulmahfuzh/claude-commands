@@ -104,6 +104,8 @@ change `Layout.paint`, re-verify.
 | Ask | Where |
 |---|---|
 | "keep it to one page" | `page.max_pages` + `--autofit` (already the default) |
+| "there's wasted space at the bottom" | **add content** — the render's `note:` line tells you how many body lines are free. `--expand` pads the gaps instead, which is rarely what is wanted |
+| "the gaps are huge and uneven" | rebuild `space.*` from the body line pitch — see "A tight, consistent rhythm" in `SCHEMA.md` |
 | "reduce the margins / padding" | `page.margin` — 32-34pt is tight but still prints safely; below ~28pt looks cramped and some printers clip |
 | "tighten everything vertically" | `theme.leading` (1.66 is airy, 1.50 is tight-but-readable, below 1.40 crowds descenders) |
 | "these two lines are too far apart" | the specific `space.*` token — see `SCHEMA.md` for the map |

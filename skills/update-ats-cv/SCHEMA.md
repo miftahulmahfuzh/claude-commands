@@ -197,9 +197,48 @@ A shorthand form without `groups` is accepted for a single group:
 triples, loosest first. `--autofit` measures at each rung and stops at the first that
 fits `max_pages`. Consequences worth knowing:
 
-- Rungs above 1.0 exist so a *short* CV expands to fill the page instead of leaving a
-  dead band at the foot.
+- **The ladder never enlarges what the YAML asked for.** It is capped at `1.00`.
+  Inflating rungs live in `EXPAND_RUNGS` and require `--expand`. This is deliberate:
+  "loosest that fits" spends leftover room on padding, so a CV with space for two
+  more bullets instead rendered with 8% fatter gaps *everywhere* — which reads as
+  wasted page, not as generous typography. Leftover room is the author's to spend.
+- When ≥2 body lines are unused the render prints a `note:` saying so. Treat it as
+  a prompt to **add content**, not to reach for `--expand`.
 - `font_scale` stays at 1.00 for the first nine rungs — spacing is squeezed before
   type is, because shrunk type is the most visible compromise.
 - Reaching a rung near the bottom is a signal to **cut prose**, not a success.
 - If nothing fits, the render exits `2` and reports the overflow in body lines.
+
+## Calibration belongs in the tokens, never in the layout
+
+Every `space.*` token is added raw: `Layout.y` already sits at the bottom of the last
+thing drawn, so a token means exactly the whitespace it names. Do not reintroduce
+per-font-size compensation like `sp["meta_body"] - size * 1.05 + size * 0.35`. An
+earlier version did that to reproduce a source PDF's measured gaps; the expressions
+went **negative** the moment the tokens were tightened, and the date line overprinted
+the paragraph beneath it. `Layout.gap()` now clamps negatives and warns, but the rule
+is the real protection.
+
+## A tight, consistent rhythm
+
+The defaults reproduce a typical CV-builder's airy spacing (1.66 leading, ~47pt of
+whitespace above every section). If the brief is "tighter, and use the space for more
+content", derive every token from the body line pitch instead:
+
+```yaml
+theme: {leading: 1.44}     # 12.96pt pitch at 9pt body
+space:
+  section_top:     16.0    # section break  > entry break > line break
+  entry_gap:       12.0
+  head_rule:        4.0
+  rule_body:        7.0
+  title_meta:       2.5    # a label and its date are one unit; keep them touching
+  meta_body:        6.0
+  intro_bullets:    6.0    # == meta_body, so an entry with an intro and one without
+  bullet_gap:       2.0    #    put their first bullet the same distance below the date
+  column_item:     13.0    # == the body line pitch
+```
+
+Consistency here means *same relationship, same gap* — not one uniform number. A
+section break should outrank an entry break, which should outrank a line break; what
+breaks the page is two instances of the **same** relationship measuring differently.
