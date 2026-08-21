@@ -135,3 +135,59 @@ import. The handful of live Keep notes move over by hand.
 the second laptop by itself. It needs a dotfiles repo or a manual clone.
 `~/.config/task-skill/config.json` is a machine-local cache and must not be
 synced.
+
+## Amendment, 2026-08-21: autonomous landing
+
+Driven by a real collision: two sessions in two worktrees, tasks 6 and 8 of
+`run-insights`, both branched off the same `origin/main`. Whichever opened its
+pull request second was guaranteed to conflict, and the loop's last line —
+*"Give the user the PR URL: merging is theirs"* — made that a human's problem
+twice over: once to merge, once to resolve.
+
+So the loop lands its own work. `task_gh.py land` is the new step 6b, and the
+merge click is gone.
+
+**What replaces the click is the repo's own gate, not trust.** `land` reads
+`.github/workflows/*.yml` and emits every `run:` step of every job triggered by
+push or pull_request, in order, with the job's `env:`. On `run-insights` that is
+`npm ci`, four bespoke guards, `typecheck`, `test`, `build` — a hardcoded
+`npm test` would have waved three of those through. A repo with no CI reports
+`gate: none` and `land` **refuses**: no gate means no autonomous landing, and
+`--no-gate` has to be typed on purpose.
+
+**The gate runs on the resolved tree, before the push.** A conflict resolution
+that was never verified is a guess, and this is the one place a guess reaches
+`main` unseen.
+
+**Conflicts are resolved by the session, under a rule with a floor.** The rule is
+in SKILL.md as a table (append-only regions keep both sides; lockfiles are
+regenerated, not hand-merged; same-function edits get both behaviours composed).
+The floor is the only thing a verification pass cannot enforce for itself:
+
+> A resolution that removes the other card's behaviour is not a resolution.
+
+Because verification catches a resolution that *breaks* and is blind to one that
+*drops*. Task 8's session, meeting task 6's fix in the same handler, can take its
+own side and watch every test pass while task 6 is silently un-fixed with its card
+reading Completed. `land --abort-conflict` exists for exactly that: it comments on
+**both** cards, naming the other, and leaves the branch merged-but-unpushed so the
+resolution work survives being handed back.
+
+`land` splits at the gate — sync-and-resolve, then `--after-gate` for push, merge
+and `finish` — because resolving a conflict and judging a test failure are model
+work, and pushing and merging are not. Same division as `pr`.
+
+**Rejected: a lock to serialise the two sessions.** Traced: both merge the same
+base, both verify, both push, first one wins; the loser must merge the *new* main
+and re-run its gate. A lock only decides who loses, and the loser does identical
+work — so it buys nothing and adds a stale-lock failure mode. Instead
+`--after-gate` re-checks `HEAD..origin/main` and sends the caller back to the gate
+whenever main moved, **even when the merge was textually clean** — that is where
+semantic conflicts live, and it is the only round that ever sees both changes
+together.
+
+Rejected: `--squash`. `run-insights` lands merge commits (`Merge pull request #5
+from …`), one feature commit per card, and the tool should match the repo rather
+than reformat its history.
+
+Rejected, again, for `task_gl.py`: GitLab work goes through `/do`.

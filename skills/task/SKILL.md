@@ -1,6 +1,6 @@
 ---
 name: task
-description: Use when the user names a task card to work on — "/task 14", "fetch task 14", "task daily-words#14", "/task 7" in a GitLab repo, a pasted issue URL, "what's open?", "pick up that card again" — or when work finishes and a card needs moving. Drives task cards on GitHub Projects (personal repos) or GitLab Issues (work repos): claims the card by moving it to In Progress as soon as it is fetched, reads it and every comment, brainstorms it, writes or mints the implementation plan, links it back onto the card, and moves it to Completed only once the work is verified. On GitHub the work happens in a fresh worktree branched off origin/main and lands as a pull request linked to the card. Handles the reopen loop, where a card comes back with a bug report in a new comment.
+description: Use when the user names a task card to work on — "/task 14", "fetch task 14", "task daily-words#14", "/task 7" in a GitLab repo, a pasted issue URL, "what's open?", "pick up that card again" — or when work finishes and a card needs moving. Drives task cards on GitHub Projects (personal repos) or GitLab Issues (work repos): claims the card by moving it to In Progress as soon as it is fetched, reads it and every comment, brainstorms it, writes or mints the implementation plan, links it back onto the card, and moves it to Completed only once the work is verified. On GitHub the work happens in a fresh worktree branched off origin/main and the session lands its own pull request — running the repo's CI as the gate, resolving conflicts against parallel sessions, and merging without a human. Handles the reopen loop, where a card comes back with a bug report in a new comment.
 ---
 
 # Task
@@ -18,17 +18,21 @@ here by id, brainstormed, planned, built, and moved through **Open → In Progre
 | Kanban view | one user-level Projects board, spanning repos | one board **per project**: 2 label columns + built-in Closed |
 | Cross-project view | the same board | the **group issue list**, filtered by label |
 | Helper | `task_gh.py` | `task_gl.py` |
-| Development loop | this skill runs it, in a **worktree off `origin/main`**, and every card ends in a **pull request** | this skill mints a TaskID and hands off to **`/do`** |
+| Development loop | this skill runs it, in a **worktree off `origin/main`**, and every card ends in a **pull request it merges itself** | this skill mints a TaskID and hands off to **`/do`** |
 | `Completed` means | the linked PR is **merged** | the issue is **closed** |
+| Who merges | **the session**, gated on the repo's CI (step 6b) | `/do`, on its own branch rules |
 
 **Core principle: the board records what happened, and it is never ahead of
 reality.** A card sits in `In Progress` only while it is genuinely being worked,
-and reaches `Completed` only after verification has actually passed and the user
-has said the work is done. Never move a card on the strength of "the code is
-written".
+and reaches `Completed` only after the repo's own gate has actually passed. Never
+move a card on the strength of "the code is written".
 
-On GitHub that bar is mechanical rather than remembered: `finish` refuses to
-complete a card unless GitHub itself reports a **merged** linked pull request.
+On GitHub that bar is mechanical rather than remembered, which is what lets the
+loop close itself: the session merges its own pull request (step 6b), and
+`finish` refuses to complete a card unless GitHub itself reports a **merged**
+linked PR. The human's steering point is **plan approval in step 5** — after that,
+the card runs to Completed on its own, and comes back only when a conflict cannot
+be resolved without losing someone's work.
 
 **This skill works cards; it does not create them.** Capturing a *new* card is
 `/create-task`, which opens the issue, adds it to the board and writes the Open
@@ -194,7 +198,106 @@ run from a dirty worktree or from the base branch, and re-running it on an
 existing open PR repairs a missing closing keyword instead of opening a second.
 
 The card **stays In Progress** with the PR now visible in the board's *Linked
-pull requests* column. Give the user the PR URL: merging is theirs.
+pull requests* column. Then land it yourself — step 6b.
+
+### 6b. Land it: the session merges its own pull request
+
+No human clicks merge. `land` does the git and the API; you do the two things that
+are judgement — resolving a conflict, and reading a failed gate.
+
+```bash
+python3 $S/task_gh.py land 14            # sync with origin/main, then print the gate
+```
+
+It refuses a dirty tree, refuses to run from the base branch, merges
+`origin/main` **into the task branch** (never the reverse — an unverified `main`
+is where everyone else branches from), and then prints one of two things:
+
+| Exit | Phase | What it means |
+|---|---|---|
+| 0 | `gate` | Merged clean. `commands` is the gate — run it. |
+| 2 | `conflict` | `conflicts` lists the files, `otherCards` names the card you collided with. Resolve, commit, continue. |
+
+**The gate is the repo's own, read out of `.github/workflows/*.yml`** — every
+`run:` step of every push/pull_request job, in order, with the job's `env`. On
+`run-insights` that is 14 commands including seven bespoke guards; a hardcoded
+`npm test` would have waved all seven through. Run them in the worktree, in
+order, and **read the output** — this gate is the only thing standing where the
+merge click used to be.
+
+A repo with **no CI** reports `gate: none` and `land` refuses: no gate means
+nothing would check an auto-resolved conflict. `--no-gate` exists and has to be
+typed on purpose.
+
+Then, and only then:
+
+```bash
+python3 $S/task_gh.py land 14 --after-gate
+```
+
+which pushes, merges the PR (`--merge`, one commit per card), sets Completed and
+posts the note naming the merge commit, then deletes the remote branch. It refuses
+a draft PR.
+
+The order there is deliberate: the merge is the only step allowed to fail the
+command. The card is completed next, and the branch is tidied **last and
+best-effort** (`remoteBranchDeleted` says whether it went), because a leftover
+branch is not worth a landing that merged the code and left the card saying
+In Progress. `gh pr merge --delete-branch` is not used at all — it checks out the
+default branch first, which fails inside a worktree where `main` is checked out
+elsewhere, and it would fail *after* merging.
+
+**It can send you back to the gate, and that is not a failure.** If `origin/main`
+moved while the gate was running — the other session landed first — `--after-gate`
+merges the new base in and reprints the gate with `regate: true`, *even when the
+merge was textually clean*. That round is the only one that ever sees both changes
+together, and a clean merge of two unrelated edits is exactly where a semantic
+break hides. Re-run the gate, then `--after-gate --attempt 2`. Above attempt 3 it
+refuses and tells you to stop rather than loop.
+
+The same applies if GitHub calls the PR conflicting, **or if `gh` refuses the
+merge outright** — losing the race is the expected half of racing, so it is
+reported as `regate`, not as an error. (GitHub computes `mergeable` lazily and
+often answers `UNKNOWN`, so `gh` is the authority and its refusal is read rather
+than trusted in advance.)
+
+There is no lock and no queue. Two sessions landing at once is fine: the first
+wins, the second is sent round again, and going round is work that had to happen
+anyway.
+
+#### The conflict rule
+
+On exit 2, classify the region first — the classification picks the resolution,
+not taste:
+
+| Conflict region | Resolution |
+|---|---|
+| Append-only list (todos, CHANGELOG, plan block, README index, a catalog) | **Keep both sides**, theirs then ours |
+| Disjoint edits git flagged for adjacency | Keep both hunks |
+| Same function, both sides changed behaviour | **Compose both behaviours** |
+| Lockfile (`package-lock.json`) | Discard both, regenerate: `npm install --package-lock-only` |
+| Generated or derived file | Discard both, re-run the generator |
+
+Then the floor, which is the one thing the gate cannot enforce for itself:
+
+> **A resolution that removes the other card's behaviour is not a resolution.**
+> If the only way to make the tree build is to delete what the other session
+> added, stop. Do not simplify your way past it.
+
+```bash
+python3 $S/task_gh.py land 14 --abort-conflict \
+  --reason "Task 6 debounces onPick; task 8 splits the same handler. Composing them
+            needs a decision about which fires on a zoom tap."
+```
+
+That comments on **both** cards, naming the other, leaves the card In Progress and
+leaves the merge resolved-but-unpushed so the work survives. Then tell the user.
+
+Why the floor is a rule and not a judgement call: the gate catches a resolution
+that **breaks** and is blind to one that **drops**. Task 8's session, meeting task
+6's fix in the same handler, can take its own side and watch all 14 gate commands
+pass while task 6 is silently un-fixed — with its card reading Completed and its
+PR reading merged. Nothing downstream ever catches that.
 
 On a **work repo with `.workflows/todos.md`**, none of the above applies. That
 repo already has a task system — 33 todos.md files and a `/do` command orchestrating five subagents
@@ -209,15 +312,16 @@ python3 $S/todos.py validate                           # before and after
 Then run `/do <TaskID>`. Its completion-handler updates todos.md; you mirror that
 onto the GitLab card in step 7.
 
-### 7. Completed — only on both conditions
+### 7. Completed — on evidence, not on a claim
 
-The user says the work is done **and** verification has actually passed. Use the
-**verification-before-completion** skill; do not claim a pass you have not seen.
-On GitHub there is a third condition, and it is checked for you: the linked PR is
-merged.
+On **GitHub this already happened**: `land --after-gate` set Completed itself,
+because by then all three conditions were mechanically true — the gate passed, the
+PR is merged, and GitHub says so. There is nothing left to do but report.
+
+`finish` remains for the paths that skipped `land`:
 
 ```bash
-# GitHub — after the user merges the PR
+# GitHub — a card landed by hand, or one that genuinely has no PR
 python3 $S/task_gh.py finish 14 --note "Verified: <commands that passed>."
 
 # GitLab
@@ -226,22 +330,27 @@ python3 $S/task_gl.py status <ref> Completed
 ```
 
 `finish` asks GitHub whether a linked PR is merged, and **exits non-zero if none
-is** — so a card cannot reach Completed while its code is still in review. It
-then sets Status and posts the note naming the merge commit, leaving the issue
-closed (see the closing section). `--allow-unmerged` exists for a card
-that genuinely has no PR; using it to skip a review is defeating the check.
+is** — so a card cannot reach Completed while its code is still in review.
+`--allow-unmerged` exists for a card that genuinely has no PR; using it to skip a
+review is defeating the check. `land --after-gate` calls the same function, so
+the rule is one implementation, not two.
+
+Use the **verification-before-completion** skill: do not claim a pass you have not
+seen. The gate's output is that evidence — quote what passed.
 
 On GitLab, `status <ref> Completed` **closes the issue** as well as labelling it,
 which is what moves it into the Closed column and out of the project's issue
 list. Reopening later (`status <ref> Open`) reopens the issue too.
 
-If verification fails, say so and leave the card in `In Progress`. A card in the
-wrong column is the one failure this system cannot absorb, because the user
-trusts the board instead of re-reading the code.
+If the gate fails, say so and leave the card in `In Progress`. Nothing has been
+pushed or merged at that point, so there is nothing to undo. A card in the wrong
+column is the one failure this system cannot absorb, because the user trusts the
+board instead of re-reading the code.
 
 ### 8. Retire the worktree (GitHub)
 
-Once the PR is merged and the card is Completed, the branch is dead weight:
+`land --after-gate` already deleted the **remote** branch. What is left is the
+local worktree and its branch, which is dead weight:
 
 ```bash
 python3 $S/task_gh.py worktree 14 --remove       # --force to discard dirty state

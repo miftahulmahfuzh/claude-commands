@@ -18,6 +18,8 @@ Subcommands:
   pr REF [--plan PATH]            push the branch and open a PR that closes the issue
   links REF                       which PRs the issue and the board's field are showing
   reopen REF                      reopen an issue a merged PR closed
+  land REF                        sync with the base, emit the repo's CI gate; exit 2 on conflict
+  land REF --after-gate           the gate passed: push, merge the PR, complete the card
   finish REF                      Completed: needs a merged linked PR; leaves it closed
 
 REF forms: 14 | owner/repo#14 | https://github.com/owner/repo/issues/14 | PVTI_xxx
@@ -1219,10 +1221,218 @@ def cmd_finish(args):
     item = match_ref(fetch_items(cfg), args.ref, args.repo)
     if item["kind"] != "issue":
         raise TaskError("A draft item cannot be completed. Promote it first.")
+    print(json.dumps(
+        complete_card(cfg, item, note=args.note, allow_unmerged=args.allow_unmerged),
+        indent=2))
+    return 0
 
+
+# --------------------------------------------------------------------- landing
+
+GATE_EVENTS = ("push", "pull_request", "merge_group")
+MAX_LAND_ATTEMPTS = 3
+
+
+def _trigger_names(node):
+    """The event names in a workflow's `on:`, whatever shape it was written in."""
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, list):
+        return [str(x) for x in node]
+    if isinstance(node, dict):
+        return [str(k) for k in node]
+    return []
+
+
+def _gate_from_yaml(text):
+    """Parse a workflow properly. Returns (steps, triggered) or None if unparseable."""
+    try:
+        import yaml  # optional: present on most systems, not required
+    except ImportError:
+        return None
+    try:
+        doc = yaml.safe_load(text)
+    except Exception:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    # `on:` is YAML 1.1's boolean true, so safe_load gives the key True, not "on".
+    triggers = doc.get("on", doc.get(True))
+    names = _trigger_names(triggers)
+    if not any(n in GATE_EVENTS for n in names):
+        return [], False
+    steps = []
+    for job_name, job in (doc.get("jobs") or {}).items():
+        if not isinstance(job, dict):
+            continue
+        env = {str(k): str(v) for k, v in (job.get("env") or {}).items()}
+        for step in job.get("steps") or []:
+            if not isinstance(step, dict) or not step.get("run"):
+                continue
+            steps.append({
+                "job": str(job_name),
+                "name": str(step.get("name") or "").strip() or None,
+                "run": str(step["run"]).strip(),
+                "env": env,
+            })
+    return steps, True
+
+
+def _gate_from_scan(text):
+    """Fallback when PyYAML is absent: pull `run:` steps out by indentation.
+
+    Coarse on purpose -- it cannot tell which events a job answers to, so it
+    reports every run step and the caller is told the parser was `scan`.
+    """
+    steps, lines = [], text.splitlines()
+    i = 0
+    while i < len(lines):
+        m = re.match(r"^(\s*)-?\s*run:\s*(\|[-+]?|>[-+]?)?\s*(.*)$", lines[i])
+        if not m:
+            i += 1
+            continue
+        indent, block, inline = m.group(1), m.group(2), m.group(3)
+        if block:
+            body, i = [], i + 1
+            while i < len(lines):
+                if lines[i].strip() and not lines[i].startswith(indent + " "):
+                    break
+                body.append(lines[i].strip())
+                i += 1
+            run = "\n".join(x for x in body if x)
+        else:
+            run = inline.strip().strip("'\"")
+            i += 1
+        if run:
+            steps.append({"job": None, "name": None, "run": run, "env": {}})
+    return steps
+
+
+def workflow_gate(root):
+    """The commands CI would run, read out of the repo's own workflows.
+
+    The gate standing where a human's merge click used to be has to be the
+    repo's gate rather than a guess: hardcoding `npm test` waves through a repo
+    whose CI is four bespoke guards plus a typecheck and a build. So every
+    `run:` step of every push/pull_request job is emitted, in order, with the
+    job's env.
+
+    `parser: "none"` means no CI, which means no autonomous landing -- `land`
+    refuses rather than merging on nothing.
+    """
+    wf_dir = Path(root) / ".github" / "workflows"
+    files = sorted(list(wf_dir.glob("*.yml")) + list(wf_dir.glob("*.yaml"))) if wf_dir.is_dir() else []
+    if not files:
+        return {"parser": "none", "workflows": [], "steps": []}
+    parser, steps, used = "yaml", [], []
+    for path in files:
+        text = path.read_text(errors="replace")
+        parsed = _gate_from_yaml(text)
+        if parsed is None:
+            parser = "scan"
+            found, triggered = _gate_from_scan(text), True
+        else:
+            found, triggered = parsed
+        if not triggered or not found:
+            continue
+        used.append(path.name)
+        steps.extend({**s, "workflow": path.name} for s in found)
+    if not steps:
+        return {"parser": "none", "workflows": [p.name for p in files], "steps": []}
+    return {"parser": parser, "workflows": used, "steps": steps}
+
+
+def conflicted_files(root):
+    return [l for l in git_out("diff", "--name-only", "--diff-filter=U", cwd=root).splitlines() if l]
+
+
+def sync_base(root, base, fetch=True):
+    """Merge the base branch into the task branch. Returns (conflicts, incoming).
+
+    `incoming` is what makes the gate honest: if the base moved, the tree the
+    gate ran against is not the tree being merged, so the caller has to go round
+    again even when git resolved everything by itself. An empty `incoming` means
+    nothing changed and a passing gate still stands.
+
+    The merge runs on the task branch, never on the base -- resolving a conflict
+    on `main` would put an unverified tree where everyone else branches from.
+    """
+    if fetch:
+        git_out("fetch", "origin", cwd=root)
+    incoming = commits_between(root, "HEAD", base)
+    if not incoming:
+        return [], []
+    proc = git_run("merge", "--no-edit", base, cwd=root, check=False)
+    if proc.returncode == 0:
+        return [], incoming
+    files = conflicted_files(root)
+    if not files:
+        raise TaskError(
+            f"git merge {base} failed without conflicts:\n{(proc.stderr or proc.stdout).strip()}"
+        )
+    return files, incoming
+
+
+def in_merge(root):
+    return (Path(git_out("rev-parse", "--git-dir", cwd=root)) / "MERGE_HEAD").exists() \
+        or (Path(root) / ".git" / "MERGE_HEAD").exists()
+
+
+def commits_between(root, a, b, paths=None):
+    args = ["log", "--oneline", "--no-decorate", f"{a}..{b}"]
+    if paths:
+        args += ["--"] + list(paths)
+    return [l for l in git_out(*args, cwd=root).splitlines() if l]
+
+
+def cards_named_in(commits, exclude=None):
+    """Issue numbers derivable from commit subjects on the base branch.
+
+    Merge commits read `Merge pull request #5 from owner/task/3-slug`, so both
+    the PR number and -- more usefully -- the *card* number are sitting in the
+    branch name. Used to name the other session's card when landing gives up.
+    """
+    found = []
+    for line in commits:
+        for n in re.findall(r"\btask/(\d+)-", line):
+            found.append(int(n))
+    out = []
+    for n in found:
+        if n != exclude and n not in out:
+            out.append(n)
+    return out
+
+
+def open_pr_for(item, head):
+    prs = gh("pr", "list", "--repo", item["repo"], "--head", head, "--state", "open",
+             "--json", "number,url,isDraft,mergeable,mergeStateStatus", "--limit", "5",
+             as_json=True)
+    if not prs:
+        raise TaskError(
+            f"No open pull request on {head!r} to land. Open it first: "
+            f"task_gh.py pr {item['number']}"
+        )
+    return prs[0]
+
+
+def pr_mergeable(repo, number, attempts=3, delay=2.0):
+    """GitHub computes mergeability asynchronously, so UNKNOWN is polled, not believed."""
+    last = {}
+    for i in range(attempts):
+        last = gh("pr", "view", str(number), "--repo", repo,
+                  "--json", "mergeable,mergeStateStatus,state", as_json=True)
+        if str(last.get("mergeable", "")).upper() != "UNKNOWN":
+            return last
+        if i < attempts - 1:
+            time.sleep(delay)
+    return last
+
+
+def complete_card(cfg, item, note=None, allow_unmerged=False):
+    """Completed, on evidence. Shared by `finish` and by `land --after-gate`."""
     report = link_report(item)
     merged = [p for p in report["issueLinks"]["pullRequests"] if p["merged"]]
-    if not merged and not args.allow_unmerged:
+    if not merged and not allow_unmerged:
         raise TaskError(
             f"No merged pull request is linked to #{item['number']}: {report['verdict']}. "
             f"Merge the PR first, or pass --allow-unmerged if this card genuinely has no PR."
@@ -1235,7 +1445,6 @@ def cmd_finish(args):
            "--field-id", cfg["statusFieldId"], "--single-select-option-id", option_id)
     state = issue_state(item)
 
-    note = args.note
     if note is None and merged:
         shas = ", ".join(f"#{p['number']} ({(p['mergeCommit'] or '')[:8]})" for p in merged)
         note = f"Completed. Merged in {shas}."
@@ -1243,16 +1452,204 @@ def cmd_finish(args):
         gh("issue", "comment", str(item["number"]), "--repo", item["repo"], "--body-file", "-",
            stdin=note)
 
-    print(json.dumps(
-        {
-            "status": name,
-            "changed": changed,
-            "mergedPrs": [p["number"] for p in merged],
-            "commented": bool(note),
-            "issue": {"state": state, "reopened": False},
-            **report,
-        },
-        indent=2))
+    return {
+        "status": name,
+        "changed": changed,
+        "mergedPrs": [p["number"] for p in merged],
+        "commented": bool(note),
+        "issue": {"state": state, "reopened": False},
+        **report,
+    }
+
+
+def cmd_land(args):
+    """Land the card's pull request without a human, in two halves.
+
+    Default half: fetch, merge the base into the task branch, and either report
+    the conflict (exit 2) or emit the repo's gate. The caller resolves and runs
+    the gate -- both are judgement, which is why the script stops here.
+
+    `--after-gate`: push, merge the PR, complete the card. If the base moved
+    while the gate was running, it sends the caller back to the gate instead of
+    merging: a textually clean merge of two unrelated changes is exactly where a
+    semantic break hides, and that round is the only one that sees both.
+    """
+    cfg = board_config(refresh=args.refresh)
+    item = match_ref(fetch_items(cfg), args.ref, args.repo)
+    if item["kind"] != "issue":
+        raise TaskError("A draft item has no pull request to land. Promote it first.")
+    root = repo_root(args.dir or os.getcwd())
+    assert_same_repo(item, root)
+
+    head = git_out("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
+    if head == "HEAD":
+        raise TaskError(f"HEAD is detached in {root}. Check out the task branch first.")
+    base = args.base or resolve_base(root)
+    if head == base.removeprefix("origin/"):
+        raise TaskError(
+            f"Refusing to land from {head!r}: that is the base branch. Landing happens on the "
+            f"card's task branch, in its worktree."
+        )
+    number = item["number"]
+    common = {"repo": item["repo"], "number": number, "head": head, "base": base}
+
+    # --- giving up, deliberately: name the other card rather than guessing on ---
+    if args.abort_conflict:
+        files = conflicted_files(root)
+        others = cards_named_in(commits_between(root, "HEAD", base, files or None), exclude=number)
+        why = args.reason or "the resolution would have removed the other card's behaviour"
+        here = (
+            f"**Landing stopped — needs a human.**\n\n{why}\n\n"
+            + (f"Conflicting files:\n" + "\n".join(f"- `{f}`" for f in files) + "\n\n" if files else "")
+            + (f"Overlaps with: {', '.join(f'#{n}' for n in others)}\n\n" if others else "")
+            + f"The merge is resolved-in-progress on `{head}` and has **not** been pushed, so "
+              f"nothing is lost. Card stays In Progress."
+        )
+        gh("issue", "comment", str(number), "--repo", item["repo"], "--body-file", "-", stdin=here)
+        for other in others:
+            gh("issue", "comment", str(other), "--repo", item["repo"], "--body-file", "-",
+               stdin=f"Landing #{number} conflicts with this card's work"
+                     + (f" in {', '.join(f'`{f}`' for f in files)}" if files else "")
+                     + f". {why}\n\nNeither card has been changed; #{number} is waiting on a human.")
+        print(json.dumps({**common, "phase": "aborted", "conflicts": files,
+                          "otherCards": others, "commentedOn": [number] + others,
+                          "status": item["status"]}, indent=2))
+        return 0
+
+    if in_merge(root) or conflicted_files(root):
+        raise TaskError(
+            f"{root} is mid-merge. Finish resolving it and commit, then re-run land "
+            f"--after-gate; or `git merge --abort` to start over; or "
+            f"`land {args.ref} --abort-conflict --reason ...` to hand it back."
+        )
+    if not git_ok("diff", "--quiet", "HEAD", cwd=root):
+        raise TaskError(
+            f"{root} has uncommitted changes. Commit them first — landing pushes what is "
+            f"committed, and an unlanded edit is invisible in the pull request."
+        )
+
+    gate = workflow_gate(root)
+    if gate["parser"] == "none" and not args.no_gate:
+        raise TaskError(
+            f"{origin_repo(root)} has no CI workflow, so there is no gate to stand where the "
+            f"merge click was, and nothing would check an auto-resolved conflict. Pass "
+            f"--no-gate to land anyway, on purpose."
+        )
+
+    def sync():
+        return sync_base(root, base)
+
+    def gate_payload(extra):
+        return {
+            **common, "phase": "gate", "gate": gate,
+            "commands": [s["run"] for s in gate["steps"]],
+            "next": f"task_gh.py land {number} --after-gate",
+            **extra,
+        }
+
+    def conflict_payload(files):
+        others = cards_named_in(commits_between(root, "HEAD", base, files), exclude=number)
+        return {
+            **common, "phase": "conflict", "conflicts": files, "otherCards": others,
+            "baseCommits": commits_between(root, "HEAD", base, files),
+            "rule": "Both sides' behaviour must survive. Append-only regions keep both; "
+                    "lockfiles and generated files are regenerated, not hand-merged; same-function "
+                    "edits compose. If the only way to build is to delete the other card's "
+                    "behaviour, stop: land --abort-conflict.",
+            "next": f"resolve, commit, then task_gh.py land {number} --after-gate",
+        }
+
+    # --- the sync half -------------------------------------------------------
+    if not args.after_gate:
+        files, incoming = sync()
+        if files:
+            print(json.dumps(conflict_payload(files), indent=2))
+            return 2
+        print(json.dumps(gate_payload({"mergedBase": incoming}), indent=2))
+        return 0
+
+    # --- the after-gate half -------------------------------------------------
+    if args.attempt > MAX_LAND_ATTEMPTS:
+        raise TaskError(
+            f"Attempt {args.attempt} of landing #{number}: the base has moved under this card "
+            f"{MAX_LAND_ATTEMPTS} times. Stop and tell the user rather than looping."
+        )
+    files, incoming = sync()
+    if files:
+        print(json.dumps(conflict_payload(files), indent=2))
+        return 2
+    if incoming and not args.no_regate:
+        # Clean merge, but the gate ran on a tree that did not contain these. This is
+        # where a semantic break lives: two changes that never touch the same line and
+        # still contradict each other. Go round again rather than merge on faith.
+        print(json.dumps(gate_payload({
+            "regate": True,
+            "mergedBase": incoming,
+            "reason": f"{base} moved {len(incoming)} commit(s) while the gate was running, and "
+                      f"they merged cleanly. Re-run the gate on the combined tree.",
+            "next": f"task_gh.py land {number} --after-gate --attempt {args.attempt + 1}",
+        }), indent=2))
+        return 0
+
+    pr = open_pr_for(item, head)
+    if pr.get("isDraft"):
+        raise TaskError(
+            f"PR #{pr['number']} is a draft, and a draft cannot be merged. "
+            f"gh pr ready {pr['number']} --repo {item['repo']}"
+        )
+    git_out("push", "-u", "origin", f"{head}:{head}", cwd=root)
+
+    def send_round_again(why):
+        """The base won the race. Merge it in and hand the gate back, or report the
+        conflict. Never an error: losing the race is the expected half of it."""
+        files, _ = sync()
+        if files:
+            print(json.dumps(conflict_payload(files), indent=2))
+            return 2
+        print(json.dumps(gate_payload({
+            "regate": True,
+            "reason": f"{why} Re-run the gate on the combined tree, then --after-gate "
+                      f"--attempt {args.attempt + 1}.",
+            "next": f"task_gh.py land {number} --after-gate --attempt {args.attempt + 1}",
+        }), indent=2))
+        return 0
+
+    state = pr_mergeable(item["repo"], pr["number"])
+    if str(state.get("mergeable", "")).upper() == "CONFLICTING":
+        return send_round_again(f"GitHub reports #{pr['number']} conflicting.")
+
+    # No --delete-branch: gh checks out the default branch before deleting the local
+    # one, and inside a worktree that fails because main is checked out elsewhere --
+    # which would merge the PR and then throw, leaving the card uncompleted. So the
+    # merge is the only thing that can fail here, and the branch is tidied after.
+    #
+    # mergeable can still be UNKNOWN after polling (GitHub computes it lazily), so
+    # gh is the real authority and a refusal is treated as losing the race rather
+    # than as a dead end -- otherwise the second session of two just dies.
+    try:
+        gh("pr", "merge", str(pr["number"]), "--repo", item["repo"], f"--{args.method}")
+    except TaskError as exc:
+        if not re.search(r"not mergeable|merge conflict|not in a mergeable|base branch",
+                         str(exc), re.I):
+            raise
+        return send_round_again(f"gh refused the merge: {str(exc).splitlines()[-1].strip()}")
+    finished = complete_card(cfg, item, note=args.note)
+
+    # Cleanup last, and best-effort: the card is already right, and a leftover
+    # branch is not worth failing a landing over. The local one goes with the
+    # worktree in step 8.
+    deleted = None
+    if not args.keep_branch:
+        try:
+            gh("api", "-X", "DELETE", f"repos/{item['repo']}/git/refs/heads/{head}")
+            deleted = True
+        except TaskError:
+            deleted = False
+
+    print(json.dumps({**common, "phase": "landed", "pr": {"number": pr["number"],
+                      "url": pr.get("url")}, "method": args.method,
+                      "attempt": args.attempt, "remoteBranchDeleted": deleted,
+                      **finished}, indent=2))
     return 0
 
 
@@ -1385,6 +1782,125 @@ def cmd_selftest(args):
     eq("worktree branch", trees[1]["branch"], "task/14-x")
     eq("detached branch", trees[2]["branch"], None)
 
+    # the landing gate: read out of a workflow, both parsers, and the `on:`-is-true trap
+    wf = (
+        "name: CI\n"
+        "on:\n"
+        "  push:\n"
+        "    branches: [main]\n"
+        "  pull_request:\n"
+        "jobs:\n"
+        "  test:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    env:\n"
+        "      LLM_API_KEY: ci-dummy-key\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - run: npm ci\n"
+        "      - name: Guard\n"
+        "        run: npm run ci:openrouter-guard\n"
+        "      - name: Build\n"
+        "        run: |\n"
+        "          npm run typecheck\n"
+        "          npm run build\n"
+    )
+    # PyYAML is optional here, so its assertions are too -- the scan below is what
+    # runs on a machine without it, and that path must be tested unconditionally.
+    parsed = _gate_from_yaml(wf)
+    if parsed is None:
+        print("selftest: PyYAML absent, yaml gate assertions skipped", file=sys.stderr)
+    else:
+        steps, triggered = parsed
+        eq("gate triggered", triggered, True)
+        eq("gate skips uses-only steps", len(steps), 3)
+        eq("gate order", steps[0]["run"], "npm ci")
+        eq("gate step name", steps[1]["name"], "Guard")
+        eq("gate block scalar", steps[2]["run"], "npm run typecheck\nnpm run build")
+        eq("gate carries job env", steps[0]["env"]["LLM_API_KEY"], "ci-dummy-key")
+
+        # `on:` under YAML 1.1 parses as the boolean True, not the string "on".
+        # Reading doc["on"] alone finds nothing and every gate comes back empty.
+        import yaml as _yaml
+        eq("on is boolean true", True in _yaml.safe_load(wf), True)
+
+        # a workflow no push/PR ever triggers is not a gate
+        eq("untriggered",
+           _gate_from_yaml("on:\n  schedule:\n    - cron: '0 0 * * *'\njobs: {}\n"),
+           ([], False))
+
+    scanned = _gate_from_scan(wf)
+    eq("scan finds the same runs", [s["run"] for s in scanned],
+       ["npm ci", "npm run ci:openrouter-guard", "npm run typecheck\nnpm run build"])
+
+    with _mock.patch(__name__ + ".Path.is_dir", return_value=False):
+        eq("no workflows means no gate", workflow_gate("/nope")["parser"], "none")
+
+    # the landing merge, against a real repo. Two branches off one base, both
+    # touching one file -- the parallel-worktree collision this exists for. No
+    # network and no gh; git only, so it is skipped where git is missing.
+    import shutil
+    import tempfile
+    if shutil.which("git"):
+        tmp = tempfile.mkdtemp(prefix="task-land-")
+        try:
+            def g(*a, **kw):
+                return git_run(*a, cwd=kw.pop("cwd", tmp), **kw)
+
+            g("init", "-q", "-b", "main")
+            g("config", "user.email", "t@t"); g("config", "user.name", "T")
+            Path(tmp, "shared.txt").write_text("base\n")
+            Path(tmp, "own.txt").write_text("mine\n")
+            g("add", "-A"); g("commit", "-qm", "base")
+
+            # a card branch, and meanwhile the base moves twice
+            g("checkout", "-q", "-b", "task/8-split-the-row")
+            Path(tmp, "shared.txt").write_text("task 8 line\n")
+            g("add", "-A"); g("commit", "-qm", "feat: task 8")
+
+            g("checkout", "-q", "main")
+            Path(tmp, "unrelated.txt").write_text("elsewhere\n")
+            g("add", "-A"); g("commit", "-qm", "Merge pull request #4 from me/task/6-onpick-twice")
+
+            # clean case first: the base moved, but not into our file
+            g("checkout", "-q", "task/8-split-the-row")
+            conflicts, incoming = sync_base(tmp, "main", fetch=False)
+            eq("clean merge has no conflicts", conflicts, [])
+            eq("clean merge still reports the base moved", len(incoming), 1)
+            eq("other card found in a clean merge", cards_named_in(incoming), [6])
+
+            # nothing left to merge: a passing gate still stands
+            eq("second sync is a no-op", sync_base(tmp, "main", fetch=False), ([], []))
+
+            # now a real conflict on the shared file
+            g("checkout", "-q", "main")
+            Path(tmp, "shared.txt").write_text("task 6 line\n")
+            g("add", "-A"); g("commit", "-qm", "Merge pull request #5 from me/task/6-onpick-twice")
+            g("checkout", "-q", "task/8-split-the-row")
+            eq("not mid-merge before", in_merge(tmp), False)
+            conflicts, incoming = sync_base(tmp, "main", fetch=False)
+            eq("conflict detected", conflicts, ["shared.txt"])
+            eq("mid-merge after", in_merge(tmp), True)
+            eq("conflict names the other card",
+               cards_named_in(commits_between(tmp, "HEAD", "main", conflicts), exclude=8), [6])
+            eq("both sides present in the tree",
+               all(s in Path(tmp, "shared.txt").read_text() for s in ("task 6 line", "task 8 line")),
+               True)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    else:
+        print("selftest: git absent, landing merge assertions skipped", file=sys.stderr)
+
+    # the other session's card, read out of the base branch's merge commits
+    log = [
+        "b84765a Merge pull request #5 from miftahulmahfuzh/task/3-make-toggle-editable",
+        "ed98bee fix(f16): the toggle that disabled itself",
+        "7637e3b Merge pull request #4 from miftahulmahfuzh/task/6-onpick-fires-twice",
+    ]
+    eq("cards from merge commits", cards_named_in(log), [3, 6])
+    eq("excludes self", cards_named_in(log, exclude=3), [6])
+    eq("no cards in plain commits", cards_named_in(["ed98bee fix(f16): a thing"]), [])
+    eq("dedupes", cards_named_in(log + log), [3, 6])
+
     if failures:
         print("FAIL\n  " + "\n  ".join(failures), file=sys.stderr)
         return 1
@@ -1490,6 +2006,28 @@ def main(argv=None):
     p = add("reopen")
     p.add_argument("ref")
     p.set_defaults(fn=cmd_reopen)
+
+    p = add("land")
+    p.add_argument("ref")
+    p.add_argument("--dir", help="the worktree to land from (default: cwd)")
+    p.add_argument("--base", help="branch to merge in and onto (default: origin/main)")
+    p.add_argument("--after-gate", dest="after_gate", action="store_true",
+                   help="the gate passed: push, merge the PR, complete the card")
+    p.add_argument("--attempt", type=int, default=1,
+                   help=f"which round this is; refuses above {MAX_LAND_ATTEMPTS}")
+    p.add_argument("--method", choices=["merge", "squash", "rebase"], default="merge",
+                   help="how to merge the PR (default: merge, matching one commit per card)")
+    p.add_argument("--no-gate", dest="no_gate", action="store_true",
+                   help="land a repo that has no CI, deliberately")
+    p.add_argument("--no-regate", dest="no_regate", action="store_true",
+                   help="merge even though the base moved under a passing gate")
+    p.add_argument("--keep-branch", dest="keep_branch", action="store_true",
+                   help="do not delete the branch on merge")
+    p.add_argument("--note", help="completion comment (default: names the merge commit)")
+    p.add_argument("--abort-conflict", dest="abort_conflict", action="store_true",
+                   help="give up: comment on this card and the one it collides with")
+    p.add_argument("--reason", help="with --abort-conflict, why a human is needed")
+    p.set_defaults(fn=cmd_land)
 
     p = add("finish")
     p.add_argument("ref")
