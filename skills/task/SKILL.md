@@ -227,8 +227,8 @@ python3 $S/task_gl.py status <ref> Completed
 
 `finish` asks GitHub whether a linked PR is merged, and **exits non-zero if none
 is** — so a card cannot reach Completed while its code is still in review. It
-then sets Status, posts the note naming the merge commit, and reopens the issue
-the merge closed (see the closing section). `--allow-unmerged` exists for a card
+then sets Status and posts the note naming the merge commit, leaving the issue
+closed (see the closing section). `--allow-unmerged` exists for a card
 that genuinely has no PR; using it to skip a review is defeating the check.
 
 On GitLab, `status <ref> Completed` **closes the issue** as well as labelling it,
@@ -260,11 +260,10 @@ the column empty — the card then looks unworked next to a PR nobody can find f
 the board. So `pr` writes `Closes #14` itself and repairs the body if the keyword
 is missing, rather than trusting whatever text it was handed.
 
-The keyword's other effect is unavoidable: **merging the PR closes the issue.**
-That collides with the rule below, so `task_gh.py` absorbs it — `status` and
-`finish` both reopen a closed issue as part of writing a stage, so the closed
-state a merge introduces never survives the next command. `reopen <ref>` does it
-on its own if a merge happened outside this loop.
+The keyword's other effect is intended: **merging the PR closes the issue**, and
+that closure is allowed to stand. `finish` records Completed and leaves the issue
+closed. Only the *live* stages reopen — see the closing section for why that
+asymmetry is the whole rule.
 
 `links <ref>` answers "is the board actually showing it?" from two sources — the
 issue's links and the board field itself — and names which one answered. The
@@ -273,13 +272,35 @@ link is a refresh, not a bug.
 
 ## Closing: the two backends differ, and the reason is measured
 
-**GitHub — never *left* closed.** `Completed` is the Status field only, and
-`task_gh.py` has no `close` subcommand. Projects ships an **auto-archive**
-workflow on closed items: a closed issue disappears off the board, so the reopen
-loop would fight the board's own automation every time a bug comes back. A merged
-PR does close the issue, which is why every stage write reopens it — the
-invariant is enforced in one function (`ensure_issue_open`) rather than
-remembered at each call site.
+**GitHub — a merge closes the card, and that is left alone.** `Completed` is the
+Status field, and `task_gh.py` still has no `close` subcommand: it never closes an
+issue itself. But a merged PR carrying `Closes #14` does, and that closure is
+GitHub reporting the truth, so nothing undoes it.
+
+This reverses what this file said earlier, on evidence. The old rule reopened the
+issue on *every* stage write, to dodge Projects' **auto-archive** workflow — a
+closed item disappears off the board, which would have broken the reopen loop.
+**Measured on this board: six closed issues sit in `Done` and every one is still
+visible.** Auto-archive is not enabled, so the hazard the rule existed for does
+not exist, and all the rule actually produced was a column of cards that were
+Done-but-open forever, fighting GitHub's own semantics on every command.
+
+So the reopen is now scoped to the stages where a closed issue would make the
+board *lie*:
+
+| Stage written | Closed issue is… |
+|---|---|
+| `Open` | reopened — nobody can pick up a finished card |
+| `In Progress` | reopened — "being worked" and "closed" cannot both be true |
+| `Completed` | **left closed** |
+
+`ensure_issue_open` holds that asymmetry in one place. When a card resurfaces
+months later, **reopen it by hand** — or `reopen <ref>`, which is exactly what
+that subcommand is for — and the next `/task <id>` picks it up normally.
+
+If you ever turn auto-archive **on**, this flips back: completed cards would start
+vanishing from the board, and the reopen rule would have to return. `doctor`
+reports what it can see; the setting itself is browser-only.
 
 **GitLab — Completed *is* closed.** `task_gl.py status <ref> Completed` sets the
 label **and** closes the issue, in one PUT; `Open` and `In Progress` reopen it.
@@ -305,9 +326,14 @@ board reads `status::open` (11) | `status::in-progress` (0) | Closed (44).
 
 ## The reopen loop
 
-The user hits a bug, comments on the card, and moves it back to `Open`. A fresh
-session runs `/task <id>` and the loop restarts at step 1 with `plans` non-empty,
-which is what makes it round 2.
+The user hits a bug and comments on the card. On GitHub the card is closed by then,
+so reopening it is the first move — by hand, or `reopen <ref>` — and then it goes
+back to `Open`. Moving it to `Open` or `In Progress` reopens it anyway, so a card
+dragged across the board in the browser is repaired by the next stage write rather
+than left contradicting itself.
+
+A fresh session runs `/task <id>` and the loop restarts at step 1 with `plans`
+non-empty, which is what makes it round 2.
 
 On GitHub, round 2 gets its **own** worktree, branch (`task/14-<slug>-r2`) and
 pull request — pass `--round 2` to `worktree`. Round one's merged PR stays linked
@@ -351,7 +377,8 @@ cannot do any of these):
 - rename the Status options to `Open` / `In Progress` / `Completed`;
 - add the built-in **Linked pull requests** field as a column in the board view,
   which is what makes step 6's PR visible on the card;
-- check auto-archive is off.
+- leave auto-archive **off** — with it off, completed cards stay visible in `Done`
+  after the merge closes them, which is what the closing rule above relies on.
 
 `doctor` reports the Status options, whether it can see a `Linked pull requests`
 field, and the worktree root. Worktrees go under `~/.worktrees/<repo>/` —

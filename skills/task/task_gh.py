@@ -18,7 +18,7 @@ Subcommands:
   pr REF [--plan PATH]            push the branch and open a PR that closes the issue
   links REF                       which PRs the issue and the board's field are showing
   reopen REF                      reopen an issue a merged PR closed
-  finish REF                      Completed: needs a merged linked PR; reopens what it closed
+  finish REF                      Completed: needs a merged linked PR; leaves it closed
 
 REF forms: 14 | owner/repo#14 | https://github.com/owner/repo/issues/14 | PVTI_xxx
            | draft:<substring of the title>
@@ -675,9 +675,13 @@ def cmd_status(args):
             "--field-id", cfg["statusFieldId"],
             "--single-select-option-id", option_id,
         )
-    # Runs even when the stage did not change: a merged PR closes the issue, and
-    # a closed item is what auto-archive removes from the board.
-    issue = ensure_issue_open(item)
+    # Live stages reopen; Completed does not (see ensure_issue_open). Runs even when
+    # the stage did not change, so a card dragged back to Open in the browser without
+    # being reopened is still repaired by the next stage write.
+    if name == stage_map(cfg)["Completed"]:
+        issue = {"state": issue_state(item), "reopened": False}
+    else:
+        issue = ensure_issue_open(item)
     print(
         json.dumps(
             {
@@ -982,12 +986,28 @@ def link_report(item):
     return {"issueLinks": issue, "boardField": board, "verdict": verdict}
 
 
-def ensure_issue_open(item):
-    """No card of ours is ever left closed on GitHub.
+def issue_state(item):
+    """The issue's open/closed state, without touching it."""
+    if item.get("kind") != "issue" or not item.get("number"):
+        return None
+    return (gh("issue", "view", str(item["number"]), "--repo", item["repo"],
+               "--json", "state", as_json=True).get("state") or "") or None
 
-    A linked PR closes the issue on merge, and a closed item is what Projects'
-    auto-archive workflow eats -- which would silently break the reopen loop.
-    Every stage write goes through here, so it cannot be forgotten.
+
+def ensure_issue_open(item):
+    """Reopen a closed issue -- for LIVE stages only, never for Completed.
+
+    A card the board calls Open or In Progress must not be a closed issue: that
+    combination says "nobody is working this, and also it is finished", and the
+    board is the thing people trust instead of re-reading the code.
+
+    Completed is deliberately NOT routed through here. A merged PR closing its
+    issue is GitHub working correctly, and fighting it every time produced cards
+    that were Done-but-open forever. MEASURED on this board: six closed issues sit
+    in Done and are all still visible, so the auto-archive workflow this function
+    was originally written to dodge is not enabled -- the reason for reopening a
+    completed card does not apply. A card that resurfaces gets reopened by hand,
+    or with `reopen REF`, which is what that subcommand is for.
     """
     if item.get("kind") != "issue" or not item.get("number"):
         return {"state": None, "reopened": False}
@@ -1189,7 +1209,12 @@ def cmd_reopen(args):
 
 
 def cmd_finish(args):
-    """Completed, on evidence: a merged linked PR, the Status field, and never closed."""
+    """Completed, on evidence: a merged linked PR and the Status field.
+
+    Does NOT reopen the issue the merge closed. That closure is GitHub reporting
+    the truth, and the board keeps showing the card regardless (auto-archive is
+    off -- see ensure_issue_open). `reopen REF` exists for when work resurfaces.
+    """
     cfg = board_config(refresh=args.refresh)
     item = match_ref(fetch_items(cfg), args.ref, args.repo)
     if item["kind"] != "issue":
@@ -1208,7 +1233,7 @@ def cmd_finish(args):
     if changed:
         gh("project", "item-edit", "--id", item["itemId"], "--project-id", cfg["projectId"],
            "--field-id", cfg["statusFieldId"], "--single-select-option-id", option_id)
-    reopened = ensure_issue_open(item)
+    state = issue_state(item)
 
     note = args.note
     if note is None and merged:
@@ -1224,7 +1249,7 @@ def cmd_finish(args):
             "changed": changed,
             "mergedPrs": [p["number"] for p in merged],
             "commented": bool(note),
-            "issue": reopened,
+            "issue": {"state": state, "reopened": False},
             **report,
         },
         indent=2))
