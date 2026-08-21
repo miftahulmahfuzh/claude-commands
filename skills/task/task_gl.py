@@ -11,7 +11,7 @@ installed and a self-hosted instance needs no special handling.
   doctor                       token, host, version, tier, labels
   list [--status NAME] [--project PATH]
   resolve REF                  one issue: description, every note in order, stage
-  create --project PATH --title T [--body B]
+  create --project PATH --title T [--body B | --body-file P] [--status S]
   status REF NAME              set the stage label
   comment REF TEXT             add a note
   plan REF LABEL PATH          add a line to the plan block in the description
@@ -616,20 +616,65 @@ def cmd_resolve(args):
 
 
 def cmd_create(args):
+    """Open an issue that already carries its stage label, so it lands in a column.
+
+    The stage label is part of the POST rather than a follow-up PUT on purpose: an
+    issue created without one appears in NO column (it falls into the board's hidden
+    Backlog), which is the GitLab shape of the same failure `task_gh.py create`
+    guards against -- a card that exists but that the board never shows.
+    """
     api = Api(*load_creds())
     target = args.project or project_hint()
     if not target:
         raise TaskError("create needs --project, or a GitLab origin remote in this directory.")
-    body = {"title": args.title, "description": args.body or ""}
-    label = resolve_stage(STAGE_LABEL_NAMES, args.status or "Open")
-    body["labels"] = label
+
+    stage = args.status or "Open"
+    # Completed is not a stage a card can be born in: here it also means CLOSED (see
+    # the closing section of SKILL.md), so creating one would open an issue only to
+    # shut it, and `status REF Completed` is the transition that belongs to finished work.
+    if resolve_stage(STAGE_LABEL_NAMES, stage) == STAGE_LABELS["Completed"][0]:
+        raise TaskError(
+            "A new card cannot start Completed -- on GitLab that also means closed. "
+            "Create it Open (or In Progress if you are picking it up now), then "
+            "`status REF Completed` when the work is genuinely done."
+        )
+
+    body = {
+        "title": args.title,
+        "description": read_body(args),
+        "labels": resolve_stage(STAGE_LABEL_NAMES, stage),
+    }
     issue = api.request("POST", f"projects/{enc(target)}/issues", body=body)
+
+    # The POST response carries the labels it actually stored, so the read-back is free
+    # -- no second request, and no eventual consistency to wait on.
+    landed = effective_stage(issue)
     print(json.dumps(
         {"created": True, "project": target, "number": issue.get("iid"),
-         "url": issue.get("web_url"), "stage": args.status or "Open"},
+         "url": issue.get("web_url"), "stage": landed,
+         "labels": issue.get("labels") or [],
+         "verdict": (f"!{issue.get('iid')} is on the board in '{landed}'" if landed == stage
+                     else f"!{issue.get('iid')} exists but its stage reads {landed!r}, "
+                          f"expected {stage!r} -- check the stage labels exist: "
+                          f"task_gl.py labels --project {target} --ensure")},
         indent=2,
     ))
-    return 0
+    return 0 if landed == stage else 1
+
+
+def read_body(args):
+    """--body wins over --body-file; `-` means stdin. Returns the text, never None."""
+    if getattr(args, "body", None):
+        return args.body
+    path = getattr(args, "body_file", None)
+    if not path:
+        return ""
+    if path == "-":
+        return sys.stdin.read()
+    target = Path(path)
+    if not target.exists():
+        raise TaskError(f"--body-file not found: {path}")
+    return target.read_text()
 
 
 def cmd_status(args):
@@ -834,7 +879,8 @@ def main(argv=None):
     q = add("create")
     q.add_argument("--title", required=True)
     q.add_argument("--body")
-    q.add_argument("--status", default="Open")
+    q.add_argument("--body-file", dest="body_file", help="path, or - for stdin")
+    q.add_argument("--status", default="Open", help="Open (default) or In Progress; Completed is refused")
     q.set_defaults(fn=cmd_create)
 
     q = add("status"); q.add_argument("ref"); q.add_argument("name")

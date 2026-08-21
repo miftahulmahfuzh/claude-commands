@@ -30,6 +30,12 @@ written".
 On GitHub that bar is mechanical rather than remembered: `finish` refuses to
 complete a card unless GitHub itself reports a **merged** linked pull request.
 
+**This skill works cards; it does not create them.** Capturing a *new* card is
+`/create-task`, which opens the issue, adds it to the board and writes the Open
+stage in one command — three operations, because `gh issue create` alone leaves an
+issue no column ever shows. Its plumbing is `task_gh.py create` / `task_gl.py
+create`, and it lives here so board discovery and the board-id cache stay single.
+
 ## Picking the backend
 
 Read `git remote get-url origin` in the current directory:
@@ -412,6 +418,9 @@ todos.py      the .workflows/todos.md corpus: scan, validate, mint, rename
 Every one has a `selftest` (`python3 taskcore.py` for the shared half) that runs
 offline with no token and no network. Run all four after touching any of them —
 `taskcore` is imported by both backends, so a change there moves both.
+
+The `create-task` skill is a SKILL.md and nothing else; both its backends are the
+`create` subcommands here, so it ships no plumbing of its own.
 
 ## Cross-laptop
 

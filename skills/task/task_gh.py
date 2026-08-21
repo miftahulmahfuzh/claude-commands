@@ -9,6 +9,7 @@ Subcommands:
   doctor                          check gh, auth, scopes, board and Status options
   list [--status NAME]            cards on the board
   resolve REF [--repo OWNER/REPO] one card: body, every comment in order, status, plan block
+  create --repo OWNER/REPO TITLE  open an issue, put it on the board, set the stage
   promote REF --repo OWNER/REPO   convert a draft item into a real issue
   status REF NAME                 set the Status field (and reopen a closed issue)
   comment REF TEXT                add a comment (issues only)
@@ -29,6 +30,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -462,6 +464,158 @@ def cmd_resolve(args):
     out["commentsAfterLastPlan"] = len(out["comments"])
     print(json.dumps(out, indent=2))
     return 0
+
+
+def board_item_for_issue(cfg, repo, number, attempts=1, delay=1.0):
+    """The board item wrapping this issue, or None. Always a fresh fetch.
+
+    MEASURED: `gh project item-add` returns the new item's id, and the very next
+    `item-list` does not include it yet -- Projects is eventually consistent. The
+    first version of `create` read back once, reported "the board does not show it"
+    and exited non-zero for a card that was in fact placed correctly. So a read-back
+    that means "did this land?" has to be allowed to wait; `attempts=1` keeps every
+    other caller's behaviour unchanged.
+    """
+    for attempt in range(attempts):
+        for item in fetch_items(cfg):
+            if item["kind"] == "issue" and item["repo"] == repo and item["number"] == number:
+                return item
+        if attempt + 1 < attempts:
+            time.sleep(delay)
+    return None
+
+
+def cmd_create(args):
+    """Open a card and put it ON THE BOARD — the whole reason this exists.
+
+    `gh issue create` alone leaves an issue the board has never heard of: it does not
+    appear in any column, `resolve` cannot find it, and the next session that opens
+    the kanban sees nothing. MEASURED: issue #6 in run-insights was created with plain
+    `gh issue create` and `resolve 6` answered "No card on the board for issue #6."
+
+    So creation is three steps, never one — open, add, stage — and the last thing this
+    does is read the board back and say which column the card actually landed in.
+    """
+    cfg = board_config(refresh=args.refresh)
+
+    # Completed is not a stage a card can be born in. `finish` owns that transition and
+    # gates it on a merged pull request; letting `create` write it would route around the
+    # one check that keeps the board from running ahead of reality.
+    stage = args.stage or "Open"
+    name, option_id = resolve_stage(cfg, stage)
+    if name == stage_map(cfg)["Completed"]:
+        raise TaskError(
+            "A new card cannot start Completed. Create it Open (or In Progress if you are "
+            "picking it up now); `finish` is what writes Completed, and it requires a merged PR."
+        )
+
+    repo = normalise_repo(args.repo)
+
+    # ── DRAFT: an idea with no home yet. No repo, no number, no comments until promoted.
+    if args.draft:
+        if repo:
+            raise TaskError("--draft and --repo are mutually exclusive: a draft item has no repo.")
+        result = gh(
+            "project", "item-create", str(cfg["projectNumber"]),
+            "--owner", cfg["owner"],
+            "--title", args.title,
+            *(["--body", read_body(args)] if has_body(args) else []),
+            "--format", "json",
+            as_json=True,
+        )
+        item_id = result.get("id")
+        if not item_id:
+            raise TaskError(f"Could not read the new draft item's id from gh: {result!r}")
+        gh("project", "item-edit", "--id", item_id, "--project-id", cfg["projectId"],
+           "--field-id", cfg["statusFieldId"], "--single-select-option-id", option_id)
+        print(json.dumps({
+            "created": True, "kind": "draft", "itemId": item_id, "title": args.title,
+            "status": name,
+            "hint": f"no issue number until: task_gh.py promote 'draft:{args.title[:24]}' --repo OWNER/REPO",
+        }, indent=2))
+        return 0
+
+    # ── ISSUE: either open a new one, or adopt one that is already off the board.
+    if args.issue is not None:
+        if not repo:
+            raise TaskError("--issue needs --repo OWNER/REPO to say which repo it lives in.")
+        existing = gh("issue", "view", str(args.issue), "--repo", repo,
+                      "--json", "number,url,title,state", as_json=True)
+        number, url, title = existing["number"], existing["url"], existing["title"]
+        created = False
+    else:
+        if not repo:
+            raise TaskError(
+                "create needs --repo OWNER/REPO (or --draft for an idea with no home yet). "
+                "Guessing the repo is how a card lands in the wrong project."
+            )
+        if not args.title:
+            raise TaskError("create needs a TITLE.")
+        cmd = ["issue", "create", "--repo", repo, "--title", args.title]
+        if has_body(args):
+            cmd += ["--body-file", "-"]
+        for label in args.label or []:
+            cmd += ["--label", label]
+        out = gh(*cmd, stdin=read_body(args) if has_body(args) else None)
+        url = (out or "").strip().splitlines()[-1].strip()
+        m = re.search(r"/issues/(\d+)$", url)
+        if not m:
+            raise TaskError(f"Issue created but its URL could not be parsed: {url!r}")
+        number, title, created = int(m.group(1)), args.title, True
+
+    already = board_item_for_issue(cfg, repo, number)
+    if already:
+        item_id = already["itemId"]
+        added = False
+    else:
+        result = gh("project", "item-add", str(cfg["projectNumber"]),
+                    "--owner", cfg["owner"], "--url", url, "--format", "json", as_json=True)
+        item_id = result.get("id")
+        if not item_id:
+            raise TaskError(f"Issue #{number} exists but could not be added to the board: {result!r}")
+        added = True
+
+    gh("project", "item-edit", "--id", item_id, "--project-id", cfg["projectId"],
+       "--field-id", cfg["statusFieldId"], "--single-select-option-id", option_id)
+
+    # READ BACK. The point of the command is board membership, so prove it rather than
+    # assume the two mutations above took.
+    placed = board_item_for_issue(cfg, repo, number, attempts=8, delay=1.5)
+    on_board = placed is not None
+    landed = placed["status"] if placed else None
+    verdict = (
+        f"#{number} is on the board in '{landed}'"
+        if on_board and landed == name
+        else f"#{number} is on the board but Status reads {landed!r}, expected {name!r}"
+        if on_board
+        else f"#{number} exists at {url} but the board does not show it — re-run with --issue "
+             f"{number} --repo {repo}"
+    )
+    print(json.dumps({
+        "created": created, "adopted": args.issue is not None, "addedToBoard": added,
+        "kind": "issue", "repo": repo, "number": number, "url": url, "title": title,
+        "itemId": item_id, "status": landed, "onBoard": on_board, "verdict": verdict,
+    }, indent=2))
+    return 0 if on_board else 1
+
+
+def has_body(args):
+    return bool(getattr(args, "body", None) or getattr(args, "body_file", None))
+
+
+def read_body(args):
+    """--body wins over --body-file; `-` means stdin. Returns the text, never None."""
+    if getattr(args, "body", None):
+        return args.body
+    path = getattr(args, "body_file", None)
+    if not path:
+        return ""
+    if path == "-":
+        return sys.stdin.read()
+    text = Path(path)
+    if not text.exists():
+        raise TaskError(f"--body-file not found: {path}")
+    return text.read_text()
 
 
 def cmd_promote(args):
@@ -1246,6 +1400,18 @@ def main(argv=None):
     p = add("resolve")
     p.add_argument("ref")
     p.set_defaults(fn=cmd_resolve)
+
+    p = add("create")
+    p.add_argument("title", nargs="?", help="the card's title")
+    p.add_argument("--body", help="body text")
+    p.add_argument("--body-file", dest="body_file", help="path, or - for stdin")
+    p.add_argument("--stage", help="Open (default) or In Progress; Completed is refused")
+    p.add_argument("--label", action="append", help="repeatable; the label must already exist")
+    p.add_argument("--draft", action="store_true",
+                   help="a board draft item with no repo yet (promote it later)")
+    p.add_argument("--issue", type=int,
+                   help="adopt an existing issue onto the board instead of creating one")
+    p.set_defaults(fn=cmd_create)
 
     p = add("promote")
     p.add_argument("ref")
