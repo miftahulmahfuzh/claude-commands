@@ -1,6 +1,6 @@
 ---
 name: task
-description: Use when the user names a task card to work on — "/task 14", "fetch task 14", "task daily-words#14", "/task 7" in a GitLab repo, a pasted issue URL, "what's open?", "pick up that card again" — or when work finishes and a card needs moving. Drives task cards on GitHub Projects (personal repos) or GitLab Issues (work repos): claims the card by moving it to In Progress as soon as it is fetched, reads it and every comment, brainstorms it, writes or mints the implementation plan, links it back onto the card, and moves it to Completed only once the work is verified. Handles the reopen loop, where a card comes back with a bug report in a new comment.
+description: Use when the user names a task card to work on — "/task 14", "fetch task 14", "task daily-words#14", "/task 7" in a GitLab repo, a pasted issue URL, "what's open?", "pick up that card again" — or when work finishes and a card needs moving. Drives task cards on GitHub Projects (personal repos) or GitLab Issues (work repos): claims the card by moving it to In Progress as soon as it is fetched, reads it and every comment, brainstorms it, writes or mints the implementation plan, links it back onto the card, and moves it to Completed only once the work is verified. On GitHub the work happens in a fresh worktree branched off origin/main and lands as a pull request linked to the card. Handles the reopen loop, where a card comes back with a bug report in a new comment.
 ---
 
 # Task
@@ -18,13 +18,17 @@ here by id, brainstormed, planned, built, and moved through **Open → In Progre
 | Kanban view | one user-level Projects board, spanning repos | one board **per project**: 2 label columns + built-in Closed |
 | Cross-project view | the same board | the **group issue list**, filtered by label |
 | Helper | `task_gh.py` | `task_gl.py` |
-| Development loop | this skill runs it | this skill mints a TaskID and hands off to **`/do`** |
+| Development loop | this skill runs it, in a **worktree off `origin/main`**, and every card ends in a **pull request** | this skill mints a TaskID and hands off to **`/do`** |
+| `Completed` means | the linked PR is **merged** | the issue is **closed** |
 
 **Core principle: the board records what happened, and it is never ahead of
 reality.** A card sits in `In Progress` only while it is genuinely being worked,
 and reaches `Completed` only after verification has actually passed and the user
 has said the work is done. Never move a card on the strength of "the code is
 written".
+
+On GitHub that bar is mechanical rather than remembered: `finish` refuses to
+complete a card unless GitHub itself reports a **merged** linked pull request.
 
 ## Picking the backend
 
@@ -94,7 +98,9 @@ python3 $S/task_gh.py promote <ref> --repo <owner/repo>
 
 If the card's repo/project is not the one in the current directory, **stop** and
 say which it is. Writing a plan file into the wrong project is worse than an
-error message.
+error message. On GitHub, `worktree` and `pr` refuse outright when the card's
+repo is not the repo they are pointed at, so the check is enforced as well as
+instructed.
 
 ### 3. Work out which round this is
 
@@ -108,12 +114,38 @@ Invoke the **brainstorming** skill: one question at a time, 2–3 approaches wit
 recommendation, the design in sections. The card's body and comments are starting
 context, not a spec — the user wrote it in a hurry.
 
-### 5. On plan approval, two writes and no prompt
+### 5. On plan approval: cut the worktree, then two writes and no prompt
 
-The moment the user approves the plan, do both without asking. The stage was
-already claimed in step 1, so what remains is the plan and its link.
+The moment the user approves the plan, do all of this without asking. The stage
+was already claimed in step 1, so what remains is the workspace, the plan and its
+link.
 
-**a. Write or mint the plan.** Detect the repo's own convention:
+**a. On GitHub, cut the worktree first — before the plan file is written.**
+
+```bash
+python3 $S/task_gh.py worktree 14                 # a return visit: --round 2
+cd ~/.worktrees/<repo>/task-14-<slug>
+```
+
+It fetches, branches `task/<number>-<slug>` off **`origin/main`**, and puts the
+tree under `~/.worktrees/<repo>/`. Doing it before the plan write is the whole
+point: the plan file is then written *inside the worktree*, so it travels in the
+pull request with the code it describes instead of landing on `main` on its own.
+
+Everything after this line happens in the worktree — every edit, every commit,
+every test run. Nothing in this loop ever writes to the main checkout again.
+
+The command is idempotent (same card, same round → same path, `created: false`),
+refuses a card whose repo is not this repo, and reports `behindBase` so a stale
+branch is visible rather than surprising. On a **round 2** the branch gets an
+`-r2` suffix, so round one's branch and its merged PR stay intact. A fresh
+worktree shares no `node_modules` and no virtualenv; the JSON says so under
+`hints`.
+
+On **GitLab** there is no worktree step — `/do` owns branching there, and creates
+one only for HARD tasks.
+
+**b. Write or mint the plan.** Detect the repo's own convention:
 
 | Repo looks like | Plan path | Label |
 |---|---|---|
@@ -124,7 +156,7 @@ already claimed in step 1, so what remains is the plan and its link.
 On a return visit, **append a dated round section to the existing plan file**
 rather than starting a new one, and label the entry `<label> round <n>`.
 
-**b. Link it on the card:**
+**c. Link it on the card:**
 
 ```bash
 python3 $S/task_gl.py plan <ref> P1-MN-A007 .workflows/plan/P1-MN-A007.md --date 2026-08-12
@@ -139,12 +171,27 @@ body is what the next session reads first.
 Then post one comment recording the transition and the plan path, so the card has
 a timeline as well as a current state.
 
-### 6. Develop
+### 6. Develop, then open the pull request
 
-On a **GitHub** repo, do the work here.
+On a **GitHub** repo, do the work in the worktree, commit it there, and then open
+the PR — every card ends in one, however small:
 
-On a **work repo with `.workflows/todos.md`**, do not. That repo already has a
-task system — 33 todos.md files and a `/do` command orchestrating five subagents
+```bash
+python3 $S/task_gh.py pr 14 --plan plans/F23-recurring-cards.md
+```
+
+`pr` pushes the branch, opens the PR with `Closes #14` as the first line of its
+body, and then **reads back from GitHub what it actually linked**, printing both
+the issue's linked PRs and the board field's own contents plus a one-line
+`verdict`. Quote that verdict rather than assuming the link took. It refuses to
+run from a dirty worktree or from the base branch, and re-running it on an
+existing open PR repairs a missing closing keyword instead of opening a second.
+
+The card **stays In Progress** with the PR now visible in the board's *Linked
+pull requests* column. Give the user the PR URL: merging is theirs.
+
+On a **work repo with `.workflows/todos.md`**, none of the above applies. That
+repo already has a task system — 33 todos.md files and a `/do` command orchestrating five subagents
 — and this skill is its front door, not a replacement. Mint the TaskID into the
 right package's todos.md and hand off:
 
@@ -160,26 +207,73 @@ onto the GitLab card in step 7.
 
 The user says the work is done **and** verification has actually passed. Use the
 **verification-before-completion** skill; do not claim a pass you have not seen.
+On GitHub there is a third condition, and it is checked for you: the linked PR is
+merged.
 
 ```bash
+# GitHub — after the user merges the PR
+python3 $S/task_gh.py finish 14 --note "Verified: <commands that passed>."
+
+# GitLab
 python3 $S/task_gl.py comment <ref> "Done in <sha>. Verified: <commands that passed>."
 python3 $S/task_gl.py status <ref> Completed
 ```
 
-On GitLab that second command **closes the issue** as well as labelling it, which
-is what moves it into the Closed column and out of the project's issue list.
-Reopening later (`status <ref> Open`) reopens the issue too.
+`finish` asks GitHub whether a linked PR is merged, and **exits non-zero if none
+is** — so a card cannot reach Completed while its code is still in review. It
+then sets Status, posts the note naming the merge commit, and reopens the issue
+the merge closed (see the closing section). `--allow-unmerged` exists for a card
+that genuinely has no PR; using it to skip a review is defeating the check.
+
+On GitLab, `status <ref> Completed` **closes the issue** as well as labelling it,
+which is what moves it into the Closed column and out of the project's issue
+list. Reopening later (`status <ref> Open`) reopens the issue too.
 
 If verification fails, say so and leave the card in `In Progress`. A card in the
 wrong column is the one failure this system cannot absorb, because the user
 trusts the board instead of re-reading the code.
 
+### 8. Retire the worktree (GitHub)
+
+Once the PR is merged and the card is Completed, the branch is dead weight:
+
+```bash
+python3 $S/task_gh.py worktree 14 --remove       # --force to discard dirty state
+```
+
+It refuses to remove a dirty worktree without `--force`, which is the correct
+default — unpushed work is easier to lose here than anywhere else in the loop.
+Skip this step if the user still wants the tree around; it costs nothing but disk.
+
+## Why the PR must say `Closes #14`
+
+The board's **Linked pull requests** column reads GitHub's issue↔PR *link*, and
+GitHub creates one from exactly two things: a closing keyword in the PR body, or
+the PR's Development sidebar. A bare `#14` is a **mention**, and mentions leave
+the column empty — the card then looks unworked next to a PR nobody can find from
+the board. So `pr` writes `Closes #14` itself and repairs the body if the keyword
+is missing, rather than trusting whatever text it was handed.
+
+The keyword's other effect is unavoidable: **merging the PR closes the issue.**
+That collides with the rule below, so `task_gh.py` absorbs it — `status` and
+`finish` both reopen a closed issue as part of writing a stage, so the closed
+state a merge introduces never survives the next command. `reopen <ref>` does it
+on its own if a merge happened outside this loop.
+
+`links <ref>` answers "is the board actually showing it?" from two sources — the
+issue's links and the board field itself — and names which one answered. The
+board field can lag the link by a few seconds, so an empty field beside a live
+link is a refresh, not a bug.
+
 ## Closing: the two backends differ, and the reason is measured
 
-**GitHub — never close.** `Completed` is the Status field only, and `task_gh.py`
-has no `close` subcommand. Projects ships an **auto-archive** workflow on closed
-items: a closed issue disappears off the board, so the reopen loop would fight
-the board's own automation every time a bug comes back.
+**GitHub — never *left* closed.** `Completed` is the Status field only, and
+`task_gh.py` has no `close` subcommand. Projects ships an **auto-archive**
+workflow on closed items: a closed issue disappears off the board, so the reopen
+loop would fight the board's own automation every time a bug comes back. A merged
+PR does close the issue, which is why every stage write reopens it — the
+invariant is enforced in one function (`ensure_issue_open`) rather than
+remembered at each call site.
 
 **GitLab — Completed *is* closed.** `task_gl.py status <ref> Completed` sets the
 label **and** closes the issue, in one PUT; `Open` and `In Progress` reopen it.
@@ -207,7 +301,12 @@ board reads `status::open` (11) | `status::in-progress` (0) | Closed (44).
 
 The user hits a bug, comments on the card, and moves it back to `Open`. A fresh
 session runs `/task <id>` and the loop restarts at step 1 with `plans` non-empty,
-which is what makes it round 2. Nothing else changes.
+which is what makes it round 2.
+
+On GitHub, round 2 gets its **own** worktree, branch (`task/14-<slug>-r2`) and
+pull request — pass `--round 2` to `worktree`. Round one's merged PR stays linked
+to the card, so the column accumulates the card's whole history rather than
+overwriting it. Nothing else changes.
 
 ## The TaskID rules
 
@@ -240,9 +339,17 @@ be rewritten.
 
 **GitHub**, once per laptop: `sudo apt install gh`, `gh auth login`,
 `gh auth refresh -s project,read:project`. Once globally:
-`gh project create --owner @me --title "Tasks"`, then rename the Status options
-to `Open` / `In Progress` / `Completed` in the browser (the CLI cannot) and check
-auto-archive is off.
+`gh project create --owner @me --title "Tasks"`, then in the browser (the CLI
+cannot do any of these):
+
+- rename the Status options to `Open` / `In Progress` / `Completed`;
+- add the built-in **Linked pull requests** field as a column in the board view,
+  which is what makes step 6's PR visible on the card;
+- check auto-archive is off.
+
+`doctor` reports the Status options, whether it can see a `Linked pull requests`
+field, and the worktree root. Worktrees go under `~/.worktrees/<repo>/` —
+set `TASK_WORKTREES` to move them.
 
 **GitLab**, once per laptop: a personal access token with the `api` scope — no
 admin rights needed, it inherits the user's own permissions — in
@@ -296,7 +403,8 @@ missed a stage label rather than a real column of work.
 
 ```
 taskcore.py   plan-block codec, stages and aliases, reference parsing — shared
-task_gh.py    GitHub Issues + Projects v2, via the gh CLI
+task_gh.py    GitHub Issues + Projects v2 via the gh CLI, plus the worktree,
+              pull-request and linked-PR plumbing (GitHub-only, by design)
 task_gl.py    GitLab Issues, via REST and urllib
 todos.py      the .workflows/todos.md corpus: scan, validate, mint, rename
 ```

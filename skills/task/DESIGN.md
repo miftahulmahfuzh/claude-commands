@@ -72,6 +72,8 @@ while the user still considers the work unfinished).
 workflow on closed items, so a closed issue drops off the board — and the reopen
 loop would then be fighting the board's own automation on every bug. `task_gh.py`
 has no `close` subcommand, so this is structural rather than remembered.
+*Revised — see the 2026-08-21 amendment: a merged pull request does close the
+issue, so the rule became never* left *closed.*
 
 **The plan link goes in the issue body, not a comment.** A comment gets buried
 under bug reports; the body is what the next session reads first. It is a
@@ -89,6 +91,38 @@ whose repo is not the current directory.
 
 Stage names are resolved against the board's **real** Status options with aliases
 for GitHub's shipped defaults, never assumed.
+
+## Amendment, 2026-08-21: worktree, pull request, linked column
+
+Three changes to the GitHub half, all driven by one requirement — the `Tasks`
+board's **Linked pull requests** column should show the work.
+
+1. **Every card is built in a worktree off `origin/main`**, at
+   `~/.worktrees/<repo>/task-<n>-<slug>`. Outside the repo on purpose: nothing to
+   add to a `.gitignore`, no way to commit a worktree by accident, one place to
+   prune. It is cut *before* the plan file is written, so the plan travels in the
+   pull request rather than landing on `main` alone.
+2. **Every card ends in a pull request**, opened by `task_gh.py pr`.
+3. **The PR body must carry a closing keyword.** GitHub only creates the
+   issue↔PR link the board column reads from a keyword (`Closes #14`) or the
+   Development sidebar; a bare `#14` is a mention and leaves the column empty.
+   `pr` therefore writes the keyword itself and reads the link back afterwards
+   instead of assuming it took.
+
+**This forces a revision of "Completed must not close the issue" above.** The
+keyword means merging closes the issue, and that cannot be avoided while keeping
+the column populated — the alternative (`Refs #14`) is not a link at all. So the
+rule becomes **never *left* closed**: `status` and `finish` reopen the issue as
+part of writing a stage, in one function, so auto-archive never sees a closed
+item and the reopen loop keeps working. Reopening does not unlink the PR, so the
+column survives it.
+
+`finish` also makes Completed evidence-based rather than trusted: it asks GitHub
+for a **merged** linked PR and exits non-zero if there is none.
+
+Rejected: adding the same to `task_gl.py`. GitLab work goes through `/do`, which
+already owns branching there, and merge requests are not what the GitLab board is
+being asked to show.
 
 ## Out of scope
 

@@ -10,9 +10,14 @@ Subcommands:
   list [--status NAME]            cards on the board
   resolve REF [--repo OWNER/REPO] one card: body, every comment in order, status, plan block
   promote REF --repo OWNER/REPO   convert a draft item into a real issue
-  status REF NAME                 set the Status field
+  status REF NAME                 set the Status field (and reopen a closed issue)
   comment REF TEXT                add a comment (issues only)
   plan REF LABEL PATH             add a line to the plan block in the issue body
+  worktree REF [--remove]         a worktree on task/<n>-<slug>, branched from origin/main
+  pr REF [--plan PATH]            push the branch and open a PR that closes the issue
+  links REF                       which PRs the issue and the board's field are showing
+  reopen REF                      reopen an issue a merged PR closed
+  finish REF                      Completed: needs a merged linked PR; reopens what it closed
 
 REF forms: 14 | owner/repo#14 | https://github.com/owner/repo/issues/14 | PVTI_xxx
            | draft:<substring of the title>
@@ -206,7 +211,7 @@ def normalise_repo(value):
     if not value:
         return None
     value = str(value)
-    m = re.search(r"github\.com/([^/]+/[^/]+)", value)
+    m = re.search(r"github\.com[:/]([^/]+/[^/]+)", value)
     if m:
         return m.group(1).removesuffix(".git")
     return value.strip("/")
@@ -381,6 +386,26 @@ def cmd_doctor(args):
         return "Open / In Progress / Completed all present"
 
     ok = check("Status options cover the three stages", stages)
+
+    # Reported, not failed. The field is built into every Projects v2 board, so
+    # an absence here means gh did not list it or the view hides the column --
+    # neither is worth a red doctor, and both are worth saying out loud.
+    try:
+        fields = gh("project", "field-list", cfg["projectNumber"], "--owner", cfg["owner"],
+                    "--format", "json", as_json=True)
+        names = [
+            str(f.get("name", "")).strip()
+            for f in fields.get("fields", fields if isinstance(fields, list) else [])
+        ]
+        hit = next((n for n in names if n.lower() == "linked pull requests"), None)
+        report["linkedPullRequestsField"] = hit or (
+            "not listed by gh -- add the built-in 'Linked pull requests' column to the "
+            f"board view. Fields: {', '.join(names)}"
+        )
+    except TaskError as exc:
+        report["linkedPullRequestsField"] = f"could not be read: {exc}"
+
+    report["worktreeRoot"] = str(WORKTREE_ROOT)
     report["config"] = cfg
     report["ok"] = ok
     print(json.dumps(report, indent=2))
@@ -487,19 +512,27 @@ def cmd_status(args):
     cfg = board_config(refresh=args.refresh)
     item = match_ref(fetch_items(cfg), args.ref, args.repo)
     name, option_id = resolve_stage(cfg, args.name)
-    if (item["status"] or "") == name:
-        print(json.dumps({"changed": False, "status": name, **item}, indent=2))
-        return 0
-    gh(
-        "project", "item-edit",
-        "--id", item["itemId"],
-        "--project-id", cfg["projectId"],
-        "--field-id", cfg["statusFieldId"],
-        "--single-select-option-id", option_id,
-    )
+    changed = (item["status"] or "") != name
+    if changed:
+        gh(
+            "project", "item-edit",
+            "--id", item["itemId"],
+            "--project-id", cfg["projectId"],
+            "--field-id", cfg["statusFieldId"],
+            "--single-select-option-id", option_id,
+        )
+    # Runs even when the stage did not change: a merged PR closes the issue, and
+    # a closed item is what auto-archive removes from the board.
+    issue = ensure_issue_open(item)
     print(
         json.dumps(
-            {"changed": True, "from": item["status"], "to": name, "itemId": item["itemId"]},
+            {
+                "changed": changed,
+                "from": item["status"],
+                "to": name,
+                "itemId": item["itemId"],
+                "issue": issue,
+            },
             indent=2,
         )
     )
@@ -544,6 +577,503 @@ def cmd_plan(args):
         stdin=new_body,
     )
     print(json.dumps({"changed": True, "plans": entries}, indent=2))
+    return 0
+
+
+# ------------------------------------------------------------ git and worktrees
+
+# Worktrees live outside every repo on purpose: nothing to add to a .gitignore,
+# no way to commit one by accident, and one directory to list or prune.
+WORKTREE_ROOT = Path(os.environ.get("TASK_WORKTREES", Path.home() / ".worktrees"))
+
+# GitHub only creates an issue<->PR *link* -- the thing the board's "Linked pull
+# requests" field reads -- from one of these keywords in the PR body. A bare
+# "#14" is a mention, and mentions do not populate that field.
+CLOSING_KEYWORDS = (
+    "close", "closes", "closed",
+    "fix", "fixes", "fixed",
+    "resolve", "resolves", "resolved",
+)
+
+
+def git_run(*args, cwd=None, check=True):
+    try:
+        proc = subprocess.run(("git",) + tuple(args), capture_output=True, text=True, cwd=cwd)
+    except FileNotFoundError:
+        raise TaskError("git is not installed, so there is no worktree to work in.")
+    if check and proc.returncode != 0:
+        err = (proc.stderr or proc.stdout).strip()
+        raise TaskError(f"git {' '.join(args)} failed:\n{err}")
+    return proc
+
+
+def git_out(*args, cwd=None):
+    return git_run(*args, cwd=cwd).stdout.strip()
+
+
+def git_ok(*args, cwd=None):
+    return git_run(*args, cwd=cwd, check=False).returncode == 0
+
+
+def repo_root(cwd):
+    proc = git_run("rev-parse", "--show-toplevel", cwd=cwd, check=False)
+    if proc.returncode != 0:
+        raise TaskError(f"{cwd} is not inside a git repository. Pass --dir <repo path>.")
+    return proc.stdout.strip()
+
+
+def origin_repo(root):
+    proc = git_run("remote", "get-url", "origin", cwd=root, check=False)
+    if proc.returncode != 0:
+        raise TaskError(
+            f"{root} has no 'origin' remote, so there is nothing to branch from or push to."
+        )
+    return normalise_repo(proc.stdout.strip())
+
+
+def assert_same_repo(item, root):
+    """The card's repo must be this repo. Branching in the wrong one is worse than an error."""
+    origin = origin_repo(root)
+    if item.get("repo") and origin and item["repo"].lower() != origin.lower():
+        raise TaskError(
+            f"Card {item['repo']}#{item['number']} does not belong to {origin} ({root}). "
+            f"Run this from that repo, or pass --dir <path>."
+        )
+    return origin
+
+
+def resolve_base(root, base=None):
+    """The ref new branches start from. origin/main unless the repo says otherwise."""
+    if base:
+        if not git_ok("rev-parse", "--verify", "--quiet", base, cwd=root):
+            raise TaskError(f"{base} does not exist here. Run: git fetch origin")
+        return base
+    if git_ok("rev-parse", "--verify", "--quiet", "origin/main", cwd=root):
+        return "origin/main"
+    head = git_run(
+        "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD", cwd=root, check=False
+    ).stdout.strip()
+    if head.startswith("origin/") and git_ok("rev-parse", "--verify", "--quiet", head, cwd=root):
+        return head
+    if git_ok("rev-parse", "--verify", "--quiet", "origin/master", cwd=root):
+        return "origin/master"
+    raise TaskError(
+        "There is no origin/main here and origin's default branch could not be read. "
+        "Run `git fetch origin`, or pass --base explicitly."
+    )
+
+
+def slugify(text, limit=40):
+    s = re.sub(r"[^a-z0-9]+", "-", str(text or "").lower()).strip("-")
+    if len(s) > limit:
+        s = s[:limit].rsplit("-", 1)[0] if "-" in s[:limit] else s[:limit]
+    return s.strip("-") or "task"
+
+
+def branch_name(number, title, round_no=1, prefix="task"):
+    """task/14-add-recurring-cards, and -r2 on a return visit so round one's branch survives."""
+    base = f"{prefix}/{number}-{slugify(title)}"
+    return base if (round_no or 1) <= 1 else f"{base}-r{int(round_no)}"
+
+
+def worktree_path(root, branch):
+    return WORKTREE_ROOT / Path(root).name / branch.replace("/", "-")
+
+
+def list_worktrees(root):
+    entries, cur = [], {}
+    for line in git_out("worktree", "list", "--porcelain", cwd=root).splitlines():
+        key, _, val = line.partition(" ")
+        if key == "worktree":
+            if cur:
+                entries.append(cur)
+            cur = {"path": val, "branch": None}
+        elif key == "branch":
+            cur["branch"] = val.removeprefix("refs/heads/")
+    if cur:
+        entries.append(cur)
+    return entries
+
+
+def ensure_closes(body, number):
+    """Guarantee the PR body carries a closing keyword for #number.
+
+    Returns (body, added). Without this the PR is only a mention, the board's
+    Linked pull requests column stays empty, and the card looks unworked.
+    """
+    pattern = re.compile(rf"\b(?:{'|'.join(CLOSING_KEYWORDS)})\b\s*:?\s+#{number}\b", re.I)
+    if pattern.search(body or ""):
+        return (body or ""), False
+    rest = (body or "").strip()
+    return (f"Closes #{number}\n" + (f"\n{rest}\n" if rest else "")), True
+
+
+def default_pr_body(item, plan=None):
+    lines = [f"Closes #{item['number']}", ""]
+    if plan:
+        lines.append(f"Plan: `{plan}`")
+    if item.get("url"):
+        lines.append(f"Card: {item['url']}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+# ------------------------------------------------------- linked pull requests
+
+
+def issue_links(repo, number):
+    """PRs GitHub considers linked to this issue -- the board field's own source.
+
+    Tries the documented field first, falls back to the timeline, and says which
+    one answered rather than reporting an empty list as fact.
+    """
+    owner, name = repo.split("/", 1)
+
+    primary = (
+        "query($owner:String!,$name:String!,$number:Int!){"
+        "repository(owner:$owner,name:$name){issue(number:$number){"
+        "closedByPullRequestsReferences(first:10,includeClosedPrs:true){"
+        "nodes{number url state isDraft merged mergeCommit{oid}}}}}}"
+    )
+    fallback = (
+        "query($owner:String!,$name:String!,$number:Int!){"
+        "repository(owner:$owner,name:$name){issue(number:$number){"
+        "timelineItems(first:100,itemTypes:[CONNECTED_EVENT]){nodes{"
+        "... on ConnectedEvent{subject{__typename ... on PullRequest{"
+        "number url state isDraft merged mergeCommit{oid}}}}}}}}}"
+    )
+
+    def ask(query):
+        return gh(
+            "api", "graphql",
+            "-f", f"query={query}",
+            "-f", f"owner={owner}",
+            "-f", f"name={name}",
+            "-F", f"number={number}",
+            as_json=True,
+        )
+
+    def shape(nodes):
+        out = []
+        for pr in nodes or []:
+            if not pr:
+                continue
+            out.append(
+                {
+                    "number": pr.get("number"),
+                    "url": pr.get("url"),
+                    "state": pr.get("state"),
+                    "draft": bool(pr.get("isDraft")),
+                    "merged": bool(pr.get("merged")),
+                    "mergeCommit": (pr.get("mergeCommit") or {}).get("oid"),
+                }
+            )
+        return out
+
+    try:
+        data = ask(primary)
+        nodes = data["data"]["repository"]["issue"]["closedByPullRequestsReferences"]["nodes"]
+        return {"source": "closedByPullRequestsReferences", "pullRequests": shape(nodes)}
+    except (TaskError, KeyError, TypeError):
+        pass
+    try:
+        data = ask(fallback)
+        nodes = [
+            n.get("subject")
+            for n in data["data"]["repository"]["issue"]["timelineItems"]["nodes"] or []
+            if (n or {}).get("subject", {}).get("__typename") == "PullRequest"
+        ]
+        return {"source": "timelineItems(ConnectedEvent)", "pullRequests": shape(nodes)}
+    except (TaskError, KeyError, TypeError) as exc:
+        return {"source": None, "pullRequests": [], "unknown": str(exc)}
+
+
+def board_links(item_id):
+    """What the board's own 'Linked pull requests' field holds for this card."""
+    query = (
+        "query($id:ID!){node(id:$id){... on ProjectV2Item{fieldValues(first:50){nodes{"
+        "__typename ... on ProjectV2ItemFieldPullRequestValue{"
+        "field{... on ProjectV2FieldCommon{name}}"
+        "pullRequests(first:10){nodes{number url}}}}}}}}"
+    )
+    try:
+        data = gh("api", "graphql", "-f", f"query={query}", "-f", f"id={item_id}", as_json=True)
+        nodes = (data["data"]["node"]["fieldValues"]["nodes"]) or []
+        for node in nodes:
+            if (node or {}).get("__typename") == "ProjectV2ItemFieldPullRequestValue":
+                return {
+                    "field": (node.get("field") or {}).get("name") or "Linked pull requests",
+                    "pullRequests": (node.get("pullRequests") or {}).get("nodes") or [],
+                }
+        return {"field": "Linked pull requests", "pullRequests": []}
+    except (TaskError, KeyError, TypeError) as exc:
+        return {"known": False, "reason": str(exc)}
+
+
+def link_report(item):
+    issue = issue_links(item["repo"], item["number"])
+    board = board_links(item["itemId"])
+    prs = issue["pullRequests"]
+    merged = [p for p in prs if p["merged"]]
+    if not prs:
+        verdict = (
+            f"No pull request is linked to #{item['number']}. The board's column will be "
+            f"empty until a PR body says `Closes #{item['number']}`."
+        )
+    elif merged:
+        verdict = "linked and merged: " + ", ".join(f"#{p['number']}" for p in merged)
+    else:
+        verdict = "linked, not merged yet: " + ", ".join(f"#{p['number']}" for p in prs)
+    if isinstance(board.get("pullRequests"), list) and prs and not board["pullRequests"]:
+        verdict += " (the board field can lag a few seconds behind the link)"
+    return {"issueLinks": issue, "boardField": board, "verdict": verdict}
+
+
+def ensure_issue_open(item):
+    """No card of ours is ever left closed on GitHub.
+
+    A linked PR closes the issue on merge, and a closed item is what Projects'
+    auto-archive workflow eats -- which would silently break the reopen loop.
+    Every stage write goes through here, so it cannot be forgotten.
+    """
+    if item.get("kind") != "issue" or not item.get("number"):
+        return {"state": None, "reopened": False}
+    state = gh(
+        "issue", "view", str(item["number"]), "--repo", item["repo"], "--json", "state",
+        as_json=True,
+    ).get("state") or ""
+    if state.upper() != "CLOSED":
+        return {"state": state, "reopened": False}
+    gh("issue", "reopen", str(item["number"]), "--repo", item["repo"])
+    return {"state": "OPEN", "reopened": True}
+
+
+# --------------------------------------------------- worktree / pr subcommands
+
+
+def cmd_worktree(args):
+    cfg = board_config(refresh=args.refresh)
+    item = match_ref(fetch_items(cfg), args.ref, args.repo)
+    if item["kind"] != "issue":
+        raise TaskError(
+            "A draft item has no number to name a branch after. Promote it first: "
+            f"task_gh.py promote {args.ref} --repo OWNER/REPO"
+        )
+    root = repo_root(args.dir or os.getcwd())
+    assert_same_repo(item, root)
+
+    branch = args.branch or branch_name(item["number"], item["title"], args.round)
+    path = worktree_path(root, branch)
+    existing = list_worktrees(root)
+    at_path = next((e for e in existing if e["path"] == str(path)), None)
+
+    if args.remove:
+        if at_path is None:
+            print(json.dumps(
+                {"removed": False, "reason": "no worktree at this path", "path": str(path)},
+                indent=2))
+            return 0
+        git_out(*(["worktree", "remove", str(path)] + (["--force"] if args.force else [])), cwd=root)
+        git_out("worktree", "prune", cwd=root)
+        print(json.dumps({"removed": True, "path": str(path), "branch": branch}, indent=2))
+        return 0
+
+    if not args.no_fetch:
+        git_out("fetch", "origin", "--prune", cwd=root)
+    base = resolve_base(root, args.base)
+
+    created, branch_created = False, False
+    if at_path and at_path["branch"] == branch:
+        pass  # idempotent: this is the worktree we would have made
+    elif at_path:
+        raise TaskError(
+            f"{path} already exists as a worktree on branch {at_path['branch']!r}, not "
+            f"{branch!r}. Remove it first: git worktree remove {path}"
+        )
+    else:
+        elsewhere = next((e for e in existing if e["branch"] == branch), None)
+        if elsewhere:
+            print(json.dumps(
+                {
+                    "created": False, "path": elsewhere["path"], "branch": branch,
+                    "note": "that branch is already checked out in this worktree",
+                },
+                indent=2))
+            return 0
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if git_ok("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=root):
+            git_out("worktree", "add", str(path), branch, cwd=root)
+        else:
+            git_out("worktree", "add", "-b", branch, str(path), base, cwd=root)
+            branch_created = True
+        created = True
+
+    work = str(path)
+    hints = []
+    if created:
+        if (path / "package.json").exists():
+            hints.append("fresh worktree: run `npm install` (node_modules is not shared)")
+        if (path / "pyproject.toml").exists() or (path / "requirements.txt").exists():
+            hints.append("fresh worktree: recreate the virtualenv before running anything")
+    print(json.dumps(
+        {
+            "created": created,
+            "branchCreated": branch_created,
+            "path": work,
+            "branch": branch,
+            "base": base,
+            "baseSha": git_out("rev-parse", base, cwd=root)[:12],
+            "head": git_out("rev-parse", "HEAD", cwd=work)[:12],
+            "behindBase": int(git_out("rev-list", "--count", f"HEAD..{base}", cwd=work) or 0),
+            "repo": item["repo"],
+            "number": item["number"],
+            "hints": hints,
+        },
+        indent=2))
+    return 0
+
+
+def cmd_pr(args):
+    cfg = board_config(refresh=args.refresh)
+    item = match_ref(fetch_items(cfg), args.ref, args.repo)
+    if item["kind"] != "issue":
+        raise TaskError(
+            "A draft item cannot be linked to a pull request. Promote it first: "
+            f"task_gh.py promote {args.ref} --repo OWNER/REPO"
+        )
+    root = repo_root(args.dir or os.getcwd())
+    assert_same_repo(item, root)
+
+    head = args.head or git_out("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
+    if head == "HEAD":
+        raise TaskError(f"HEAD is detached in {root}. Check out the task branch first.")
+    base = (args.base or resolve_base(root)).removeprefix("origin/")
+    if head == base:
+        raise TaskError(
+            f"Refusing to open a pull request from {head!r} onto itself. The work belongs on a "
+            f"task branch in a worktree: task_gh.py worktree {args.ref}"
+        )
+    if not git_ok("diff", "--quiet", "HEAD", cwd=root):
+        raise TaskError(
+            f"{root} has uncommitted changes. Commit them before opening the pull request, "
+            f"or the PR will not contain the work."
+        )
+
+    body = args.body
+    if args.body_file:
+        body = sys.stdin.read() if args.body_file == "-" else Path(args.body_file).read_text()
+    if body is None:
+        body = default_pr_body(item, args.plan)
+    body, keyword_added = ensure_closes(body, item["number"])
+
+    if not args.no_push:
+        git_out("push", "-u", "origin", f"{head}:{head}", cwd=root)
+
+    listed = gh(
+        "pr", "list", "--repo", item["repo"], "--head", head, "--state", "all",
+        "--json", "number,url,state,isDraft,body", "--limit", "10",
+        as_json=True,
+    )
+    open_prs = [p for p in listed if str(p.get("state", "")).upper() == "OPEN"]
+
+    if open_prs:
+        pr = open_prs[0]
+        created = False
+        fixed_body, added = ensure_closes(pr.get("body") or "", item["number"])
+        if added:
+            gh("pr", "edit", str(pr["number"]), "--repo", item["repo"], "--body-file", "-",
+               stdin=fixed_body)
+        keyword_added = added
+    else:
+        gh(
+            *(["pr", "create", "--repo", item["repo"], "--base", base, "--head", head,
+               "--title", args.title or item["title"] or f"Task #{item['number']}",
+               "--body-file", "-"] + (["--draft"] if args.draft else [])),
+            stdin=body,
+        )
+        pr = gh("pr", "view", head, "--repo", item["repo"],
+                "--json", "number,url,state,isDraft", as_json=True)
+        created = True
+
+    out = {
+        "created": created,
+        "pr": {
+            "number": pr.get("number"),
+            "url": pr.get("url"),
+            "state": pr.get("state"),
+            "draft": bool(pr.get("isDraft")),
+        },
+        "head": head,
+        "base": base,
+        "closingKeywordAdded": keyword_added,
+        "previousPrs": [
+            {"number": p["number"], "state": p["state"]} for p in listed
+            if str(p.get("state", "")).upper() != "OPEN"
+        ],
+    }
+    out.update(link_report(item))
+    print(json.dumps(out, indent=2))
+    return 0
+
+
+def cmd_links(args):
+    cfg = board_config(refresh=args.refresh)
+    item = match_ref(fetch_items(cfg), args.ref, args.repo)
+    if item["kind"] != "issue":
+        raise TaskError("A draft item has no pull requests. Promote it first.")
+    out = {"repo": item["repo"], "number": item["number"], "status": item["status"]}
+    out.update(link_report(item))
+    print(json.dumps(out, indent=2))
+    return 0
+
+
+def cmd_reopen(args):
+    cfg = board_config(refresh=args.refresh)
+    item = match_ref(fetch_items(cfg), args.ref, args.repo)
+    result = ensure_issue_open(item)
+    print(json.dumps({"repo": item["repo"], "number": item["number"], **result}, indent=2))
+    return 0
+
+
+def cmd_finish(args):
+    """Completed, on evidence: a merged linked PR, the Status field, and never closed."""
+    cfg = board_config(refresh=args.refresh)
+    item = match_ref(fetch_items(cfg), args.ref, args.repo)
+    if item["kind"] != "issue":
+        raise TaskError("A draft item cannot be completed. Promote it first.")
+
+    report = link_report(item)
+    merged = [p for p in report["issueLinks"]["pullRequests"] if p["merged"]]
+    if not merged and not args.allow_unmerged:
+        raise TaskError(
+            f"No merged pull request is linked to #{item['number']}: {report['verdict']}. "
+            f"Merge the PR first, or pass --allow-unmerged if this card genuinely has no PR."
+        )
+
+    name, option_id = resolve_stage(cfg, "Completed")
+    changed = (item["status"] or "") != name
+    if changed:
+        gh("project", "item-edit", "--id", item["itemId"], "--project-id", cfg["projectId"],
+           "--field-id", cfg["statusFieldId"], "--single-select-option-id", option_id)
+    reopened = ensure_issue_open(item)
+
+    note = args.note
+    if note is None and merged:
+        shas = ", ".join(f"#{p['number']} ({(p['mergeCommit'] or '')[:8]})" for p in merged)
+        note = f"Completed. Merged in {shas}."
+    if note:
+        gh("issue", "comment", str(item["number"]), "--repo", item["repo"], "--body-file", "-",
+           stdin=note)
+
+    print(json.dumps(
+        {
+            "status": name,
+            "changed": changed,
+            "mergedPrs": [p["number"] for p in merged],
+            "commented": bool(note),
+            "issue": reopened,
+            **report,
+        },
+        indent=2))
     return 0
 
 
@@ -631,6 +1161,51 @@ def cmd_selftest(args):
     partial = {"statusOptions": {"Todo": "a"}, "statusFieldName": "Status"}
     eq("missing stages reported", [s for s, v in stage_map(partial).items() if v is None], ["In Progress", "Completed"])
 
+    # branch naming: slug, length cap on a word boundary, and round two
+    eq("slug", slugify("Add recurring cards!"), "add-recurring-cards")
+    eq("slug punctuation only", slugify("???"), "task")
+    eq("slug none", slugify(None), "task")
+    eq("slug capped", len(slugify("a" * 60)) <= 40, True)
+    eq("slug cut on boundary", slugify("one two three four five six seven eight nine ten"),
+       "one-two-three-four-five-six-seven-eight")
+    eq("branch", branch_name(14, "Add recurring cards"), "task/14-add-recurring-cards")
+    eq("branch round 1", branch_name(14, "X", 1), "task/14-x")
+    eq("branch round 2", branch_name(14, "X", 2), "task/14-x-r2")
+    eq("worktree path", str(worktree_path("/home/me/daily-words", "task/14-x")),
+       str(WORKTREE_ROOT / "daily-words" / "task-14-x"))
+
+    # the closing keyword is what populates the board's Linked pull requests
+    b, added = ensure_closes("Adds the thing.", 14)
+    eq("keyword added", added, True)
+    eq("keyword first line", b.splitlines()[0], "Closes #14")
+    eq("body kept", "Adds the thing." in b, True)
+    eq("idempotent keyword", ensure_closes(b, 14)[1], False)
+    eq("fixes counts", ensure_closes("Fixes #14 at last", 14)[1], False)
+    eq("resolved counts", ensure_closes("resolved: #14", 14)[1], False)
+    eq("mention is not a link", ensure_closes("Related to #14", 14)[1], True)
+    eq("other issue is not this one", ensure_closes("Closes #140", 14)[1], True)
+    eq("no body", ensure_closes("", 7)[0], "Closes #7\n")
+
+    body = default_pr_body(
+        {"number": 14, "url": "https://github.com/me/alpha/issues/14"}, "plans/F23-x.md"
+    )
+    eq("default body closes", body.splitlines()[0], "Closes #14")
+    eq("default body plan", "plans/F23-x.md" in body, True)
+    eq("default body card", "issues/14" in body, True)
+
+    # worktree porcelain parsing, including a detached one
+    import unittest.mock as _mock
+    porcelain = (
+        "worktree /home/me/repo\nHEAD abc\nbranch refs/heads/main\n\n"
+        "worktree /home/me/.worktrees/repo/task-14-x\nHEAD def\nbranch refs/heads/task/14-x\n\n"
+        "worktree /home/me/.worktrees/repo/loose\nHEAD 123\ndetached\n"
+    )
+    with _mock.patch(__name__ + ".git_out", return_value=porcelain):
+        trees = list_worktrees("/home/me/repo")
+    eq("worktrees parsed", len(trees), 3)
+    eq("worktree branch", trees[1]["branch"], "task/14-x")
+    eq("detached branch", trees[2]["branch"], None)
+
     if failures:
         print("FAIL\n  " + "\n  ".join(failures), file=sys.stderr)
         return 1
@@ -692,6 +1267,45 @@ def main(argv=None):
     p.add_argument("path")
     p.add_argument("--date", help="YYYY-MM-DD, recorded beside the path")
     p.set_defaults(fn=cmd_plan)
+
+    p = add("worktree")
+    p.add_argument("ref")
+    p.add_argument("--dir", help="the repo to branch in (default: cwd)")
+    p.add_argument("--base", help="ref to branch from (default: origin/main)")
+    p.add_argument("--branch", help="override the generated branch name")
+    p.add_argument("--round", type=int, default=1, help="round N appends -rN to the branch")
+    p.add_argument("--no-fetch", action="store_true", help="skip git fetch origin")
+    p.add_argument("--remove", action="store_true", help="remove this card's worktree")
+    p.add_argument("--force", action="store_true", help="with --remove, discard dirty state")
+    p.set_defaults(fn=cmd_worktree)
+
+    p = add("pr")
+    p.add_argument("ref")
+    p.add_argument("--dir", help="the worktree to open the PR from (default: cwd)")
+    p.add_argument("--head", help="branch to open the PR from (default: current)")
+    p.add_argument("--base", help="branch to merge into (default: the repo's default)")
+    p.add_argument("--title")
+    p.add_argument("--body")
+    p.add_argument("--body-file", dest="body_file", help="path, or - for stdin")
+    p.add_argument("--plan", help="plan path, quoted into the default body")
+    p.add_argument("--draft", action="store_true")
+    p.add_argument("--no-push", dest="no_push", action="store_true")
+    p.set_defaults(fn=cmd_pr)
+
+    p = add("links")
+    p.add_argument("ref")
+    p.set_defaults(fn=cmd_links)
+
+    p = add("reopen")
+    p.add_argument("ref")
+    p.set_defaults(fn=cmd_reopen)
+
+    p = add("finish")
+    p.add_argument("ref")
+    p.add_argument("--note", help="comment to post (default: names the merged PR)")
+    p.add_argument("--allow-unmerged", dest="allow_unmerged", action="store_true",
+                   help="complete a card that has no merged pull request")
+    p.set_defaults(fn=cmd_finish)
 
     args = parser.parse_args(argv)
     args.repo = getattr(args, "repo_after", None) or args.repo

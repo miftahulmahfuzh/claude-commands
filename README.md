@@ -462,7 +462,8 @@ comment rather than the stale body.
 | Cards | GitHub Issues + a Projects board named `Tasks` | GitLab Issues (self-hosted) |
 | Stage | the board's **Status** field | labels `status::open` / `status::in-progress` / `status::completed` |
 | Kanban | one board spanning repos | one board **per project** (`board --ensure`) |
-| Development | the skill runs the loop | mints a TaskID and hands off to **`/do`** |
+| Development | the skill runs the loop, in a **worktree off `origin/main`**, ending in a **PR** | mints a TaskID and hands off to **`/do`** |
+| `Completed` | the linked PR is **merged** | the issue is **closed** |
 
 **What it does:**
 - 🎫 **Reads the whole card** — body **and every comment in order**. On a returning card the body is the original idea and the newest comment is the bug report; reading only the body is the main way this fails quietly
@@ -470,17 +471,20 @@ comment rather than the stale body.
 - 📝 **Links the plan** in a marker-delimited, append-only block in the issue **body**, not a comment (comments get buried under bug reports)
 - 🚦 **Claims the card on fetch** — `/task 14` moves it to In Progress immediately, because running it *is* picking the card up and the board should say what's being worked on right now. If the session ends without proceeding, the skill moves it back to Open. Completed is reached only when the user says so **and** verification actually passed
 - 🧼 **Three columns, no doubles** — `board --ensure` shapes the GitLab board as `status::open` | `status::in-progress` | **Closed**, hiding the backlog column that duplicates `status::open`. An *open* card with no stage label is then off the board, so `doctor` reports those under `hiddenFromBoard`
-- 🔒 **On GitLab, Completed means the issue is closed** — measured, not chosen: a label list shows open issues only, so a completed card left open sat in the shared repo's issue list forever (the team saw **55 open issues**, 44 of them finished; now **11**). Closing empties a `status::completed` column, which is why the third column is GitLab's built-in Closed list. `effective_stage()` reads a closed issue as Completed whatever its labels say, or every sync would try to "fix" it forever. On GitHub the opposite rule still holds — never close, because Projects auto-archives closed items off the board
+- 🔒 **On GitLab, Completed means the issue is closed** — measured, not chosen: a label list shows open issues only, so a completed card left open sat in the shared repo's issue list forever (the team saw **55 open issues**, 44 of them finished; now **11**). Closing empties a `status::completed` column, which is why the third column is GitLab's built-in Closed list. `effective_stage()` reads a closed issue as Completed whatever its labels say, or every sync would try to "fix" it forever. On GitHub the opposite rule still holds — never *left* closed, because Projects auto-archives closed items off the board, so the close a merged PR performs is undone by the next stage write
+- 🌳 **GitHub work happens in a worktree, never the main checkout** — `worktree 14` fetches and branches `task/14-<slug>` off **`origin/main`** into `~/.worktrees/<repo>/`, cut *before* the plan file is written so the plan travels in the pull request. Round two gets its own branch (`-r2`), so round one's merged PR stays intact. `worktree 14 --remove` retires it, refusing a dirty tree without `--force`
+- 🔗 **Every GitHub card ends in a linked PR** — `pr 14` pushes the branch, opens the PR with `Closes #14` as its first line, then **reads back from GitHub what it actually linked** and prints it. The closing keyword isn't cosmetic: the board's *Linked pull requests* column reads GitHub's issue↔PR link, and a bare `#14` is only a mention, which leaves the column empty. `links 14` answers "is the board really showing it?" from both the issue and the board field
+- ✅ **`finish` makes Completed evidence-based** — it asks GitHub for a **merged** linked PR and exits non-zero if there is none, so a card can't reach Completed while its code is still in review. It then sets Status, comments with the merge commit, and reopens the issue the merge closed
 - 🧮 **Owns the TaskID corpus** via `todos.py`: `scan`, `validate`, `mint`, `rename` over every `.workflows/todos.md`, with a rename ledger because TaskIDs appear in commit messages that can't be rewritten
 - 🩺 `doctor` on either backend checks auth, scopes, board, labels and columns, and names the fix for whatever is missing
 
-**Never closes the issue.** `Completed` is the stage only: GitHub Projects auto-archives closed items, so the reopen loop would fight the board's own automation.
+**Never *leaves* the issue closed.** On GitHub `Completed` is the stage only, because Projects auto-archives closed items and the reopen loop would fight the board's own automation. A linked PR does close the issue when merged — unavoidable, since the link is what populates the board column — so every stage write reopens it, in one function rather than remembered at each call site.
 
 **Three things measured rather than assumed** (each broke something first): GitLab CE doesn't enforce scoped-label exclusivity, so a transition rewrites the whole label set in one call and verifies it; in `todos.md` the checkbox is the stage **only** under `## Active Tasks`, since the rolling summary and activity log record what was true at the time; and package codes aren't unique, so TaskID uniqueness is only ever checked on the whole id across every file.
 
 **Layout:** `taskcore.py` (plan-block codec, stages, reference parsing — shared) · `task_gh.py` (gh CLI) · `task_gl.py` (GitLab REST via urllib, no `glab` needed) · `todos.py`. Every module has an offline `selftest` — no token, no network.
 
-**Setup:** GitHub needs `gh auth refresh -s project,read:project`; GitLab needs a PAT with the `api` scope in `~/.config/task-skill/gitlab` (no admin rights — it inherits your own permissions), then `labels --ensure` and `board --ensure` per project.
+**Setup:** GitHub needs `gh auth refresh -s project,read:project` and the built-in **Linked pull requests** field added as a column in the board view (`doctor` reports whether it can see one, plus the worktree root — `TASK_WORKTREES` moves it); GitLab needs a PAT with the `api` scope in `~/.config/task-skill/gitlab` (no admin rights — it inherits your own permissions), then `labels --ensure` and `board --ensure` per project.
 
 ### `sync-todos-into-gitlab-board` - Mirror todos.md onto a GitLab Board
 
@@ -637,10 +641,14 @@ and Claude Code never sees it. `/task` makes the browser the front door.
 
 /task 14                    # claims the card: moves to In Progress at once
                             # reads every comment, brainstorms
-                            # on plan approval: writes the plan and links it on
-                            # the card — no prompt
-                            # ... build ...
-                            # Completed only once verification actually passed
+                            # on plan approval: cuts a worktree off origin/main,
+                            # writes the plan into it, links it on the card
+                            # — no prompt
+                            # ... build in the worktree, commit ...
+                            # opens a PR whose body says "Closes #14", so the
+                            # board's Linked pull requests column shows it
+                            # you merge; Completed only then, and only once
+                            # verification actually passed
 ```
 
 **Work repos that already have `.workflows/todos.md` — `/task` is the front door,
