@@ -18,6 +18,22 @@ The sync script will:
 - ✅ Copy skills to `~/.claude/skills/`
 - 🎉 Enable immediate use of all custom commands, agents, and skills
 
+### Cleaning Up a Legacy Install
+
+Earlier versions of this repo were cloned *directly into* `~/.claude/commands/`. That leaves
+behind repo files (`README.md`, `CLAUDE.md`, …) which show up as bogus "custom commands", plus
+the clone's own `.git/`, `.subagents/` and `.workflows/` — and Claude Code loads those last two
+as **skills that shadow the maintained copies** in `~/.claude/agents/`.
+
+`sync.sh` no longer creates any of this, but it also doesn't remove it. To clear it out:
+
+```bash
+./remove_non_commands.sh
+```
+
+It only ever deletes inside `~/.claude/commands/`, reports each entry it removes, and is safe to
+re-run — everything it touches is reproducible from this repo via `./sync.sh`.
+
 ### Manual Installation
 
 If you prefer manual setup:
@@ -815,6 +831,7 @@ claude-commands/
 │       ├── dlv_test.sh    # Batch breakpoint-debug a test
 │       └── dlv_core.sh    # Post-mortem core-dump analysis
 ├── sync.sh                # Sync script for installation (commands + agents + skills)
+├── remove_non_commands.sh # Cleanup for stale files left in ~/.claude/commands
 └── README.md
 ```
 
