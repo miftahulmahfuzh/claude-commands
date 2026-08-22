@@ -65,6 +65,9 @@ plan *is* the decision to start; a confirmation there would become reflexive.
 verification to have actually passed. Rejected: confirming every transition (two
 extra round trips per task), and automating both ends (a card lands in Completed
 while the user still considers the work unfinished).
+*Revised — see the 2026-08-22 amendment: there is no plan approval any more, and
+`Completed` is automatic once the repo's gate passes and GitHub reports a merged
+PR. The bar moved from a human's word to the repo's own, which is stricter.*
 
 ## Two things that would have failed quietly
 
@@ -191,3 +194,77 @@ from …`), one feature commit per card, and the tool should match the repo rath
 than reformat its history.
 
 Rejected, again, for `task_gl.py`: GitLab work goes through `/do`.
+
+## Amendment, 2026-08-22: no human in the loop
+
+The autonomous-landing amendment removed the merge click. It left one prompt
+standing, and that prompt turned out to be the expensive one: **plan approval**.
+
+The failure is not hypothetical and it is not about correctness. A session starts
+at 1am, reads the card, designs the change, and at 1:05 asks *"does this look
+right?"* — then holds the worktree open and builds nothing until someone wakes up
+eight hours later and presses `y`, which is what they press essentially every
+time. The approval was buying almost no information and costing a whole night's
+work. The same shape appeared inside `brainstorming`, which this loop invoked at
+step 4: one question at a time, plus a check-in after every design section.
+
+So the loop now designs and decides for itself. `SKILL.md` gained an **Autonomy**
+section stating one rule — *never end a turn with a question the loop needs
+answered to continue* — and step 4 became a written design pass that does not
+invoke `brainstorming` at all.
+
+**The design work is not what was cut.** Approaches, trade-offs, the reasoning:
+all still required, and now written into the plan file (the losing approaches with
+one line each on why they lost) instead of spoken into a chat. That record is
+strictly more durable than the conversation it replaces — it survives into the
+pull request, and it is what makes a wrong call reviewable after the fact.
+
+**Ambiguity resolves to the narrowest reading that satisfies the card's words,**
+and the alternative reading is named in a card comment. The arithmetic behind
+that: a wrong call costs one comment and one reopen — machinery this loop already
+has — while a question into an empty room costs every hour until morning. A
+decision that is 70% right and recorded beats one that is 100% right and
+unanswered.
+
+**Stopping is kept; blocking is not.** The distinction is the whole design. A stop
+ends the session with the card in a truthful stage, the reason commented on the
+card, and the work on disk intact. A block is a live session with an unanswered
+question in it. Five stops are enumerated in `SKILL.md` and everything else is
+decided: an unplaceable card, the conflict floor (`--abort-conflict`), a gate
+failing outside this card's diff after three attempts, `--after-gate` above
+attempt 3, and missing tooling. Each one already existed; what changed is that
+they are now the *only* ways out.
+
+**A repo with no CI no longer dead-ends.** `land` still refuses without a gate,
+correctly — but `--no-gate` was written to be typed by a human who is, by
+construction, asleep. The skill now documents a ladder the session walks instead:
+derive a gate from the repo (`package.json` scripts, `Makefile`, `pytest`,
+`cargo test`, `go test`), run it, and land with `--no-gate` **naming what passed**
+in the card comment. If literally nothing exists to run, it still lands and the
+comment says plainly that the change went in unverified. Landing with the reason
+for its confidence written down is recoverable; a card parked until morning is a
+night thrown away.
+
+This supersedes *"`Completed` is never automatic — it needs the user to say the
+work is done"* in **Transitions** above. Completed is now automatic and
+evidence-gated: `finish` demands a merged linked PR from GitHub itself, so the
+condition it waits on is mechanical rather than conversational. Nothing about the
+board-never-leads-reality rule changes — the bar moved from *a human's word* to
+*the repo's gate*, which was always the stricter of the two.
+
+`create-task` got the same treatment, one size smaller: a project it cannot name
+from the reference, the working directory, or the session's own edits becomes a
+**draft item** rather than a question. That fallback was already in the tool
+(`--draft`, then `promote`); it simply was not written down as the answer to
+"which project?".
+
+**Rejected: a `--yes`/`--interactive` flag to keep both modes.** Two modes means
+the model choosing between them, and it would choose to ask — the interactive path
+always looks safer from inside a single turn, which is exactly the bias that
+produced the 1am prompt. One mode, with five enumerated stops, is the only version
+that behaves the same whether or not anyone is watching.
+
+**Rejected: editing the `brainstorming` skill itself.** It lives in a plugin cache
+(`~/.claude/plugins/cache/…`), is overwritten on every plugin update, and is right
+for its own use case — a human at the keyboard exploring an idea. The override
+belongs in the skill that knows it is running unattended.

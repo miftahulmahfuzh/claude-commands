@@ -466,10 +466,22 @@ The Jira counterpart to `confluence-reader`. When an agent is handed a ticket li
 
 Replaces keeping ideas in a notes app where Claude Code can't see them. Capture a
 bug/feature/idea in a browser or on a phone, then `/task <id>` in a fresh session
-fetches it, brainstorms it, writes the plan, links the plan path back onto the
-card, and walks it **Open → In Progress → Completed**. Months later a bug goes in
-as a comment, the card returns to Open, and round two starts from the newest
-comment rather than the stale body.
+fetches it, designs it, writes the plan, links the plan path back onto the card,
+and walks it **Open → In Progress → Completed**. Months later a bug goes in as a
+comment, the card returns to Open, and round two starts from the newest comment
+rather than the stale body.
+
+**It runs unattended, end to end.** No plan approval, no "does this look right?",
+no `AskUserQuestion` — the session designs the change, picks between approaches
+and resolves its own merge conflicts, because a question asked at 1:05am costs the
+whole night and gets a reflexive `y` at 9. A decision that turns out wrong costs
+one comment and one reopen, which this loop already handles; so it decides, writes
+the reasoning into the plan file (including the approaches that lost and why), and
+keeps going. **Stopping is allowed, blocking is not:** five enumerated stops end
+the session cleanly with the card in a truthful stage and the reason commented on
+it — an unplaceable card, a conflict that could only be resolved by dropping
+another card's work, a gate failing outside this diff after three tries,
+`--after-gate` past attempt 3, and missing tooling. Everything else gets decided.
 
 **One loop, two backends,** chosen from the `origin` remote's host:
 
@@ -484,26 +496,45 @@ comment rather than the stale body.
 
 **What it does:**
 - 🎫 **Reads the whole card** — body **and every comment in order**. On a returning card the body is the original idea and the newest comment is the bug report; reading only the body is the main way this fails quietly
-- 🔁 **Detects the round** from the plan block, so a second visit brainstorms only the delta
+- 🔁 **Detects the round** from the plan block, so a second visit designs only the delta
 - 📝 **Links the plan** in a marker-delimited, append-only block in the issue **body**, not a comment (comments get buried under bug reports)
 - 🚦 **Claims the card on fetch** — `/task 14` moves it to In Progress immediately, because running it *is* picking the card up and the board should say what's being worked on right now. If the session ends without proceeding, the skill moves it back to Open. Completed is reached only when the repo's own gate has actually passed
 - 🧼 **Three columns, no doubles** — `board --ensure` shapes the GitLab board as `status::open` | `status::in-progress` | **Closed**, hiding the backlog column that duplicates `status::open`. An *open* card with no stage label is then off the board, so `doctor` reports those under `hiddenFromBoard`
 - 🔒 **On GitLab, Completed means the issue is closed** — measured, not chosen: a label list shows open issues only, so a completed card left open sat in the shared repo's issue list forever (the team saw **55 open issues**, 44 of them finished; now **11**). Closing empties a `status::completed` column, which is why the third column is GitLab's built-in Closed list. `effective_stage()` reads a closed issue as Completed whatever its labels say, or every sync would try to "fix" it forever. GitHub arrives at the same place by a different route — see below
 - 🌳 **GitHub work happens in a worktree, never the main checkout** — `worktree 14` fetches and branches `task/14-<slug>` off **`origin/main`** into `~/.worktrees/<repo>/`, cut *before* the plan file is written so the plan travels in the pull request. Round two gets its own branch (`-r2`), so round one's merged PR stays intact. `worktree 14 --remove` retires it, refusing a dirty tree without `--force`
 - 🔗 **Every GitHub card ends in a linked PR** — `pr 14` pushes the branch, opens the PR with `Closes #14` as its first line, then **reads back from GitHub what it actually linked** and prints it. The closing keyword isn't cosmetic: the board's *Linked pull requests* column reads GitHub's issue↔PR link, and a bare `#14` is only a mention, which leaves the column empty. `links 14` answers "is the board really showing it?" from both the issue and the board field
-- 🛬 **The session lands its own PR — no human clicks merge** — `land 14` merges `origin/main` *into* the task branch, then prints the gate it read out of the repo's **own `.github/workflows`**: every `run:` step of every push/PR job, in order, with the job's env (on one real repo that's 14 commands including seven bespoke guards — a hardcoded `npm test` would have waved all seven through). Gate passes → `land 14 --after-gate` pushes, merges, completes the card and deletes the remote branch. **A repo with no CI reports `gate: none` and `land` refuses:** no gate means nothing would check an auto-resolved conflict
+- 🛬 **The session lands its own PR — no human clicks merge** — `land 14` merges `origin/main` *into* the task branch, then prints the gate it read out of the repo's **own `.github/workflows`**: every `run:` step of every push/PR job, in order, with the job's env (on one real repo that's 14 commands including seven bespoke guards — a hardcoded `npm test` would have waved all seven through). Gate passes → `land 14 --after-gate` pushes, merges, completes the card and deletes the remote branch. **A repo with no CI reports `gate: none` and `land` refuses:** no gate means nothing would check an auto-resolved conflict — so rather than dead-ending at a flag nobody is awake to type, the session derives a gate from the repo itself (`package.json` scripts, `Makefile`, `pytest`, `cargo test`, `go test`), runs it, and lands with `--no-gate` **naming what passed** on the card
 - 🤝 **Parallel sessions resolve their own collisions, with one floor they may not cross** — two worktrees off the same `origin/main` are guaranteed to conflict, so `land` exits 2 with the conflicting files *and the other card's number*, read out of the base branch's merge commits. The session resolves it by a stated rule (append-only regions keep both sides; lockfiles are regenerated, not hand-merged; same-function edits compose) and re-runs the gate before pushing. The floor: **a resolution that removes the other card's behaviour is not a resolution** — `land --abort-conflict` then comments on *both* cards and leaves the merge unpushed, because the gate catches a resolution that breaks and is blind to one that drops. No lock: if the base moved, `--after-gate` sends the session back to the gate *even on a textually clean merge*, since that round is the only one that sees both changes together
 - ✅ **`finish` makes Completed evidence-based** — it asks GitHub for a **merged** linked PR and exits non-zero if there is none, so a card can't reach Completed while its code is still in review. It then sets Status and comments with the merge commit. `land --after-gate` calls the same function, so the rule has one implementation
 - 🧮 **Owns the TaskID corpus** via `todos.py`: `scan`, `validate`, `mint`, `rename` over every `.workflows/todos.md`, with a rename ledger because TaskIDs appear in commit messages that can't be rewritten
 - 🩺 `doctor` on either backend checks auth, scopes, board, labels and columns, and names the fix for whatever is missing
 
-**A merge closes the card, and that is left alone.** `task_gh.py` has no `close` subcommand — it never closes an issue itself — but a merged PR carrying `Closes #14` does, and that closure is GitHub reporting the truth. This reversed an earlier rule that reopened the issue on *every* stage write, written to dodge Projects' auto-archive workflow; **measured on the real board, six closed issues sit in `Done` and every one is still visible**, so auto-archive isn't enabled and all the rule produced was a column of cards that were Done-but-open forever. The reopen is now scoped to the stages where a closed issue would make the board *lie*: `Open` and `In Progress` reopen, `Completed` leaves it closed. A card that resurfaces months later is reopened by hand, or with `reopen 14`.
+**A merge closes the card, and that is left alone.** `task_gh.py` has no `close` subcommand — it never closes an issue itself — but a merged PR carrying `Closes #14` does, and that closure is GitHub reporting the truth. This reversed an earlier rule that reopened the issue on *every* stage write, written to dodge Projects' auto-archive workflow; **measured on the real board, six closed issues sit in `Done` and every one is still visible**, so auto-archive isn't enabled and all the rule produced was a column of cards that were Done-but-open forever. The reopen is now scoped to the stages where a closed issue would make the board *lie*: `Open` and `In Progress` reopen, `Completed` leaves it closed. A card that resurfaces months later is reopened by the next session with `reopen 14` — nobody is asked whether to reopen a card someone just filed a bug on.
 
 **Three things measured rather than assumed** (each broke something first): GitLab CE doesn't enforce scoped-label exclusivity, so a transition rewrites the whole label set in one call and verifies it; in `todos.md` the checkbox is the stage **only** under `## Active Tasks`, since the rolling summary and activity log record what was true at the time; and package codes aren't unique, so TaskID uniqueness is only ever checked on the whole id across every file.
 
 **Layout:** `taskcore.py` (plan-block codec, stages, reference parsing — shared) · `task_gh.py` (gh CLI) · `task_gl.py` (GitLab REST via urllib, no `glab` needed) · `todos.py`. Every module has an offline `selftest` — no token, no network.
 
 **Setup:** GitHub needs `gh auth refresh -s project,read:project` and the built-in **Linked pull requests** field added as a column in the board view (`doctor` reports whether it can see one, plus the worktree root — `TASK_WORKTREES` moves it); GitLab needs a PAT with the `api` scope in `~/.config/task-skill/gitlab` (no admin rights — it inherits your own permissions), then `labels --ensure` and `board --ensure` per project.
+
+### `create-task` - Put One Card on the Board and Stop
+
+The front door to the same board `task` works from. `/create-task "…"` opens the
+issue, adds it to the board, and writes the **Open** stage — **three** operations,
+never one, because `gh issue create` on its own produces an issue no column ever
+shows (measured: `resolve 6` answered *"No card on the board for issue #6."*). It
+then reads the board back and reports which column the card actually landed in.
+
+**It never asks a question either.** The project comes from the reference, from
+the repo above the working directory, or from the files this session was already
+editing; when nothing names a project the card is captured as a GitHub **draft
+item** (`--draft`, `promote` later) rather than held hostage to a prompt. The body
+scales to what is actually known — full mechanism and evidence when the card came
+out of real work, a faithful one-liner when it came from a passing remark — and
+never invents repro steps or measurements.
+
+Then it stops: no work, and no offer to start, since an offer is a question
+wearing a coat. Working the card is `/task <number>`.
 
 ### `sync-todos-into-gitlab-board` - Mirror todos.md onto a GitLab Board
 
@@ -659,15 +690,18 @@ and Claude Code never sees it. `/task` makes the browser the front door.
 # A draft item needs no repo at all — that's the "notes app" case.
 
 /task 14                    # claims the card: moves to In Progress at once
-                            # reads every comment, brainstorms
-                            # on plan approval: cuts a worktree off origin/main,
-                            # writes the plan into it, links it on the card
-                            # — no prompt
+                            # reads every comment, designs it alone — no
+                            # questions, no approval step
+                            # cuts a worktree off origin/main, writes the plan
+                            # into it (losing approaches and why), links it on
+                            # the card
                             # ... build in the worktree, commit ...
                             # opens a PR whose body says "Closes #14", so the
                             # board's Linked pull requests column shows it
-                            # you merge; Completed only then, and only once
-                            # verification actually passed
+                            # runs the repo's own CI as the gate, resolves any
+                            # conflict with a parallel session, merges itself
+                            # Completed only then, on GitHub's word that the PR
+                            # is merged
 ```
 
 **Work repos that already have `.workflows/todos.md` — `/task` is the front door,
@@ -677,7 +711,7 @@ not a replacement:**
 GitLab issue (browser/phone)
       │  /task 7
       ▼
-brainstorm ─► mint a canonical TaskID into the right package's todos.md
+design    ─► mint a canonical TaskID into the right package's todos.md
       │       mirror the stage onto the card
       ▼
 /do <TaskID>                 # the existing five-subagent pipeline, unchanged
@@ -695,8 +729,9 @@ browser-visible half; it does not re-implement the executor.
 ```
 
 **Why the board never leads reality:** a card sits in `In Progress` only while
-genuinely being worked, and reaches `Completed` only when the user says the work
-is done *and* verification passed. A card in the wrong column is the one failure
+genuinely being worked, and reaches `Completed` only when the repo's own gate has
+passed *and* GitHub reports the linked PR merged — a mechanical bar, not a
+remembered one, which is what lets the loop close itself with nobody watching. A card in the wrong column is the one failure
 this can't absorb, because you'd trust the board instead of re-reading the code.
 
 ---
@@ -808,8 +843,10 @@ claude-commands/
 │   │   ├── SKILL.md       # When-to-use triggers + method + documented limits
 │   │   ├── issue_fetch.py # Stdlib fetcher: URL/KEY -> text, images, video frames
 │   │   └── credentials.example  # Jira creds template (falls back to confluence-reader's)
+│   ├── create-task/       # Front door: capture one card onto the board
+│   │   └── SKILL.md       # Three ops, never one; no plumbing of its own
 │   ├── task/              # Task cards on GitHub Projects or GitLab Issues
-│   │   ├── SKILL.md       # The loop: resolve -> brainstorm -> plan -> stages
+│   │   ├── SKILL.md       # The loop: resolve -> design -> plan -> stages -> land
 │   │   ├── DESIGN.md      # Decisions and the alternatives that were rejected
 │   │   ├── taskcore.py    # Shared: plan-block codec, stages, reference parsing
 │   │   ├── task_gh.py     # GitHub Issues + Projects v2, via the gh CLI

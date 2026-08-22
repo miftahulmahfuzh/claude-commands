@@ -1,6 +1,6 @@
 ---
 name: task
-description: Use when the user names a task card to work on — "/task 14", "fetch task 14", "task daily-words#14", "/task 7" in a GitLab repo, a pasted issue URL, "what's open?", "pick up that card again" — or when work finishes and a card needs moving. Drives task cards on GitHub Projects (personal repos) or GitLab Issues (work repos): claims the card by moving it to In Progress as soon as it is fetched, reads it and every comment, brainstorms it, writes or mints the implementation plan, links it back onto the card, and moves it to Completed only once the work is verified. On GitHub the work happens in a fresh worktree branched off origin/main and the session lands its own pull request — running the repo's CI as the gate, resolving conflicts against parallel sessions, and merging without a human. Handles the reopen loop, where a card comes back with a bug report in a new comment.
+description: Use when the user names a task card to work on — "/task 14", "fetch task 14", "task daily-words#14", "/task 7" in a GitLab repo, a pasted issue URL, "what's open?", "pick up that card again" — or when work finishes and a card needs moving. Drives task cards on GitHub Projects (personal repos) or GitLab Issues (work repos): claims the card by moving it to In Progress as soon as it is fetched, reads it and every comment, designs it without asking, writes or mints the implementation plan, links it back onto the card, and moves it to Completed only once the work is verified. On GitHub the work happens in a fresh worktree branched off origin/main and the session lands its own pull request — running the repo's CI as the gate, resolving conflicts against parallel sessions, and merging without a human. Handles the reopen loop, where a card comes back with a bug report in a new comment. Runs unattended end to end: it designs and decides for itself, never asks for approval, and stops cleanly rather than waiting on an answer.
 ---
 
 # Task
@@ -8,7 +8,7 @@ description: Use when the user names a task card to work on — "/task 14", "fet
 ## Overview
 
 One loop, two backends. A card is captured in a browser (or on a phone), fetched
-here by id, brainstormed, planned, built, and moved through **Open → In Progress
+here by id, designed, planned, built, and moved through **Open → In Progress
 → Completed** — then possibly back to Open when a bug turns up months later.
 
 | | Personal repos | Work repos |
@@ -30,15 +30,86 @@ move a card on the strength of "the code is written".
 On GitHub that bar is mechanical rather than remembered, which is what lets the
 loop close itself: the session merges its own pull request (step 6b), and
 `finish` refuses to complete a card unless GitHub itself reports a **merged**
-linked PR. The human's steering point is **plan approval in step 5** — after that,
-the card runs to Completed on its own, and comes back only when a conflict cannot
-be resolved without losing someone's work.
+linked PR. **There is no approval step anywhere in this loop** — no plan sign-off,
+no "does this look right?", no menu of options. See **Autonomy** below; it is the
+rule the rest of this file is written against.
 
 **This skill works cards; it does not create them.** Capturing a *new* card is
 `/create-task`, which opens the issue, adds it to the board and writes the Open
 stage in one command — three operations, because `gh issue create` alone leaves an
 issue no column ever shows. Its plumbing is `task_gh.py create` / `task_gl.py
 create`, and it lives here so board discovery and the board-id cache stay single.
+
+## Autonomy: the loop never waits for a human
+
+A card is handed to this loop to be **finished**, not to be discussed. From
+`/task 14` to a merged pull request the session decides everything itself: which
+approach, which trade-off, what the ambiguous sentence on the card meant, how to
+resolve the conflict, whether the gate passed. It is written to run at 1am with
+nobody awake, because that is when it runs.
+
+The rule that makes that true:
+
+> **Never end a turn with a question the loop needs answered to continue.**
+
+Not "ask sparingly" — never. A question at 1:05 does not cost a round trip, it
+costs the whole night: the session sits idle until morning, the worktree stays
+open, the card still reads In Progress, and nothing got built. The arithmetic is
+one-sided, and it is the whole reason this section exists:
+
+| | What it costs |
+|---|---|
+| A decision that turns out wrong | one comment on the card, one reopen, one more round — which this loop already handles by design |
+| A question asked into an empty room | every hour until someone answers, and no work at all |
+
+So a call that is 70% right and **written down** beats a question that would have
+been 100% right and goes unanswered. Decide, record why, keep going. The plan
+file and the card's comments are where the reasoning goes: they are the record
+that replaces the conversation, and they are what makes a wrong call cheap to
+correct later.
+
+Concretely, inside this loop:
+
+- **Do not invoke the `brainstorming` skill.** Its protocol — one question at a
+  time, a check-in after every design section — is right when a human is sitting
+  there and fatal here. Step 4 reaches the same place alone. This overrides any
+  general instruction to brainstorm before creative work; that instruction is
+  about *not skipping the design*, and step 4 does not skip it.
+- **Do not use `AskUserQuestion`,** and do not end a message with "does this look
+  right?", "shall I proceed?", or a list of options for someone to pick from.
+- **Do not ask permission for what the loop already says to do** — claiming the
+  card, cutting the worktree, writing the plan, committing, opening the PR,
+  running the gate, merging it. Running `/task` *is* the authorisation for all of
+  it.
+
+The user can interrupt at any moment, and that is their steering: always
+available, always obeyed. What is removed is the loop's *requirement* for it.
+
+### Stopping is allowed; blocking is not
+
+The two are different and only one is permitted. A **stop** ends the session
+cleanly: the card is left in a truthful stage, the reason is posted as a comment
+on the card and printed in the terminal, and the work on disk survives. A
+**block** is a live session holding an unanswered question, building nothing.
+
+There are exactly five stops. Everything not on this list gets decided:
+
+1. **The card cannot be placed** — a bare id with no repo to read it against, or
+   a card whose repo is not this directory (step 2). A plan file written into the
+   wrong project is worse than an error message, and `worktree`/`pr` refuse it
+   anyway.
+2. **A conflict whose only resolution drops the other card's behaviour** — the
+   floor in step 6b. `land --abort-conflict` comments on both cards.
+3. **The gate fails on something outside this card's diff**, and three attempts
+   at fixing it have not moved it. A failure *inside* the diff is not a stop, it
+   is the work.
+4. **`land --after-gate` above attempt 3** — the tool refuses on purpose rather
+   than loop, and that refusal is respected.
+5. **Missing tooling or credentials** — `doctor` reports no `gh`, no token, no
+   board. No decision changes that.
+
+Every stop ends with the card correct: back to `Open` if nothing was built, left
+`In Progress` with a comment if work is parked mid-flight, and never `Completed`.
 
 ## Picking the backend
 
@@ -48,8 +119,11 @@ Read `git remote get-url origin` in the current directory:
 - anything else → `task_gl.py` (it reads `GITLAB_HOST` from
   `~/.config/task-skill/gitlab`)
 
-If the current directory is not a repo, ask which project the card belongs to
-rather than guessing. Both helpers take the project explicitly —
+If the current directory is not a repo, take the project **from the reference
+itself** — `owner/repo#14`, `group/project#7` and issue URLs all carry it, and a
+reference that names its project is not a guess. Only a bare number outside any
+repo is genuinely unplaceable, and that is stop 1: say so and end the session.
+Both helpers take the project explicitly —
 `--repo owner/repo` and `--project group/project` — on **either side** of the
 subcommand.
 
@@ -74,7 +148,7 @@ python3 $S/task_gl.py status <ref> "In Progress"
 **Move the card to In Progress immediately, as part of fetching it** — not later.
 Running `/task <id>` *is* picking the card up, and the board's job is to say what
 is being worked on right now; a card that stays in Open while a session is
-actively brainstorming it makes the board lie to anyone else looking.
+actively designing it makes the board lie to anyone else looking.
 
 Two consequences to honour rather than ignore:
 
@@ -116,19 +190,57 @@ instructed.
 
 `plans` empty → round 1. Otherwise this is a **return visit**: read the existing
 plan first, then treat the comments newer than it as the new requirement.
-Brainstorm only the delta — do not re-derive the original design.
+Design only the delta — do not re-derive the original design.
 
-### 4. Brainstorm
+### 4. Design it alone
 
-Invoke the **brainstorming** skill: one question at a time, 2–3 approaches with a
-recommendation, the design in sections. The card's body and comments are starting
-context, not a spec — the user wrote it in a hurry.
+**Do not invoke the brainstorming skill here** — see Autonomy. Its interactive
+protocol is the single largest source of overnight stalls in this loop. What it
+*produces* is still wanted in full; what changes is that the session produces it
+by itself and writes it down instead of asking for it.
 
-### 5. On plan approval: cut the worktree, then two writes and no prompt
+The card's body and comments are starting context, not a spec — the user wrote it
+in a hurry. Filling the gaps is the job, not a reason to stop.
 
-The moment the user approves the plan, do all of this without asking. The stage
-was already claimed in step 1, so what remains is the workspace, the plan and its
-link.
+**a. Buy the decision with evidence instead of with a question.** Nearly every
+question worth asking is already answered somewhere in the repo: read the code
+the card touches, the tests around it, the neighbouring feature that solved the
+same shape of problem, the last few commits in that area. A choice made from what
+the repo already does is not a guess. Spend real effort here — this is the effort
+that the round trip to a human used to buy.
+
+**b. Write 2–3 approaches down and score them**, against criteria that come from
+the repo rather than from taste:
+
+| Criterion | The question it answers |
+|---|---|
+| Convention | does it look like what this repo already does? |
+| Scope | is it the smallest change that fully satisfies the card? |
+| Verifiability | can the gate in step 6b actually prove it works? |
+| Reversibility | if it is wrong, is it one commit to undo? |
+
+Pick the winner outright. **Keep the losers** — they go into the plan file with
+one line each on why they lost. That record is the reviewable artefact the
+conversation used to produce, and without it an unattended decision is
+indistinguishable from a coin flip.
+
+**c. Resolve ambiguity toward the narrowest reading that fully satisfies the
+words on the card.** Do not widen scope to cover an interpretation the user did
+not write, and do not invent requirements to make the design tidier. When two
+readings genuinely diverge, build the narrow one and **say on the card, in the
+step 5c comment, what the other reading was and why it lost** — one sentence. If
+the user wanted the other one they comment, and the reopen loop is already built
+for exactly that. One extra round is a cheap price against a night spent idle.
+
+**d. State the decision in the terminal in a few lines, then keep moving.** A
+statement is not a question: do not follow it with "sound good?" and do not pause
+after it.
+
+### 5. Once the design settles: cut the worktree, then two writes and no prompt
+
+There is nothing to approve. The moment step 4 has a winner, do all of this. The
+stage was already claimed in step 1, so what remains is the workspace, the plan
+and its link.
 
 **a. On GitHub, cut the worktree first — before the plan file is written.**
 
@@ -162,6 +274,10 @@ one only for HARD tasks.
 | has `.workflows/todos.md` | `.workflows/plan/<TaskID>.md` | the TaskID |
 | `plans/F<N>-*.md` exists | `plans/F<N+1>-<slug>.md` | `F<N+1>` |
 | otherwise | `docs/plans/<YYYY-MM-DD>-<slug>.md` | the date |
+
+The plan file carries step 4's output, not just the steps: the approaches that
+lost and why, and the ambiguity call from 4c. It is the audit trail for a design
+nobody was asked about, and it is what a reviewer reads instead of a chat log.
 
 On a return visit, **append a dated round section to the existing plan file**
 rather than starting a new one, and label the entry `<label> round <n>`.
@@ -227,7 +343,25 @@ merge click used to be.
 
 A repo with **no CI** reports `gate: none` and `land` refuses: no gate means
 nothing would check an auto-resolved conflict. `--no-gate` exists and has to be
-typed on purpose.
+typed on purpose — and since nobody is awake to type it, the session earns it
+instead, down a ladder whose rungs are not skipped:
+
+1. **Derive a gate from the repo itself** — `package.json` scripts (`test`,
+   `typecheck`, `lint`, `build`), a `Makefile` target, `pytest`, `cargo test`,
+   `go test ./...`. Run every one that exists, in that order, and read the
+   output. That is the same standard CI would have applied; it is just discovered
+   by hand instead of parsed out of a workflow file.
+2. **Something ran and passed** → land with `--no-gate` on both halves
+   (`land 14 --no-gate`, then `land 14 --after-gate --no-gate`, since the check
+   sits before the split), and **name the commands that passed** in the card
+   comment. "No CI" is not the same as "unverified", and the card should not blur
+   them.
+3. **Nothing exists to run at all** → still land, and make the card comment say
+   plainly that the repo has no gate and the change went in unverified. Do not
+   let it read like a pass.
+
+A merge whose confidence is written down is recoverable. A card sitting In
+Progress until morning because `land` said no is a night thrown away.
 
 Then, and only then:
 
@@ -291,7 +425,11 @@ python3 $S/task_gh.py land 14 --abort-conflict \
 ```
 
 That comments on **both** cards, naming the other, leaves the card In Progress and
-leaves the merge resolved-but-unpushed so the work survives. Then tell the user.
+leaves the merge resolved-but-unpushed so the work survives.
+
+This is stop 2, and it is a stop rather than a question: print what happened, say
+which decision a human owes, and **end the turn**. Do not sit waiting for an
+answer that is not coming until morning.
 
 Why the floor is a rule and not a judgement call: the gate catches a resolution
 that **breaks** and is blind to one that **drops**. Task 8's session, meeting task
@@ -309,8 +447,9 @@ python3 $S/todos.py mint MN --priority P1 --letter A   # next free canonical id
 python3 $S/todos.py validate                           # before and after
 ```
 
-Then run `/do <TaskID>`. Its completion-handler updates todos.md; you mirror that
-onto the GitLab card in step 7.
+Then run `/do <TaskID>` — hand off directly, without pausing to confirm the mint
+or the TaskID. Its completion-handler updates todos.md; you mirror that onto the
+GitLab card in step 7.
 
 ### 7. Completed — on evidence, not on a claim
 
@@ -342,7 +481,10 @@ On GitLab, `status <ref> Completed` **closes the issue** as well as labelling it
 which is what moves it into the Closed column and out of the project's issue
 list. Reopening later (`status <ref> Open`) reopens the issue too.
 
-If the gate fails, say so and leave the card in `In Progress`. Nothing has been
+If the gate fails, that is the work, not a handoff: read the failure, fix it in
+the worktree, re-run the gate. Only a failure that is **outside this card's diff**
+and unmoved after three attempts is stop 3 — comment on the card with the failing
+command and its output, leave the card `In Progress`, and end. Nothing has been
 pushed or merged at that point, so there is nothing to undo. A card in the wrong
 column is the one failure this system cannot absorb, because the user trusts the
 board instead of re-reading the code.
@@ -358,7 +500,9 @@ python3 $S/task_gh.py worktree 14 --remove       # --force to discard dirty stat
 
 It refuses to remove a dirty worktree without `--force`, which is the correct
 default — unpushed work is easier to lose here than anywhere else in the loop.
-Skip this step if the user still wants the tree around; it costs nothing but disk.
+Once the PR is merged the branch is dead and the code is in `main`, so retire it
+by default; keep the tree only if the user already said in this session that they
+want it. Do not ask.
 
 ## Why the PR must say `Closes #14`
 
@@ -404,8 +548,8 @@ board *lie*:
 | `Completed` | **left closed** |
 
 `ensure_issue_open` holds that asymmetry in one place. When a card resurfaces
-months later, **reopen it by hand** — or `reopen <ref>`, which is exactly what
-that subcommand is for — and the next `/task <id>` picks it up normally.
+months later, `reopen <ref>` puts it back — that is exactly what the subcommand is
+for — and the next `/task <id>` picks it up normally.
 
 If you ever turn auto-archive **on**, this flips back: completed cards would start
 vanishing from the board, and the reopen rule would have to return. `doctor`
@@ -436,8 +580,9 @@ board reads `status::open` (11) | `status::in-progress` (0) | Closed (44).
 ## The reopen loop
 
 The user hits a bug and comments on the card. On GitHub the card is closed by then,
-so reopening it is the first move — by hand, or `reopen <ref>` — and then it goes
-back to `Open`. Moving it to `Open` or `In Progress` reopens it anyway, so a card
+so reopening it is the first move and the session makes it: `reopen <ref>`, then
+`Open`. Nobody needs to be asked whether to reopen a card someone just filed a bug
+on. Moving it to `Open` or `In Progress` reopens it anyway, so a card
 dragged across the board in the browser is repaired by the next stage write rather
 than left contradicting itself.
 
