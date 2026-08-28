@@ -191,7 +191,7 @@ Order for a removal is usually: retire call sites → collapse the abstraction �
 now-dead types and config → clean up tests and docs. For a migration it is the reverse:
 introduce the new thing → move callers → delete the old thing.
 
-Cap at **6 phases**. If the work needs more, group related ones and say what you grouped.
+Cap at **20 phases**. If the work needs more, group related ones and say what you grouped.
 `--phases N` overrides the decision.
 
 State it in one line before proceeding:
