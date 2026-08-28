@@ -38,7 +38,7 @@ Most commands operate on a target package directory that contains a `.workflows/
 ### Who writes implementation plans
 **Only `/analyze`.** This is the single most important invariant in the repo — it was previously split between `/analyze` and `/implement`, which produced plans of two different provenances and no way to tell which was authoritative.
 
-- `/analyze` → read-only investigation **plus a complete plan, every run**: `<session-id>_code_analyzer.md` (descriptive) + `<SLUG>_PLAN.md` (index) + `.workflows/plan/<slug>/phase-{N}.md` for N ∈ 1..6, in a worktree it cuts. N=1 is not a different mode — same artifacts, one phase.
+- `/analyze` → read-only investigation **plus a complete plan, every run**: `<session-id>_code_analyzer.md` (descriptive) + `<SLUG>_PLAN.md` (index) + `.workflows/plan/<slug>/phase-{N}.md` for N ∈ 1..20, in a worktree it cuts. N=1 is not a different mode — same artifacts, one phase.
 - `/implement -f <SLUG>_PLAN.md` → **executes**. Creates one task per phase, copies each phase plan to `{pkg}/.workflows/plan/{TaskID}.md` unchanged, applies one phase, hands to `completion-handler`. It writes no plans; handed an analysis document it refuses and names `/analyze`.
 - `/do <TaskID>` → executes an **existing** task. Adopts its plan file if there is one; builds a routing brief from the task text for EASY/NORMAL without one; **refuses a HARD task with no plan file** and names `/analyze`.
 - When code has drifted from what a plan quotes: small drift → follow intent and note it; large drift → stop and re-run `/analyze`. Neither executor improvises a replacement plan.
