@@ -38,7 +38,7 @@ Most commands operate on a target package directory that contains a `.workflows/
 ### Who writes implementation plans
 **Only `/analyze`.** This is the single most important invariant in the repo — it was previously split between `/analyze` and `/implement`, which produced plans of two different provenances and no way to tell which was authoritative.
 
-- `/analyze` → read-only investigation **plus a complete plan, every run**: `<session-id>_code_analyzer.md` (descriptive) + `<SLUG>_PLAN.md` (index) + `.workflows/plan/<slug>/phase-{N}.md` for N ∈ 1..20, in a worktree it cuts. N=1 is not a different mode — same artifacts, one phase.
+- `/analyze` → read-only investigation **plus a complete plan, every run**: `<session-id>_code_analyzer.md` (descriptive) + `<SLUG>_PLAN.md` (index) + `.workflows/plan/<slug>/phase-{N}.md` for N ∈ 1..20, in a worktree it cuts. N=1 is not a different mode — same artifacts, one phase. It also numbers the user's asks `R1..Rn` and maps every phase onto the `R`s it serves — the plan index's **Requirements** table, which is what lets `create-task` shape the board without re-deriving the decomposition.
 - `/implement -f <SLUG>_PLAN.md` → **executes**. Creates one task per phase, copies each phase plan to `{pkg}/.workflows/plan/{TaskID}.md` unchanged, applies one phase, hands to `completion-handler`. It writes no plans; handed an analysis document it refuses and names `/analyze`.
 - `/do <TaskID>` → executes an **existing** task. Adopts its plan file if there is one; builds a routing brief from the task text for EASY/NORMAL without one; **refuses a HARD task with no plan file** and names `/analyze`.
 - When code has drifted from what a plan quotes: small drift → follow intent and note it; large drift → stop and re-run `/analyze`. Neither executor improvises a replacement plan.
@@ -71,6 +71,16 @@ reconciler's ledger in `agents/plan-reconciler.md` to match.
 
 Downstream, plans are **adopted, never regenerated**: `plan-generator` and `/implement` read an
 existing plan file rather than writing a new one, or the reconciliation is silently discarded.
+
+### Plan sets on the board (`skills/task`, `skills/create-task`)
+When a prompt asks for cards *and* `/analyze`, the order is fixed: **analyze first, cards from the
+plan index.** The user's count is deliverables (`R1..Rn`), `/analyze`'s count is phases, and the
+Requirements table reconciles them — one parent card per `R` with its phases as GitHub sub-issues,
+or one parent for the whole set when a phase serves two `R`s. The invariant the code enforces:
+**the parent owns the worktree, the branch and the pull request; a phase owns a commit**
+(`finish --child-of`), because a phase branched off `origin/main` would be planning against code
+that has not landed. GitHub only — GitLab has no sub-issues below Premium. A completed phase card
+is **not** closed, so phase progress is read from the board Status, never from open/closed.
 
 ### Pusher agent (`agents/pusher.md`)
 Owns *all* git side effects for command-driven work. `/do` and `/implement` no longer perform direct git operations — they delegate to `pusher`. If you add a new command that mutates files, end it by spawning `pusher` rather than running `git` inline. Users can also invoke it directly by saying "run pusher".

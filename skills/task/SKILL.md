@@ -19,6 +19,7 @@ here by id, designed, planned, built, and moved through **Open → In Progress
 | Cross-project view | the same board | the **group issue list**, filtered by label |
 | Helper | `task_gh.py` | `task_gl.py` |
 | Development loop | this skill runs it, in a **worktree off `origin/main`**, and every card ends in a **pull request it merges itself** | this skill mints a TaskID and hands off to **`/do`** |
+| A card with phases | GitHub **sub-issues**: one card per phase, the parent owning the branch and the PR | no sub-issues below Premium — the phases are flat TaskIDs in `todos.md` |
 | `Completed` means | the linked PR is **merged** | the issue is **closed** |
 | Who merges | **the session**, gated on the repo's CI (step 6b) | `/do`, on its own branch rules |
 
@@ -39,6 +40,43 @@ rule the rest of this file is written against.
 stage in one command — three operations, because `gh issue create` alone leaves an
 issue no column ever shows. Its plumbing is `task_gh.py create` / `task_gl.py
 create`, and it lives here so board discovery and the board-id cache stay single.
+
+## A card with phases
+
+A card captured from a `/analyze` plan set is a **parent** with one **sub-issue per phase** (see
+`create-task`). Sub-issues are real issues with real numbers, so nothing new is needed to address
+one: `/task 13` fetches phase 1 exactly like any other card. What *is* different is ownership,
+and it is one rule:
+
+> **The parent owns the worktree, the branch and the pull request. A phase owns a commit.**
+
+That is not a convention, it is forced: phase 2's plan quotes the tree as it looks *after* phase
+1, and phase 1 is not on `origin/main` yet. A phase card that cut its own branch off the base
+would be implementing a plan against code that does not exist. So:
+
+| Run on | What happens |
+|---|---|
+| **the parent** | drive every phase in order, in one worktree, committing per phase, and open **one** pull request for the plan set. This is `/implement --all` reached from the board. |
+| **a phase** | claim it, work in the **parent's** worktree, commit, complete the phase on that commit — and leave the PR to the parent |
+
+`resolve` answers which one you are holding without a second call: `parent` (with its plan block,
+so the branch and the plan index are right there), `children`, `position`, `blockedBy`, and
+`ownsPullRequest`. Read them before anything else — a phase session that skips this is the one
+failure mode this shape introduces.
+
+**An earlier phase that is not done is not a stop.** `blockedBy` names it; work those phases
+first, in order, then the one that was asked for. That is not scope creep — the phases share one
+branch and one gate, and the requested phase cannot even be verified until its prerequisites are
+in the tree. Say in the terminal which extra phases you picked up and why, then keep going.
+
+Two consequences that are easy to get wrong:
+
+- **A completed phase card is not closed.** Only the parent's merge closes anything, so the
+  board's Status is the authority on whether a phase is done — `child_done` reads it first and
+  falls back to the issue state. Never infer phase progress from open/closed.
+- **The parent completes last, on the merge.** If its PR merges while a phase still reads In
+  Progress, the board is lying about code that is in `main`; `complete_card` reports those under
+  `openChildren` so they can be swept. Complete each phase as it lands and the list stays empty.
 
 ## Autonomy: the loop never waits for a human
 
@@ -162,6 +200,11 @@ Two consequences to honour rather than ignore:
 `<ref>` is `14`, `owner/repo#14`, `group/project#7`, an issue URL, and on GitHub
 also a `PVTI_…` item id or `draft:<part of the title>`.
 
+**On GitHub, read the plan-set fields in the same breath as the body.** `resolve` returns
+`parent`, `children`, `position`, `blockedBy` and `ownsPullRequest`; a non-null `parent` means
+this card is one phase of a plan set and steps 5a and 7 change shape. See **A card with phases**
+above — do not reach step 5 before knowing which one you are holding.
+
 **Read the body *and* every comment, in order.** On a card that has been round
 the loop, the body is the original idea and the newest comment is the current bug
 report. Reading only the body is the main way this workflow fails quietly.
@@ -264,8 +307,21 @@ branch is visible rather than surprising. On a **round 2** the branch gets an
 worktree shares no `node_modules` and no virtualenv; the JSON says so under
 `hints`.
 
+**A phase card does not cut a worktree.** `resolve` gave you `parent`; its plan block names the
+plan index, and the plan index names the branch and the worktree. `cd` there and work in it. If
+the worktree is gone (another machine, or it was retired), recreate it from the parent:
+`task_gh.py worktree <parent> --branch <the plan index's branch>`. Branching a phase off
+`origin/main` is the one move that cannot be recovered from by re-running anything.
+
 On **GitLab** there is no worktree step — `/do` owns branching there, and creates
 one only for HARD tasks.
+
+**A phase card already has its plan** — `.workflows/plan/<slug>/phase-{N}.md`, written and
+reconciled by `/analyze`, linked from the card body. **Adopt it; never write a second one.** Step
+4's design work was already done by the planner and the reconciler, and a plan you mint beside it
+is the two-provenances problem this whole workflow exists to prevent. If the code has drifted from
+what the plan quotes: small drift → follow the intent and note it in the card comment; large drift
+→ stop and say the plan set needs re-running through `/analyze`.
 
 **b. Write or mint the plan.** Detect the repo's own convention:
 
@@ -456,6 +512,19 @@ GitLab card in step 7.
 On **GitHub this already happened**: `land --after-gate` set Completed itself,
 because by then all three conditions were mechanically true — the gate passed, the
 PR is merged, and GitHub says so. There is nothing left to do but report.
+
+**A phase card completes on its commit, not on a merge** — the parent owns the pull request, so
+there is nothing merged to point at until the whole plan set lands:
+
+```bash
+python3 $S/task_gh.py finish 13 --child-of 12 --commit <sha>
+```
+
+It refuses a card that is not a sub-issue of the parent it names, a commit that does not exist,
+a commit that is not on the branch you are standing on, and a commit already on the base. Those
+four checks are what replace the merged-PR requirement — do not reach for `--allow-unmerged`
+here, which asserts nothing at all. Run it as each phase lands, so the parent's own completion
+never has to sweep an `openChildren` list.
 
 `finish` remains for the paths that skipped `land`:
 

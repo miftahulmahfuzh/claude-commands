@@ -58,9 +58,13 @@ Every run produces the same three things, in a worktree it cuts off `origin/main
 | `<SLUG>_PLAN.md` | the plan index — phases, order, invariants, open questions |
 | `.workflows/plan/<slug>/phase-{N}.md` | one implementation plan per phase, with complete code |
 
-The only thing that varies is **N**, the number of phases (1–6). A bug fix gets N=1 — same
+The only thing that varies is **N**, the number of phases (1–20). A bug fix gets N=1 — same
 artifacts, one phase, not a lesser mode. N grows when the change spans 3+ packages, has a
 required order, or must stay shippable at every step.
+
+The user's asks are numbered `R1…Rn` and every phase declares which `R` it serves, so the plan
+index says what the user wanted *and* how it decomposes. That mapping is what reconciles "make me
+2 cards" with a 4-phase plan set — see `create-task`.
 
 For N > 1 the phases are planned **in parallel** — one `phase-planner` each — and then
 reconciled. Parallel planners can't see each other's plans, so each declares an **Interface
@@ -241,11 +245,22 @@ the reason commented on it; everything else gets decided.
 | Stage | the board's Status field | `status::*` labels |
 | Development | worktree off `origin/main`, ending in a PR the session merges | mints a TaskID, hands off to `/do` |
 | Completed | linked PR merged | issue closed |
+| Phases of a plan set | sub-issues; the parent owns the branch and the PR | flat TaskIDs in `todos.md` |
 
 On GitHub the gate is the repo's **own** `.github/workflows` — every `run:` step of every
 push/PR job, in order (on one real repo, 14 commands including seven bespoke guards a hardcoded
 `npm test` would have waved through). No CI at all means `land` derives a gate from
 `package.json` / `Makefile` / `pytest` / `cargo` / `go test` and names what passed on the card.
+
+A card carrying `/analyze` phases is a **parent with one sub-issue per phase**, and the rule there
+is forced rather than chosen: **the parent owns the worktree, the branch and the pull request; a
+phase owns a commit.** Phase 2's plan quotes the tree as it looks after phase 1, which is not on
+`origin/main` yet, so a phase that branched off the base would implement against code that does
+not exist. `/task 13` addresses a phase directly (sub-issues are real issues), `resolve` answers
+`parent` / `position` / `blockedBy` / `ownsPullRequest` in one call, and
+`finish 13 --child-of 12 --commit <sha>` completes a phase on four checks instead of a merge.
+Running `/task` on the *parent* drives every phase in order and opens one PR — `/implement --all`
+reached from the board.
 
 Parallel sessions off the same `origin/main` will conflict; `land` exits 2 with the conflicting
 files and the other card's number. The session resolves it by a stated rule and re-runs the
@@ -273,6 +288,14 @@ sets the Open stage — three operations, because `gh issue create` alone produc
 column shows. It never asks a question: the project comes from the reference, the repo, or the
 files being edited, and otherwise the card is captured as a GitHub draft item. Then it stops —
 working the card is `/task <number>`.
+
+**When `/analyze` ran in the same prompt, `/analyze` goes first and the cards come from its plan
+index.** The two counts are different altitudes, not rivals: the user names *deliverables*
+(`R1…Rn`), `/analyze` decides *phases*. So one parent card per `R` with its phases as GitHub
+**sub-issues**, in phase order — or a single parent for the whole set when a phase straddles two
+`R`s and can be attached to neither. The parent carries the branch, the base sha and the plan
+index; each phase carries its own plan path and `finish --child-of`. GitHub only: GitLab has no
+sub-issues below Premium, and there the phases are already flat TaskIDs that `/do` walks.
 
 ### `sync-todos-into-gitlab-board`
 `/sync-todos-into-gitlab-board .workflows/todos.md` — one GitLab issue per live task, in the

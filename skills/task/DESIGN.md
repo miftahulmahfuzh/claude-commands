@@ -268,3 +268,66 @@ that behaves the same whether or not anyone is watching.
 (`~/.claude/plugins/cache/…`), is overwritten on every plugin update, and is right
 for its own use case — a human at the keyboard exploring an idea. The override
 belongs in the skill that knows it is running unattended.
+
+## Amendment, 2026-08-28: a plan set on the board
+
+**The measured failure.** One prompt read `/create-task 2 cards and /analyze …`.
+The session produced exactly what both halves promised and no relationship
+between them: cards #11 and #12 on the board, and a four-phase plan set in
+`~/.worktrees/jmtarot/history-retry-and-soft-delete` with 20 inconsistencies
+reconciled. Neither artifact referenced the other. Nothing was wrong with either
+one; they were simply produced blind, because `create-task` is written to fire in
+two seconds and never ask, and it fired before the only thing that knew the
+decomposition had run.
+
+**The fix is ordering and data flow, not new prose.** `/analyze` runs first and
+the cards are shaped from the finished plan index. To make that mechanical rather
+than a re-reading of the prose, `/analyze` now numbers the user's asks `R1…Rn` and
+every phase declares which `R` it serves. This is the same move the **Interface
+Contract** made for reconciliation: publish the one fact the next stage needs so
+it does not have to re-derive everything.
+
+**The two counts are not rivals.** "2 cards" is deliverables; "4 phases" is
+execution units. Both are correct at different altitudes, so both survive: one
+parent card per `R`, its phases as sub-issues, in phase order. When a phase serves
+two `R`s it can be attached to neither, and that coupling is a real fact about the
+work — one parent for the whole set, with the user's asks as bullets.
+
+**Ownership is forced, not chosen.** This skill's per-card model is a fresh
+worktree off `origin/main` and one merged PR per card. A plan set is one worktree,
+one branch, phases in a required order, where phase 2's plan quotes the tree *as
+it will look after phase 1*. A phase card cutting its own branch off the base
+would implement against code that does not exist. So: **the parent owns the
+worktree, the branch and the pull request; a phase owns a commit.**
+`finish --child-of` swaps the merged-PR requirement for four checks — is it a
+sub-issue of that parent, does the commit exist, is it on the branch you are
+standing on, is it absent from the base — rather than dropping the requirement.
+`--allow-unmerged` would have asserted nothing, for every card in the system.
+
+**Rejected: `/task 11 --subtask 1`.** The original ask. Sub-issues are real issues
+with real numbers, so `/task 13` already addresses a phase; a second addressing
+scheme would have to be kept in sync with the first for nothing. Also rejected:
+`11.2` as sugar, because `parse_ref` deliberately refuses `1.5` and that strictness
+is worth more than the shorthand.
+
+**Rejected: one PR per phase.** Either stacked (phase 2's PR targeting phase 1's
+branch) or all targeting a long-lived integration branch. Both give finer review
+granularity; both add a second merge order to get wrong, and neither is reviewable
+by the one person who reviews nothing. One PR per plan set, one commit per phase.
+
+**Rejected: cascading completion.** When the parent's PR merges, every phase's code
+is in `main`, so completing the open ones looks free. It is not: a merge is not
+evidence that a phase nobody completed was actually built, and writing Completed on
+that guess is the exact failure this board cannot absorb. `complete_card` reports
+them as `openChildren` instead.
+
+**Rejected: refusing a phase whose predecessors are not done.** A refusal at 1am is
+a night thrown away, and the phases share one branch and one gate — the requested
+phase cannot be verified without its prerequisites in the tree anyway. So
+`blockedBy` is reported and the loop works the prefix in order, saying which extra
+phases it picked up.
+
+**GitLab is out of scope, on evidence.** Sub-issues below Premium do not exist
+(child issues are an Epic feature). There the phases are already flat TaskIDs in
+`todos.md` and `/do` walks them, so the board gets one card carrying the plan index
+and the phase list. `task_gl.py` gains no `--parent`.
