@@ -101,9 +101,14 @@ user_note: "{from --note flag}"  # optional
 ```
 
 **Actions:**
-1. Analyze task difficulty
-2. **For EASY/NORMAL:** Create simple step-by-step brief
-3. **For HARD:** Create detailed plan file + git branch + confirmation prompt
+1. **If the task's `Plan:` file already exists, adopt it** — read it and derive the brief from
+   it. Do not re-plan. Plans written by `/analyze` roadmap mode were reconciled against the
+   other phases; regenerating one silently drops that reconciliation.
+2. Otherwise, analyze task difficulty and plan:
+   - **EASY/NORMAL:** simple step-by-step brief
+   - **HARD:** detailed plan file + git branch + confirmation prompt
+3. Skip branch creation if the session is already on a non-default branch (a roadmap worktree,
+   or a branch from an earlier phase) — do not nest branches.
 
 **Output (Execution Brief):**
 ```yaml
@@ -217,7 +222,7 @@ completion_report: {...}
 
 **Dispatch:** README Updater subagent
 
-**Model:** `sonnet` (required)
+**Model:** `opus` (required)
 
 **Input:**
 ```yaml
@@ -241,7 +246,7 @@ summary: "{brief description of what was updated or that it was newly created vi
 
 **Notes:**
 - This subagent MUST run before the Pusher subagent so README updates are committed together with code changes
-- Use sonnet model for this task
+- Use opus model for this task
 
 ## Context Isolation Summary
 
@@ -252,7 +257,7 @@ summary: "{brief description of what was updated or that it was newly created vi
 | **Subagent 3** | Isolated | None (uses data) | Plan file (HARD) |
 | **Main Context** | Clean | Target files only | Target files only |
 | **Subagent 4** | Isolated | todos.md, related files | todos.md, related files |
-| **README Updater** | Isolated (sonnet) | package_readme.md | package_readme.md |
+| **README Updater** | Isolated (opus) | package_readme.md | package_readme.md |
 
 **Main Context NEVER Loads:** todos.md, package_readme.md, analysis_report.md, plan files
 
@@ -400,6 +405,21 @@ Continue with implementation? [y/N] y
    - Merge instructions (no auto-push for HARD tasks)
    - Plan file reference
 
+### Roadmap Phase Tasks
+
+A task carrying a `**Roadmap**:` field is one phase of a plan produced by `/analyze` roadmap
+mode. Three rules apply:
+
+1. **Check `Depends on:` first.** If any prerequisite TaskID is not complete, stop and name it:
+   `✗ P1-TC-A002 depends on P1-TC-A001 (phase 1), which is not complete.`
+   The phase's plan quotes code as it will look *after* the earlier phases land.
+2. **Adopt the plan, never regenerate it** (Step 3, above).
+3. **Stay on the roadmap branch.** No new branch, even for a HARD phase — the roadmap owns the
+   branch and every phase lands on it. If the current worktree is not the one the roadmap
+   names, stop and print the `cd` command.
+
+After completion, the completion-handler flips the next phase's task from `blocked` to `open`.
+
 ### Blocked Tasks
 If task status is 'blocked':
 1. Display blocking information
@@ -428,10 +448,10 @@ Real subagents live in `agents/` (deployed to `~/.claude/agents/` by `sync.sh`) 
 | Agent | Model | Purpose |
 |-------|-------|---------|
 | `task-locator.md` | haiku | Find TaskID, extract metadata |
-| `context-loader.md` | sonnet | Load and synthesize context |
-| `plan-generator.md` | sonnet | Create execution brief (+ branch & plan for HARD) |
-| `completion-handler.md` | sonnet | Update todos.md, dispatch readme-updater & pusher |
-| `readme-updater.md` | sonnet | Locate + update most-impacted package_readme.md |
+| `context-loader.md` | opus | Load and synthesize context |
+| `plan-generator.md` | opus | Create execution brief (+ branch & plan for HARD) |
+| `completion-handler.md` | opus | Update todos.md, dispatch readme-updater & pusher |
+| `readme-updater.md` | opus | Locate + update most-impacted package_readme.md |
 | `pusher.md` | haiku | Stage, commit, push (owns all git side effects) |
 
 > **Note:** Step 4 (Execute Implementation) runs in the **main context**, not a subagent — it has no agent file by design.
@@ -447,18 +467,10 @@ Real subagents live in `agents/` (deployed to `~/.claude/agents/` by `sync.sh`) 
 - Run `/analyze-package <package>` if major changes were made
 - Run `/update-readme <package>` if API changed
 
-### Batch Operations
-For multiple related tasks:
-```bash
-# Execute all P0 tasks across all packages
-/do --all-p0
-
-# Execute all tasks for specific package
-/do --package=db --all
-
-# Execute tasks matching pattern
-/do --pattern="race condition"
-```
+### Multi-phase work
+`/do` takes one TaskID per session by design. For a sequence of related changes, use
+`/analyze` roadmap mode — it produces reconciled per-phase plans and one task per phase, and
+`/do <TaskID>` executes them one at a time.
 
 ## Best Practices
 

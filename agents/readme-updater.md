@@ -1,7 +1,7 @@
 ---
 name: readme-updater
-description: Update the package_readme.md of the package most impacted by a task. If none exists, invoke /update-readme to create it. Use the sonnet model.
-model: sonnet
+description: Update the package_readme.md of the package most impacted by a task. If none exists, invoke /update-readme to create it. Use the opus model.
+model: opus
 color: yellow
 ---
 

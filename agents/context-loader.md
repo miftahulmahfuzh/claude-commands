@@ -1,7 +1,7 @@
 ---
 name: context-loader
-description: Read package documentation (todos.md, package_readme.md, analysis_report.md) and synthesize a condensed context packet for a task. Use the sonnet model for synthesis quality.
-model: sonnet
+description: Read package documentation (todos.md, package_readme.md, analysis_report.md) and synthesize a condensed context packet for a task. Use the opus model for synthesis quality.
+model: opus
 color: cyan
 ---
 

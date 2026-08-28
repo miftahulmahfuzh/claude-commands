@@ -1,210 +1,141 @@
 # Implement Command
 
-Execute implementation based on `/analyze` output. Creates task, generates plan, and implements.
+Execute implementation from `/analyze` output. Creates the task(s), generates or adopts the
+plan, and implements.
+
+`-f` accepts either of `/analyze`'s two outputs:
+
+| Input | Mode | What happens |
+|---|---|---|
+| `<session-id>_code_analyzer.md` | **analysis** | one task + one generated plan, then implement it |
+| `<SLUG>_ROADMAP.md` | **roadmap** | one task per phase, plans adopted from the roadmap, then implement one phase |
 
 ## Usage
 
 ```bash
-/implement -f <code_analyzer.md> [-p <path>] [-note <additional note>]
+/implement -f <code_analyzer.md | SLUG_ROADMAP.md> [-p <path>] [-note <note>] [--phase N] [--all]
 ```
 
 **Arguments:**
-- `-f`: Path to `<session-id>_code_analyzer.md` (required)
-- `-p`: Path to directory containing `.workflows/` (optional - auto-detected from analysis)
-- `-note`: Additional context/notes (optional)
+- `-f` — analysis or roadmap file (required)
+- `-p` — directory containing `.workflows/` (optional; auto-detected)
+- `-note` — extra context; supplements the analysis, never replaces it
+- `--phase N` — roadmap mode: implement phase N instead of the next unfinished one
+- `--all` — roadmap mode: continue through every remaining phase in this session
 
-**Example:**
+**Examples:**
 ```bash
-/implement -f 20250108-164512-A3F7_code_analyzer.md -p tools/toolcore -note keep in mind query_user_portfolio has different output than stock_analysis
+/implement -f 20250108-164512-A3F7_code_analyzer.md -p tools/toolcore
+/implement -f PURGE_DIRECT_STREAMING_TOOL_ROADMAP.md
+/implement -f PURGE_DIRECT_STREAMING_TOOL_ROADMAP.md --phase 3
 ```
 
-## Process
+---
 
-### Step 1: Read Analysis File
+## Step 0: Detect Mode
 
-Read the code_analyzer.md file from `-f` parameter. This is your ground truth.
+Read the first ~30 lines of the `-f` file. A file starting `# Roadmap:` (or named
+`*_ROADMAP.md`) is **roadmap mode** → go to the Roadmap Mode section. Anything else is
+**analysis mode** → continue below.
 
-**Extract from new sections:**
-- **User Input**: Original user request, context, error messages, notes
-- **Detailed Requirements Understanding**: Claude's technical interpretation
-- **Analysis Type**: Bug | Feature | Update | Refactor (informs implementation approach)
+---
+
+## Analysis Mode
+
+### Step 1: Read the Analysis File
+
+The analysis file is ground truth. Extract:
+- **User Input** — original request, context, errors, notes
+- **Detailed Requirements Understanding** — the technical interpretation
+- **Analysis Type** — Bug | Feature | Update | Refactor
 
 ### Step 2: Determine Path
 
-**If `-p` provided:**
-- Use that path
+With `-p`: use it. Without: parse the file paths in the analysis and pick the `.workflows/`
+location by weight — most-changed files, core package over dependencies, directory depth.
 
-**If `-p` NOT provided:**
-- Parse all file paths in code_analyzer.md
-- Choose most appropriate `.workflows/` location based on:
-  - Files with most changes
-  - Core package vs dependencies
-  - Directory structure depth
-
-**Validation:**
-- Check if `{path}/.workflows/todos.md` exists
-- If missing: **STOP** and tell user: `Run /update-todos {path} --init first`
+Validate `{path}/.workflows/todos.md` exists. If missing, **STOP**:
+`Run /update-todos {path} --init first`
 
 ### Step 3: Generate TaskID
 
-Use package code from existing todos.md header. Generate next available TaskID:
-- Format: `P{Priority}-{PackageCode}-{4CharID}`
-- Analyze analysis to determine priority (P0-P4)
-- Use next sequential 4CharID (A000, A001... A999, B000...)
+`P{Priority}-{PackageCode}-{4CharID}` — package code from the todos.md header, priority from
+the analysis, next sequential 4-char ID (A000 → A999 → B000).
 
-### Step 4 & 5: Update todos.md and Create Implementation Plan via Subagent
+### Steps 4 & 5: todos.md + Plan (Subagent — required)
 
-**CRITICAL: You MUST use a subagent for Steps 4 and 5.**
+**Do not do this in the main context.** The main context stays clean for code.
 
-This keeps the main context clean for the actual code implementation work.
+Dispatch a subagent with:
 
-**DO NOT** update todos.md or create the implementation plan in the main context.
-
-#### Subagent Instructions
-
-Dispatch a subagent with the following prompt template:
-
-```
+````
 You are implementing Steps 4 and 5 of the /implement command.
 
-**Inputs:**
-- Analysis file: {code_analyzer.md path}
+Inputs:
+- Analysis file: {path}
 - Path: {path}
-- TaskID: {TaskID}
-- Priority: {P0-P4}
-- Package code: {from todos.md header}
-- Note: {additional note if provided}
+- TaskID / Priority / Package code: {...}
+- Note: {if provided}
 
-**Step 4: Add Task to todos.md**
+Step 4 — add to {path}/.workflows/todos.md, in the right priority section:
 
-Read {path}/.workflows/todos.md and add the task to the appropriate priority section:
-
-```markdown
-- [ ] **{TaskID}** {Brief title from analysis}
+- [ ] **{TaskID}** {brief title}
   - **Difficulty**: {EASY|NORMAL|HARD}
   - **Type**: {Bug|Feature|Update|Refactor}
-  - **Context**: {Summary from "Detailed Requirements Understanding" section}
+  - **Context**: {from "Detailed Requirements Understanding"}
   - **Status**: in_progress
   - **Plan**: `.workflows/plan/{TaskID}.md`
-```
 
-Tip: Use the "Detailed Requirements Understanding" section for context - it's already technical and precise.
+Step 5 — create {path}/.workflows/plan/{TaskID}.md:
 
-**Step 5: Create Implementation Plan**
-
-Create {path}/.workflows/plan/{TaskID}.md with this structure:
-
-```markdown
 # Implementation Plan: {TaskID}
 
-**TaskID**: {TaskID}
-**Type**: {Bug|Feature|Update|Refactor}
-**Created**: {YYYY-MM-DD HH:MM:SS}
-**Analysis Source**: {code_analyzer.md filename}
-
----
+**TaskID** / **Type** / **Created** / **Analysis Source**
 
 ## User Context
-
-<Copy from "User Input" section - preserves original request>
+<copy from the analysis "User Input" section>
 
 ## Requirements Understanding
-
-<Copy from "Detailed Requirements Understanding" section - technical interpretation>
-
----
+<copy from "Detailed Requirements Understanding">
 
 ## Summary
-
-{One-paragraph technical summary - reference "Detailed Requirements Understanding"}
+{one paragraph}
 
 ## Scope
-
 ### Files to Modify
-- `file1.go` - {what changes}
-- `file2.go` - {what changes}
-
+- `file.go` — {what changes}
 ### Dependencies
-- {external packages or services}
-
----
+- {packages or services}
 
 ## Implementation Steps
-
-### Step 1: {Title}
+### Step 1: {title}
 **File**: `{path/file.go}`
-
 **Change**: {description}
-
 **Code**:
 ```go
-// FULL code block - complete functions/structs
-// NO placeholders or "..." abbreviations
+// FULL code block — complete functions/structs, no placeholders
 ```
-
-**Impact**: {what breaks/changes}
-
----
-
-### Step 2: {Title}
-{repeat for each step}
-
----
+**Impact**: {what breaks}
 
 ## Testing Plan
-1. {test case}
-2. {test case}
-
 ## Rollback Plan
-{if implementation fails}
-```
 
-**CRITICAL Plan Requirements:**
-- ALL code blocks must be COMPLETE and runnable
-- NO placeholders like `// ... existing code`
-- NO abbreviated struct definitions
-- FULL functions that can be directly implemented
+Requirements:
+- All code blocks COMPLETE and runnable. No `// ... existing code`, no `...`.
+- Keep it concise — code changes, not prose.
+- Trust the analysis; do not re-analyze.
+- If anything is ambiguous, ask with AskUserQuestion and give your own recommendation.
+  Never guess and proceed.
 
-**Your Output:**
-When complete, report back with:
-1. TaskID created
-2. Priority level assigned
-3. Brief task title
-4. Full path to plan file created
-5. Summary of what was done
+Return: TaskID, priority, title, plan path, summary of what you did.
+````
 
-**Important:**
-- Keep the implementation plan CONCISE - focus on code changes
-- Trust the analysis - don't re-analyze what's already documented
-- If any aspect of the analysis is unclear, ask for clarification using AskUserQuestion
-- When in doubt, ask - never guess and proceed
-```
+Verify the returned values before Step 6.
 
-#### After Subagent Completes
+### Step 6: Execute (Main Context)
 
-The subagent will return:
-- **TaskID**: The generated task identifier
-- **Priority**: P0-P4 level
-- **Title**: Brief task title
-- **Plan path**: `.workflows/plan/{TaskID}.md`
-
-Verify these values before proceeding to Step 6.
-
-### Step 4 (Original): Add Task to todos.md
-
-**DELEGATED TO SUBAGENT** - See Step 4 & 5 above.
-
-### Step 5 (Original): Create Implementation Plan
-
-**DELEGATED TO SUBAGENT** - See Step 4 & 5 above.
-
-### Step 6: Execute Implementation (Main Context)
-
-**CRITICAL: This step runs in the MAIN context after the subagent completes.**
-
-Follow the plan sequentially:
-1. For each step: Read the file, make changes.
-2. When implementation is complete, dispatch the **`completion-handler` agent** (Task tool, `subagent_type: completion-handler`) with:
+1. For each step in the plan: read the file, make the change.
+2. When done, dispatch the **`completion-handler`** agent with:
    ```yaml
    completion_report:
      task_id: "{TaskID}"
@@ -212,32 +143,101 @@ Follow the plan sequentially:
      status: "success"
      modified_files: ["{file}"]
    ```
-   The completion-handler will:
-   - Flip the task to completed in todos.md, move it to Completed Tasks, update Quick Stats
-   - Update `analysis_report.md` if a documented finding was resolved
-   - Dispatch the **`readme-updater`** subagent (sonnet) — updates the most-impacted `package_readme.md`, or auto-runs `/update-readme` if none exists
-   - Dispatch the **`pusher`** subagent (haiku) — commits and pushes code + README together
 
-The main context performs NO documentation updates and NO git operations directly. The completion-handler agent is the same one used by `/do` — see `agents/completion-handler.md`.
+`completion-handler` flips the task to completed in todos.md, updates `analysis_report.md` if a
+documented finding was resolved, then chains **`readme-updater`** (opus) and **`pusher`**
+(haiku). The main context performs no documentation updates and no git operations.
 
-## Output Format
+---
 
-After implementation completes:
+## Roadmap Mode
 
+### Step R1: Verify the Worktree
+
+The roadmap names the worktree and branch it was planned in. Compare with
+`git rev-parse --show-toplevel` and `git branch --show-current`.
+
+- Match → proceed.
+- Different tree → **STOP** and print `cd <worktree path>` — plans quote code as it exists on
+  that branch, and applying them elsewhere silently produces conflicts.
+- Worktree gone (roadmap says `none`, or the path no longer exists) → say so and proceed on the
+  current branch.
+
+### Step R2: Read the Roadmap
+
+Extract: slug, the **Why** section, the invariants, the phase table (number, title, package,
+depends-on, difficulty, plan file), and any **Open Questions**.
+
+**If Open Questions is non-empty, resolve them before implementing.** Ask with
+`AskUserQuestion`, one question per unresolved item, each with your own recommendation.
+Reconciliation deliberately left these for a human — implementing over them guesses.
+
+### Step R3: Create One Task Per Phase (Subagent — required)
+
+Only on the first `/implement` run against this roadmap. Detect a re-run by searching the
+roadmap slug in the todos.md files; if the tasks exist, skip to R4.
+
+Dispatch one subagent to create all phase tasks. For each phase:
+
+- Package path = the phase's **Package** column. Validate `{pkg}/.workflows/todos.md` exists;
+  if missing, run `/update-todos {pkg} --init` rather than stopping — a roadmap can span
+  packages that were never tracked.
+- Mint a TaskID per phase from that package's own counter.
+- Task entry:
+  ```markdown
+  - [ ] **{TaskID}** Phase {N}: {title}
+    - **Difficulty**: {from the roadmap}
+    - **Type**: {Bug|Feature|Update|Refactor}
+    - **Context**: {phase Owns + Exit criteria}
+    - **Status**: {in_progress for the first phase, blocked for the rest}
+    - **Roadmap**: `{SLUG}_ROADMAP.md` (phase {N} of {total})
+    - **Depends on**: {TaskIDs of the phases this one requires}
+    - **Plan**: `.workflows/plan/{TaskID}.md`
+  ```
+- **Adopt, do not regenerate, the plan.** Copy `.workflows/roadmap/{slug}/phase-{N}.md` to
+  `{pkg}/.workflows/plan/{TaskID}.md`, prepending:
+  ```markdown
+  > Adopted from `{SLUG}_ROADMAP.md` phase {N}. Source: `.workflows/roadmap/{slug}/phase-{N}.md`.
+  > Reconciled against the other phases — edit the source, not this copy, if the plan changes.
+  ```
+  Regenerating would discard the reconciliation that made the phases consistent.
+- Write the TaskID back into the roadmap's phase table (add a **TaskID** column) so a later
+  session can map phases to tasks.
+
+Return: the phase → TaskID → plan path → package mapping.
+
+### Step R4: Implement One Phase (Main Context)
+
+Pick the phase: `--phase N` if given, else the lowest-numbered phase whose task is not
+complete. Refuse a phase whose `Depends on` tasks are not all complete — name the blocker.
+
+Apply that phase's plan step by step. The plan's code blocks are complete by construction;
+where the real code has drifted from the plan, follow the plan's *intent*, note the drift, and
+carry it into the completion report.
+
+Then dispatch **`completion-handler`** with the phase's `completion_report`, plus:
+```yaml
+roadmap:
+  file: "{SLUG}_ROADMAP.md"
+  phase: N
+  next_task_id: "{TaskID of phase N+1, or empty}"
 ```
-✓ Implementation complete: {TaskID}
+It marks the phase task complete and flips the next phase's task from `blocked` to `open`.
 
-Files modified:
-- file1.go
-- file2.go
+### Step R5: Stop or Continue
 
-Updated todos.md
-Plan saved to: .workflows/plan/{TaskID}.md
-```
+**Default: stop after one phase.** Print the next command and let the user start a fresh
+session — a roadmap phase is exactly the unit that fits in one clean context, and phase N+1's
+plan was written assuming phase N had landed and been reviewed.
+
+**With `--all`:** loop back to R4 for the next phase, in the same session. Say once, up front,
+that context will grow across phases.
+
+---
 
 ## Termination
 
-**If successful:**
+**Analysis mode:**
 ```
 ✓ Implementation complete: {TaskID}
 
@@ -245,96 +245,72 @@ Files modified: {count}
 Plan: .workflows/plan/{TaskID}.md
 ```
 
-**If todos.md missing:**
+**Roadmap mode:**
+```
+✓ Phase {N}/{total} complete: {TaskID} — {title}
+
+Files modified: {count}
+Plan: {pkg}/.workflows/plan/{TaskID}.md
+Branch: {branch}
+
+Remaining: phase {N+1} ({TaskID}), phase {N+2} ({TaskID})
+
+Next, in a fresh session from this worktree:
+/do {TaskID of phase N+1}
+```
+
+**Roadmap complete:**
+```
+✓ All {total} phases complete — {SLUG}_ROADMAP.md
+
+Branch: {branch}
+Review and merge:
+  git checkout main && git merge {branch}
+```
+
+**todos.md missing (analysis mode):**
 ```
 ✗ Error: todos.md not found in {path}/.workflows/
-
 Run: /update-todos {path} --init
 ```
 
+---
+
 ## Handling Confusion
 
-### During Implementation Plan Creation (Step 5 - Subagent)
+**During plan creation (Step 5) and phase implementation (R4):** stop, ask with
+`AskUserQuestion`, and give your own recommendation with rationale for each option. Wait for
+the answer.
 
-If any aspect of the analysis is unclear, ambiguous, or has multiple valid approaches:
-
-1. **STOP** and ask clarifying questions using the `AskUserQuestion` tool
-2. **Provide your own recommendation** with rationale for each option
-3. **Wait for user response** before proceeding
-
-**Common scenarios requiring clarification:**
-- Multiple ways to implement a feature
-- Ambiguous error handling requirements
+Cases that warrant a question:
+- Multiple valid implementations, or a performance-vs-simplicity trade-off
+- Ambiguous error-handling requirements
 - Conflicting signals in the analysis
-- Breaking changes that affect other code
-- Performance vs simplicity trade-offs
+- Breaking changes reaching code outside the stated scope
+- The real code structure differs from the analysis in a way that changes the approach
+- Roadmap **Open Questions** left unresolved
 
-**Example question format:**
-```
-Question: How should we handle X?
-Options:
-- Option A (Recommended): Do Y because Z
-- Option B: Do Q because R
-```
+**When in doubt, ask — never guess and proceed.**
 
-### During Code Implementation (Step 6 - Main Context)
-
-If issues arise during actual code changes:
-
-1. **STOP** and identify the confusion
-2. **Ask clarifying questions** using `AskUserQuestion` tool
-3. **Provide your own recommendation** based on:
-   - Code consistency with existing patterns
-   - Best practices for the language/framework
-   - Minimal changes principle
-4. **Wait for user response** before making changes
-
-**Common scenarios requiring clarification:**
-- Actual code structure differs from analysis
-- Unexpected dependencies or side effects
-- Missing information in the analysis
-- Conflicts with other files not in scope
-- Need for additional refactoring discovered during implementation
-
-## Notes
-
-- Keep implementation plan CONCISE - focus on code changes
-- Token efficiency matters - avoid verbose explanations in plan
-- Trust the analysis - don't re-analyze what's already documented
-- **User Context** section preserves why this work is being done
-- **Requirements Understanding** section is your technical blueprint
-- If `-note` provided, it supplements (not replaces) the analysis
-- Success Criteria from Requirements Understanding should drive testing plan
-- **When in doubt, ask - never guess and proceed**
+---
 
 ## Context Management
 
-**Why use a subagent for Steps 4 & 5:**
+Documentation work is delegated so the main context holds only code:
 
-The subagent handles all the documentation work (updating todos.md and creating the implementation plan) in a separate context. This:
-
-1. **Keeps main context clean**: The main conversation only contains the actual code implementation work
-2. **Reduces token usage**: Documentation details don't pollute the main context during code changes
-3. **Improves focus**: When implementing code, the main context has only relevant implementation details
-4. **Preserves handoff clarity**: The subagent returns structured output (TaskID, priority, title, plan path) that the main context uses
-
-**Data flow:**
 ```
-Main Context (Steps 1-3)
-    → Generate TaskID, prepare inputs
+Main context (Steps 1–3 / R1–R2)
+    → read input, resolve path, mint TaskID(s)
     ↓
-Subagent (Steps 4-5)
-    → Update todos.md
-    → Create implementation plan
-    → Return: TaskID, Priority, Title, Plan path
+Subagent (Steps 4–5 / R3)
+    → todos.md + plan files
+    → returns: TaskID, priority, title, plan path
     ↓
-Main Context (Step 6)
-    → Execute implementation with clean context
-    → Build completion_report
+Main context (Step 6 / R4)
+    → implement, in a clean context
     ↓
-completion-handler agent (sonnet)
-    → Update todos.md (flip checkbox, move to Completed, Quick Stats)
-    → Update analysis_report.md if relevant
-    → Dispatch readme-updater (sonnet) → updates package_readme.md
-    → Dispatch pusher (haiku) → commits + pushes code + README together
+completion-handler (opus)
+    → todos.md, analysis_report.md
+    → readme-updater (opus) → package_readme.md
+    → pusher (haiku) → commit + push code and docs together
 ```

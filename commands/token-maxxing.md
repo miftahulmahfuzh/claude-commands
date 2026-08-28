@@ -93,6 +93,21 @@ Do the work. Commit real increments with clear messages. Follow the project's sk
 (TDD, systematic-debugging, etc.) as normal — quality still matters. Be thorough and
 verbose; exhaustive-but-correct is the goal, not terse.
 
+**If the idea is big** — 3+ packages, ~15+ files, or a removal/migration where order matters
+(a YAGNI purge and a subsystem refactor usually are) — don't freehand it. Run:
+
+```bash
+/analyze --no-worktree <the idea, in prose, with the reasons it's worth doing>
+```
+
+It triages the scope itself, and in roadmap mode fans out one planner per phase and reconciles
+their plans against each other before anything is implemented. `--no-worktree` keeps the work
+on today's `token-maxxing-<DATE>` branch instead of cutting a second one. Then implement with
+`/implement -f <SLUG>_ROADMAP.md`, one phase at a time.
+
+This is also high burn spent well: N planners in parallel plus a reconciliation pass, on work
+that ends in a reviewed plan rather than a half-finished refactor.
+
 ### 9. Auto-write the session doc when done
 When you judge the work complete (or at a natural stopping point), **spawn a fresh
 subagent** to run the `/token-maxxing-update-docs` workflow so the session is recorded

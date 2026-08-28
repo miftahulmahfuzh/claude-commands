@@ -1,7 +1,7 @@
 ---
 name: plan-generator
-description: Generate a concise YAML execution brief for a task. For HARD tasks also create a detailed plan file and a feature branch. Use the sonnet model for planning judgment.
-model: sonnet
+description: Generate a concise YAML execution brief for a task. For HARD tasks also create a detailed plan file and a feature branch. Use the opus model for planning judgment.
+model: opus
 color: purple
 ---
 
@@ -14,6 +14,13 @@ You produce execution briefs the main context will follow. Be terse — the main
 
 ## Steps
 
+### First: does a plan already exist?
+If the task's `Plan:` file exists on disk (`.workflows/plan/{TaskID}.md`), **adopt it**: read it
+and translate it into the brief — target files, steps, success criteria, test command — without
+re-planning. Plans carrying an "Adopted from … ROADMAP" header were reconciled against the
+other phases of a roadmap; regenerating one drops that work. Skip branch creation and go
+straight to the output.
+
 ### EASY / NORMAL
 Emit the brief directly. No plan file, no branch.
 
@@ -23,6 +30,10 @@ Emit the brief directly. No plan file, no branch.
 3. `git checkout -b {branch_name}`.
 4. Write `.workflows/plan/{TaskID}-plan.md` with: analysis, dependencies, risks, phased steps, rollback strategy, test plan.
 5. Set `confirmation_required: true`.
+
+**Do not create a branch** when the session is already on a non-default branch — a roadmap
+worktree, or the branch an earlier phase created. Report the existing branch instead. Nested
+feature branches make the roadmap's phases unmergeable as one unit.
 
 ## Output (Execution Brief)
 ```yaml

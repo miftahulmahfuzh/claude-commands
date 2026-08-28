@@ -1,7 +1,7 @@
 ---
 name: completion-handler
-description: After code implementation, update todos.md and related docs, then dispatch the readme-updater and pusher subagents. Use the sonnet model.
-model: sonnet
+description: After code implementation, update todos.md and related docs, then dispatch the readme-updater and pusher subagents. Use the opus model.
+model: opus
 color: orange
 ---
 
@@ -9,6 +9,7 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
 
 ## Input
 - `completion_report` — `{ task_id, package_path, status, modified_files, error_message? }`
+- `roadmap` — optional, `{ file, phase, next_task_id }` when the task is one phase of a roadmap
 
 ## Steps
 
@@ -27,6 +28,13 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
    - `analysis_report.md`: if a documented finding was resolved by the change, mark it RESOLVED with date.
    - `package_readme.md`: **do not edit here** — that's readme-updater's job in step 3.
    Skip silently if nothing relevant.
+
+2b. **If `roadmap` is present**:
+   - Tick the phase's row in the roadmap file's phase table and set `**Status:**` to
+     `phase {N}/{total} complete` (or `complete` on the last phase).
+   - Find `next_task_id` in its own package's todos.md and flip `- **Status**: blocked` to
+     `open`. Its plan assumed this phase had landed, and it has.
+   - Do not merge the branch. A roadmap is reviewed and merged as a whole.
 
 3. **Dispatch `readme-updater`** (Task tool, `subagent_type: readme-updater`):
    Input `{ modified_files, task_id, package_path }`. Wait for completion. Treat its writes as part of the same commit.

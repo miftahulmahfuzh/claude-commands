@@ -28,14 +28,18 @@ Most commands operate on a target package directory that contains a `.workflows/
 ├── plan/{TaskID}.md     # implementation plan for a task
 ├── analysis_report.md   # code quality analysis
 ├── package_readme.md    # technical docs (created/updated by /update-readme)
-└── postmortem/{TaskID}.md
+├── postmortem/{TaskID}.md
+└── roadmap/{slug}/phase-{N}.md   # repo-root .workflows/ only — /analyze roadmap mode
 ```
 
-`<session-id>_code_analyzer.md` files live at the *repo root* (output of `/analyze`), not inside `.workflows/`.
+`<session-id>_code_analyzer.md` and `<SLUG>_ROADMAP.md` live at the *repo root* (output of `/analyze`), not inside `.workflows/`.
 
 ### Command relationships
-- `/analyze` → produces `<session-id>_code_analyzer.md` (read-only investigation).
+- `/analyze` → read-only investigation. Triages scope itself and produces either
+  `<session-id>_code_analyzer.md` (SINGLE) or that plus `<SLUG>_ROADMAP.md` and one reconciled
+  plan per phase, in a dedicated worktree (ROADMAP).
 - `/implement -f <analyzer.md>` → reads that file, creates a **new** task in `todos.md` + plan, then implements.
+- `/implement -f <SLUG>_ROADMAP.md` → creates one task per phase, adopts the phase plans as-is, implements one phase.
 - `/do <TaskID>` → executes an **existing** task already in `todos.md`.
 - `/update-readme`, `/update-todos`, `/reorganize-todos`, `/postmortem`, `/analyze-package` → maintenance commands on `.workflows/` contents.
 - `/up-version` → semver bump + CHANGELOG generation for *this* repo (or any repo with tags).
@@ -50,10 +54,23 @@ These commands enforce **main-context-is-code-only**. All file reading, doc upda
 3. **Plan Generator** subagent — emits a YAML execution brief.
 4. **Main context** — applies the code changes only.
 5. **Completion Handler** subagent — updates `todos.md` (mark complete, move to Completed Tasks section).
-6. **README Updater** subagent (sonnet) — refreshes the most-impacted `package_readme.md`; auto-runs `/update-readme` if none exists.
+6. **README Updater** subagent (opus) — refreshes the most-impacted `package_readme.md`; auto-runs `/update-readme` if none exists.
 7. **`pusher` agent** (haiku) — stages, writes a conventional-commit message, commits, pushes.
 
 When modifying these flows, preserve the isolation: don't add doc-reading or git operations to the main-context step, and don't have subagents implement code.
+
+### Swarm planning pattern (`/analyze` roadmap mode)
+`/analyze` decomposes large work into phases, then dispatches **all `phase-planner` agents in one
+message** so they plan concurrently, and follows them with a single **`plan-reconciler`** that
+edits the plan files in place to remove cross-phase conflicts. The planners cannot see each
+other, so each declares an **Interface Contract** (deletes / renames / creates / requires) —
+that section is what makes reconciliation mechanical rather than a re-read of every plan. If
+you change the contract's shape in `agents/phase-planner.md`, change the reconciler's ledger in
+`agents/plan-reconciler.md` to match.
+
+Downstream, plans produced this way are **adopted, never regenerated**: `plan-generator` and
+`/implement` read an existing `.workflows/plan/{TaskID}.md` rather than writing a new one, or
+the reconciliation is silently discarded.
 
 ### Pusher agent (`agents/pusher.md`)
 Owns *all* git side effects for command-driven work. `/do` and `/implement` no longer perform direct git operations — they delegate to `pusher`. If you add a new command that mutates files, end it by spawning `pusher` rather than running `git` inline. Users can also invoke it directly by saying "run pusher".
@@ -74,7 +91,7 @@ Tasks are tagged EASY / NORMAL / HARD. HARD tasks trigger automatic branch creat
 5. Run `./sync.sh` to deploy.
 
 ### Adding a new agent
-Create `agents/<name>.md` with frontmatter (`name`, `description`, `model`, `color`). Use `model: haiku` for fast/cheap routine work, `sonnet` for tasks needing judgment (e.g. README updater).
+Create `agents/<name>.md` with frontmatter (`name`, `description`, `model`, `color`). Use `model: haiku` for fast/cheap routine work, `opus` for tasks needing judgment (e.g. README updater).
 
 ### Adding a new skill
 1. Create `skills/<name>/SKILL.md` with YAML frontmatter — only `name` and `description`. The `description` must be third-person and start with "Use when…", listing concrete triggers/symptoms (Claude reads it to decide whether to load the skill); do NOT summarize the skill's workflow there.
