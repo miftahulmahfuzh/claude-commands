@@ -133,3 +133,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Project Milestone
 This represents the initial release of the Claude Commands Collection, providing a complete foundation for custom Claude Code command management with professional documentation and automated installation.
+
+[2.0.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v2.0.0
+[1.1.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v1.1.0
+[1.0.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v1.0.0
