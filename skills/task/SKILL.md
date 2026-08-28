@@ -64,6 +64,12 @@ so the branch and the plan index are right there), `children`, `position`, `bloc
 `ownsPullRequest`. Read them before anything else — a phase session that skips this is the one
 failure mode this shape introduces.
 
+**`blockedBy` sees siblings only.** It is computed from the parent's sub-issue order, so it
+cannot know that phase 3 under one parent depends on phase 1 under another — which is exactly
+what happens when a plan set is split across two parent cards, one per `R`. The plan index's
+**Depends on** column is the authority for order across parents; read it, and treat a
+cross-parent prerequisite the same way as a sibling one.
+
 **An earlier phase that is not done is not a stop.** `blockedBy` names it; work those phases
 first, in order, then the one that was asked for. That is not scope creep — the phases share one
 branch and one gate, and the requested phase cannot even be verified until its prerequisites are

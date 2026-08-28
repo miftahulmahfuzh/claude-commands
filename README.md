@@ -415,6 +415,61 @@ A card sits in In Progress only while genuinely being worked, and reaches Comple
 the repo's gate passed and the host reports the PR merged — a mechanical bar, which is what
 lets the loop close with nobody watching.
 
+### Cards and `/analyze` in one prompt
+
+The case this shape was built for, from `JMTarot`:
+
+```bash
+/create-task 2 cards and /analyze
+1. pull data from neon prod. there are 3 "Bacaan ini tidak selesai" — we should add a
+   "Coba ulang" button so this empty reading can be refilled.
+2. in history item list, make it so user can swipe left to show a trash icon. clicking
+   it soft-deletes the reading. sometimes users asked embarrassing questions.
+```
+
+**What that produced before:** two cards (#11, #12) *and* a four-phase plan set with 20
+inconsistencies reconciled — with no relationship between them. Both halves did exactly what
+they promise; they were produced blind, because `create-task` fires in two seconds and never
+asks, so it committed the board to a shape before the only thing that had read the code existed.
+
+**What it produces now.** `/analyze` runs first and numbers the asks `R1` (retry) and `R2`
+(delete); each of the four phases declares the one `R` it serves, so the mapping is a table
+lookup and neither count is overridden — the user's 2 is the parent count, `/analyze`'s 4 is the
+sub-issue count:
+
+```
+#11  Coba ulang: refill a reading that never finished          [R1]  Open
+ ├─ #15  Phase 3 — the predicate, the writer, the endpoint
+ └─ #16  Phase 4 — the Coba ulang control, copy, docs
+#12  Swipe left to delete a reading from history (soft delete) [R2]  Open
+ ├─ #13  Phase 1 — schema, read filters, delete route
+ └─ #14  Phase 2 — the swipe gesture and the row
+```
+
+Each parent body carries the plan index, the branch and base sha, and the worktree path marked
+as machine-local. Each phase body carries its own plan path *with the branch* — `/analyze` writes
+plans inside the worktree, so the path is a dead link on `main` until the PR merges.
+
+Then the phases are worked, in one worktree, by whichever session picks a card up:
+
+```bash
+/task 12            # the parent: drives phases 1 and 2 in order, opens one PR
+/task 15            # one phase: works in #11's worktree, completes on its commit
+```
+
+```bash
+python3 ~/.claude/skills/task/task_gh.py finish 13 --child-of 12 --commit <sha>
+```
+
+Had one phase served *both* asks — a migration both features need — it could be attached to
+neither, and the answer is one parent for the whole set with the asks as bullets. That coupling
+is a fact about the work, not a labelling problem.
+
+**The order across two parents comes from the plan index, not the board.** `blockedBy` only sees
+siblings, so it says phase 4 waits on phase 3; it cannot know that phase 3 waits on phase 1 under
+a different card. The plan index's **Depends on** column is the authority there — read it before
+picking up a phase whose parent is not the first one.
+
 ---
 
 ## `/implement` vs `/do`

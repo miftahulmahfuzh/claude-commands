@@ -114,7 +114,9 @@ Sub-issues are created in phase order, because that order *is* GitHub's sub-issu
   the plan files *inside the worktree*, so `.workflows/plan/<slug>/phase-1.md` does not exist on
   `main` and a bare path reads as a dead link until the pull request merges
 
-**Each phase** — the plan path (with the branch), `Depends on`, and the ownership line:
+**Each phase** — the plan path (with the branch), `Depends on`, and the ownership line. Spell a
+`Depends on` that crosses parents out in full — *phase 1 (#13, under #12)* — because `resolve`'s
+`blockedBy` only sees siblings and will not report it:
 
 > Work this in **#12's** worktree, on `feature/history-retry-and-soft-delete`. Do not cut a
 > branch off `origin/main` — phase 2 builds on phase 1, which is not there yet. #12 owns the
