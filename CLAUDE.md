@@ -24,23 +24,24 @@ Most commands operate on a target package directory that contains a `.workflows/
 
 ```
 <package>/.workflows/
-├── todos.md             # task list with TaskIDs (P{0-3}-{SCOPE}-{ID})
-├── plan/{TaskID}.md     # implementation plan for a task
-├── analysis_report.md   # code quality analysis
-├── package_readme.md    # technical docs (created/updated by /update-readme)
-├── postmortem/{TaskID}.md
-└── roadmap/{slug}/phase-{N}.md   # repo-root .workflows/ only — /analyze roadmap mode
+├── todos.md                 # task list with TaskIDs (P{0-3}-{SCOPE}-{ID})
+├── plan/
+│   ├── {TaskID}.md          # the plan a task executes (copied here by /implement)
+│   └── {slug}/phase-{N}.md  # repo-root .workflows/ only — /analyze plan sets
+├── analysis_report.md       # code quality analysis
+├── package_readme.md        # technical docs (created/updated by /update-readme)
+└── postmortem/{TaskID}.md
 ```
 
-`<session-id>_code_analyzer.md` and `<SLUG>_ROADMAP.md` live at the *repo root* (output of `/analyze`), not inside `.workflows/`.
+`<session-id>_code_analyzer.md` and `<SLUG>_PLAN.md` live at the *repo root* (output of `/analyze`), not inside `.workflows/`.
 
-### Command relationships
-- `/analyze` → read-only investigation. Triages scope itself and produces either
-  `<session-id>_code_analyzer.md` (SINGLE) or that plus `<SLUG>_ROADMAP.md` and one reconciled
-  plan per phase, in a dedicated worktree (ROADMAP).
-- `/implement -f <analyzer.md>` → reads that file, creates a **new** task in `todos.md` + plan, then implements.
-- `/implement -f <SLUG>_ROADMAP.md` → creates one task per phase, adopts the phase plans as-is, implements one phase.
-- `/do <TaskID>` → executes an **existing** task already in `todos.md`.
+### Who writes implementation plans
+**Only `/analyze`.** This is the single most important invariant in the repo — it was previously split between `/analyze` and `/implement`, which produced plans of two different provenances and no way to tell which was authoritative.
+
+- `/analyze` → read-only investigation **plus a complete plan, every run**: `<session-id>_code_analyzer.md` (descriptive) + `<SLUG>_PLAN.md` (index) + `.workflows/plan/<slug>/phase-{N}.md` for N ∈ 1..6, in a worktree it cuts. N=1 is not a different mode — same artifacts, one phase.
+- `/implement -f <SLUG>_PLAN.md` → **executes**. Creates one task per phase, copies each phase plan to `{pkg}/.workflows/plan/{TaskID}.md` unchanged, applies one phase, hands to `completion-handler`. It writes no plans; handed an analysis document it refuses and names `/analyze`.
+- `/do <TaskID>` → executes an **existing** task. Adopts its plan file if there is one; builds a routing brief from the task text for EASY/NORMAL without one; **refuses a HARD task with no plan file** and names `/analyze`.
+- When code has drifted from what a plan quotes: small drift → follow intent and note it; large drift → stop and re-run `/analyze`. Neither executor improvises a replacement plan.
 - `/update-readme`, `/update-todos`, `/reorganize-todos`, `/postmortem`, `/analyze-package` → maintenance commands on `.workflows/` contents.
 - `/up-version` → semver bump + CHANGELOG generation for *this* repo (or any repo with tags).
 
@@ -59,18 +60,17 @@ These commands enforce **main-context-is-code-only**. All file reading, doc upda
 
 When modifying these flows, preserve the isolation: don't add doc-reading or git operations to the main-context step, and don't have subagents implement code.
 
-### Swarm planning pattern (`/analyze` roadmap mode)
-`/analyze` decomposes large work into phases, then dispatches **all `phase-planner` agents in one
-message** so they plan concurrently, and follows them with a single **`plan-reconciler`** that
-edits the plan files in place to remove cross-phase conflicts. The planners cannot see each
-other, so each declares an **Interface Contract** (deletes / renames / creates / requires) —
-that section is what makes reconciliation mechanical rather than a re-read of every plan. If
-you change the contract's shape in `agents/phase-planner.md`, change the reconciler's ledger in
-`agents/plan-reconciler.md` to match.
+### Swarm planning pattern (`/analyze`)
+`/analyze` decomposes the work into phases, then dispatches **all `phase-planner` agents in one
+message** so they plan concurrently. With N > 1 it follows them with a single
+**`plan-reconciler`** that edits the plan files in place to remove cross-phase conflicts. The
+planners cannot see each other, so each declares an **Interface Contract** (deletes / renames /
+creates / requires) — that section is what makes reconciliation mechanical rather than a re-read
+of every plan. If you change the contract's shape in `agents/phase-planner.md`, change the
+reconciler's ledger in `agents/plan-reconciler.md` to match.
 
-Downstream, plans produced this way are **adopted, never regenerated**: `plan-generator` and
-`/implement` read an existing `.workflows/plan/{TaskID}.md` rather than writing a new one, or
-the reconciliation is silently discarded.
+Downstream, plans are **adopted, never regenerated**: `plan-generator` and `/implement` read an
+existing plan file rather than writing a new one, or the reconciliation is silently discarded.
 
 ### Pusher agent (`agents/pusher.md`)
 Owns *all* git side effects for command-driven work. `/do` and `/implement` no longer perform direct git operations — they delegate to `pusher`. If you add a new command that mutates files, end it by spawning `pusher` rather than running `git` inline. Users can also invoke it directly by saying "run pusher".
@@ -81,7 +81,7 @@ Owns *all* git side effects for command-driven work. `/do` and `/implement` no l
 `P{0-3}-{SCOPE}-{ID}` (e.g. `P0-DB-A236`, `P1-CB-B789`). Priority `P0` is highest. Scope is a short package abbreviation. IDs must be unique across all `todos.md` files in a repo.
 
 ### Difficulty classification
-Tasks are tagged EASY / NORMAL / HARD. HARD tasks trigger automatic branch creation in `/do` for isolation; the command surfaces merge instructions at the end.
+Tasks are tagged EASY / NORMAL / HARD. EASY and NORMAL can run from the task description alone; **HARD requires a plan file** — `/do` refuses a HARD task without one and points at `/analyze`. Branch isolation comes from the worktree `/analyze` cuts, not from `/do`.
 
 ### Adding a new command
 1. Create `commands/<name>.md`. The first line should be `# <Name> Command` (matches existing style).

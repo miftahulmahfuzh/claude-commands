@@ -25,9 +25,9 @@ deletes inside `~/.claude/commands/` and is safe to re-run.
 
 | Command | What it does |
 |---|---|
-| `/analyze` | Read-only code archaeology; for large work, a phased roadmap with reconciled plans |
-| `/implement` | Turns an analysis or roadmap into tasks, plans, and code |
-| `/do` | Executes an existing task by TaskID |
+| `/analyze` | Traces the code, then writes the implementation plan — the only command that plans |
+| `/implement` | Executes a plan: creates the tasks, applies the code |
+| `/do` | Executes one existing task by TaskID |
 | `/dbg` | Drives Delve to get runtime truth instead of inferring from logs |
 | `/analyze-package` | Generates a package's code-quality analysis |
 | `/update-readme` | Creates or refreshes `package_readme.md` |
@@ -40,30 +40,35 @@ deletes inside `~/.claude/commands/` and is safe to re-run.
 
 ### `/analyze`
 
-Traces dataflow and documents structure. Never edits source code — it only writes markdown.
+Traces dataflow, documents structure, and **writes the implementation plan**. It is the only
+command that plans; `/implement` and `/do` execute what it wrote. It never edits source code.
 
 ```bash
-/analyze [target] [bug|feature|update|refactor] [--worktree|--no-worktree] [--phases N]
+/analyze [target] [bug|feature|update|refactor] [--phases N] [--no-worktree]
 <free-form description>
 ```
 
 Everything is optional; `/analyze` followed by prose works, and the target and type are inferred.
 
-After exploring, it triages the scope and picks a mode:
+Every run produces the same three things, in a worktree it cuts off `origin/main`:
 
-| | **SINGLE** | **ROADMAP** |
-|---|---|---|
-| When | fits in one reviewable change | 3+ packages, ~15+ files, or removal order matters |
-| Writes | `<session-id>_code_analyzer.md` | that, plus `<SLUG>_ROADMAP.md` and one plan per phase |
-| Worktree | no | yes — `feature/<slug>`, off `origin/main` |
-| Planning | none | one `phase-planner` per phase, in parallel, then a `plan-reconciler` pass |
-| Next | `/implement -f <analysis>.md` | `/implement -f <SLUG>_ROADMAP.md` |
+| Artifact | What it is |
+|---|---|
+| `<session-id>_code_analyzer.md` | the analysis — descriptive, what exists today |
+| `<SLUG>_PLAN.md` | the plan index — phases, order, invariants, open questions |
+| `.workflows/plan/<slug>/phase-{N}.md` | one implementation plan per phase, with complete code |
 
-Roadmap mode exists because parallel planners can't see each other's plans. Each declares an
-**Interface Contract** — what it deletes, renames, creates, and requires from earlier phases —
-and the reconciler uses those to find deleted-then-used symbols, unmet assumptions, duplicate
-work, file collisions, and gaps, then **edits the plan files** to fix them. What it can't
-resolve without guessing goes into the roadmap's **Open Questions** instead.
+The only thing that varies is **N**, the number of phases (1–6). A bug fix gets N=1 — same
+artifacts, one phase, not a lesser mode. N grows when the change spans 3+ packages, has a
+required order, or must stay shippable at every step.
+
+For N > 1 the phases are planned **in parallel** — one `phase-planner` each — and then
+reconciled. Parallel planners can't see each other's plans, so each declares an **Interface
+Contract** (what it deletes, renames, creates, and requires from earlier phases), and
+`plan-reconciler` uses those to find deleted-then-used symbols, unmet assumptions, duplicate
+work, file collisions, and gaps — then **edits the plan files** to fix them. What it can't
+resolve without guessing goes to **Open Questions**, and `/implement` stops and asks about
+anything left there.
 
 Every phase must build and pass tests on its own, so the branch is reviewable at any point.
 
@@ -86,42 +91,45 @@ i want to purge direct tool streaming capability from this codebase. reasons:
 YAGNI. let the feature go.
 ```
 
-The second form yields a worktree, `PURGE_DIRECT_STREAMING_TOOL_ROADMAP.md`, and a reconciled
-plan per phase. The rationale is copied into the roadmap verbatim — on a purge, the reasons are
-the spec for what may be deleted and what may not.
+The rationale is copied into the plan index verbatim — on a purge, the reasons are the spec for
+what may be deleted and what may not.
 
 ### `/implement`
 
 ```bash
-/implement -f <code_analyzer.md | SLUG_ROADMAP.md> [-p <path>] [-note <note>] [--phase N] [--all]
+/implement -f <SLUG>_PLAN.md [--phase N] [--all] [-note <note>]
 ```
 
-**Analysis mode** — creates one task in the nearest `.workflows/todos.md`, generates a plan with
-complete code blocks (no `// ... existing code`), then implements it in a clean main context.
+Executes the plan. It creates one task per phase across the packages the plan names, copies each
+phase plan to `{pkg}/.workflows/plan/{TaskID}.md` **unchanged**, applies one phase, runs the
+plan's verification commands, and hands off to `completion-handler`.
 
-**Roadmap mode** — creates one task per phase across the packages the roadmap names, **adopts**
-the phase plans instead of regenerating them (regenerating would discard the reconciliation),
-and implements one phase. It stops there by default so the next phase starts in a fresh
-session; `--all` continues in one session. Phases are blocked until their dependencies complete.
+It stops after one phase by default so the next starts in a fresh context; `--all` continues in
+one session. Phases stay blocked until their dependencies complete.
 
-Requires `{path}/.workflows/todos.md`; run `/update-todos {path} --init` if missing.
+**It writes no plans.** Handed a `*_code_analyzer.md` it refuses and names `/analyze` — an
+analysis describes the code, and filling the gap here is what this command deliberately doesn't
+do. Same rule when the code has drifted from what a plan quotes: small drift is followed and
+noted, large drift stops with `Re-run /analyze`.
 
 ### `/do`
 
 ```bash
-/do P0-DB-A236
-/do P1-CB-B789 --note="also handle bulk operations"
+/do P2-CL-A001                                    # EASY — brief from the task text
+/do P1-DB-A236 --note="also handle the bulk path"
+/do P1-TC-A002                                    # a plan-set phase — adopts its plan
 ```
 
 Five subagents around one main-context step: `task-locator` finds the TaskID, `context-loader`
-condenses the docs, `plan-generator` emits a YAML brief, **the main context writes the code**,
+condenses the docs, `plan-generator` emits a routing brief, **the main context writes the code**,
 and `completion-handler` updates `todos.md` before chaining `readme-updater` and `pusher`.
 
 The main context never reads `todos.md`, `package_readme.md`, `analysis_report.md`, or plan
 files, and never runs git — that isolation is the point of the design.
 
-If the task's plan file already exists, `plan-generator` adopts it rather than re-planning.
-HARD tasks get their own branch, except when already on a roadmap branch.
+`plan-generator` adopts the task's plan file when there is one and builds a brief from the task
+text when there isn't. A **HARD task with no plan file is refused**, pointing at `/analyze`:
+that's exactly the case where a real plan matters.
 
 ### `/dbg`
 
@@ -174,8 +182,8 @@ Dispatched by `subagent_type`. `haiku` for mechanical work, `opus` where judgmen
 |---|---|---|
 | `task-locator` | haiku | find a TaskID across every `todos.md`, return metadata |
 | `context-loader` | opus | read package docs, return a condensed packet |
-| `plan-generator` | opus | YAML execution brief; plan file + branch for HARD tasks |
-| `phase-planner` | opus | plan one roadmap phase, in parallel with the others |
+| `plan-generator` | opus | routing brief — adopts a plan file, never writes one |
+| `phase-planner` | opus | plan one phase, in parallel with the others |
 | `plan-reconciler` | opus | resolve cross-phase conflicts by editing the plans |
 | `completion-handler` | opus | update `todos.md`, then chain readme-updater and pusher |
 | `readme-updater` | opus | update the most-impacted `package_readme.md`, creating it if absent |
@@ -307,18 +315,22 @@ Deletes Vercel Blob objects under `shots/` that no database row references, for 
 ### Bug → fix
 
 ```bash
-# Session 1
+# Session 1 — investigate and plan
 /analyze aggregation_mode bug
 Context: Citations missing in aggregated responses
 Files:
 @tools/toolcore/caller.go
-# → 20250108-164512-A3F7_code_analyzer.md
+# → worktree feature/fix-citation-aggregation, the analysis doc,
+#   FIX_CITATION_AGGREGATION_PLAN.md, and one phase plan
 
-# Session 2
-/implement -f 20250108-164512-A3F7_code_analyzer.md -p chatbot/processing
+# Session 2 — execute
+cd ~/.worktrees/<repo>/fix-citation-aggregation
+/implement -f FIX_CITATION_AGGREGATION_PLAN.md
 ```
 
-Session 1's exploration tokens are thrown away; session 2 pays only for implementation.
+Session 1's exploration tokens are thrown away; session 2 pays only for implementation, since
+the plan already says exactly what to change. Pass `--no-worktree` to plan against the branch
+you're on.
 
 ### Large refactor or purge
 
@@ -326,16 +338,16 @@ Session 1's exploration tokens are thrown away; session 2 pays only for implemen
 # Session 1 — planning
 /analyze
 <what you want changed, and why it's worth doing>
-# → worktree feature/<slug>, an analysis doc, PURGE_..._ROADMAP.md,
-#   and .workflows/roadmap/<slug>/phase-N.md for each phase, reconciled
+# → worktree feature/<slug>, an analysis doc, PURGE_..._PLAN.md, and
+#   .workflows/plan/<slug>/phase-N.md for each phase, reconciled against each other
 
 # Session 2..N — one phase each
 cd ~/.worktrees/<repo>/<slug>
-/implement -f PURGE_..._ROADMAP.md      # phase 1, creates a task per phase
+/implement -f PURGE_..._PLAN.md         # phase 1, creates a task per phase
 /do P1-TC-A002                          # phase 2, in a fresh session
 ```
 
-Read the roadmap's **Open Questions** before starting — reconciliation puts anything it
+Read the plan index's **Open Questions** before starting — reconciliation puts anything it
 couldn't resolve without guessing there. Merge the branch once as a whole.
 
 ### Go debugging with `/dbg`
@@ -384,12 +396,16 @@ lets the loop close with nobody watching.
 
 ## `/implement` vs `/do`
 
+Neither writes plans. `/analyze` does, and both of these execute what it wrote.
+
 | | `/implement` | `/do` |
 |---|---|---|
-| Input | analysis or roadmap file | TaskID from `todos.md` |
-| Creates the task | yes | no — it already exists |
-| Creates the plan | yes (or adopts the roadmap's) | only for HARD tasks |
-| Use when | starting new work from `/analyze` | the work is already tracked |
+| Input | `<SLUG>_PLAN.md` | TaskID from `todos.md` |
+| Creates the tasks | yes — one per phase | no, it already exists |
+| Where the plan comes from | the plan set, copied unchanged | the task's plan file, or a brief from its text |
+| Use when | starting the work `/analyze` planned | picking up a task that's already tracked |
+
+`/do` is also the way to run phase 2 onward of a plan set, one per session.
 
 ---
 
@@ -398,11 +414,11 @@ lets the loop close with nobody watching.
 ```
 claude-commands/
 ├── commands/                 # slash commands
-│   ├── analyze.md            # archaeology; roadmap mode for large work
+│   ├── analyze.md            # archaeology + the implementation plan
 │   ├── analyze-package.md    # package quality analysis
 │   ├── dbg.md                # Delve batch workflows
-│   ├── do.md                 # execute a task by TaskID
-│   ├── implement.md          # analysis or roadmap → tasks → code
+│   ├── do.md                 # execute one task by TaskID
+│   ├── implement.md          # plan → tasks → code (no planning of its own)
 │   ├── postmortem.md
 │   ├── reorganize-todos.md
 │   ├── token-maxxing.md
@@ -440,13 +456,14 @@ your-project/
 │   ├── analysis_report.md    # quality analysis
 │   ├── plan/{TaskID}.md
 │   └── postmortem/{TaskID}.md
-├── .workflows/roadmap/<slug>/phase-N.md   # repo root, /analyze roadmap mode
+├── .workflows/plan/<slug>/phase-N.md      # repo root, one per phase
 ├── 20250108-164512-A3F7_code_analyzer.md  # repo root
-└── PURGE_..._ROADMAP.md                   # repo root
+└── PURGE_..._PLAN.md                      # repo root, the plan index
 ```
 
 TaskIDs are `P{0-3}-{SCOPE}-{ID}` (e.g. `P0-DB-A236`), unique across every `todos.md` in the
-repo. Tasks are tagged EASY / NORMAL / HARD; HARD triggers branch creation in `/do`.
+repo. Tasks are tagged EASY / NORMAL / HARD; EASY and NORMAL can run from the task description
+alone, HARD requires a plan file.
 
 ---
 

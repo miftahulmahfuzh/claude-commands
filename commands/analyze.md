@@ -1,15 +1,15 @@
 # Code Analyzer Command
 
-Read-only code archaeology. Traces dataflow, documents structure, and — when the work is too
-large for one commit — decomposes it into phases and produces a reconciled set of
-implementation plans.
+Investigate, then plan. `/analyze` traces dataflow, documents structure, and **always ends with
+a complete implementation plan** — one phase for small work, several reconciled phases for
+large. It is the only command that writes implementation plans.
 
-**`/analyze` never edits source code.** It only writes markdown.
+**`/analyze` never edits source code.** It reads code and writes markdown.
 
 ## Usage
 
 ```bash
-/analyze [target] [bug|feature|update|refactor] [--worktree|--no-worktree] [--phases N]
+/analyze [target] [bug|feature|update|refactor] [--phases N] [--no-worktree]
 <free-form description of what you want, in your own words>
 ```
 
@@ -23,8 +23,8 @@ and the type from what the user wrote.
   - `feature` — new module, architecture, capability
   - `update` — struct/API changes to something that exists
   - `refactor` — restructuring, purging, consolidating, renaming
-- `--worktree` / `--no-worktree` — force or forbid worktree creation (see Step 5)
-- `--phases N` — force exactly N phases instead of letting Step 4 decide
+- `--phases N` — force exactly N phases instead of letting Step 6 decide
+- `--no-worktree` — plan against the current branch instead of cutting a worktree
 
 **Example — terse, classic form:**
 ```bash
@@ -51,33 +51,40 @@ paragraphs are requirements input — preserve them verbatim (Step 0).
 
 ---
 
-## Two Modes
+## What You Produce
 
-Step 4 picks one. Everything before Step 4 is identical for both.
+Every run, without exception:
 
-| | **SINGLE** | **ROADMAP** |
+| Artifact | Location | What it is |
 |---|---|---|
-| When | fits in one reviewable change | multi-package, ordered, or too big for one commit |
-| Worktree | no (unless `--worktree`) | yes |
-| Writes | `<session-id>_code_analyzer.md` | analysis doc **+** `<SLUG>_ROADMAP.md` **+** one plan file per phase |
-| Planning | none — analysis only | swarm of phase planners, then a reconciliation pass |
-| Next command | `/implement -f <analysis>.md` | `/implement -f <SLUG>_ROADMAP.md` |
+| `<session-id>_code_analyzer.md` | repo/worktree root | the analysis — **descriptive**, what exists today |
+| `<SLUG>_PLAN.md` | repo/worktree root | the plan index — phases, order, invariants, open questions |
+| `.workflows/plan/<slug>/phase-{N}.md` | repo/worktree root | one implementation plan per phase, with complete code |
+
+The only thing that varies is **N**, the number of phases (1 to 6). A one-phase plan set has a
+short index and a single plan file; nothing else about the shape changes.
+
+`/implement -f <SLUG>_PLAN.md` executes what you wrote. **It does no planning of its own**, and
+neither does `/do` — a plan you leave vague is a plan nobody will fill in later.
 
 ---
 
 ## Your Role
 
-**During analysis (Steps 0–3)** you are an objective observer. You trace dataflow and document
-structure. You do **not** suggest improvements, propose implementations, make value judgments,
-or optimize anything. The analysis document records what *is*.
+Two jobs, kept separate in the artifacts:
 
-**During roadmap mode (Steps 7–9)** you plan — that is the deliverable. The separation still
-holds: the analysis document stays descriptive, the plan files prescribe. Never mix them, and
-never touch source code in either.
+**Analysis (Steps 0–3)** — you are an objective observer. You trace dataflow and document
+structure. No improvements, no proposals, no value judgments. The analysis document records
+what *is*.
+
+**Planning (Steps 5–9)** — you prescribe. Complete code, ordered phases, verification commands.
+
+Never mix them in one file: the analysis document stays descriptive, the plan files prescribe.
+Neither touches source code.
 
 ---
 
-## Analysis Process
+## Process
 
 ### Step 0: Capture User Context
 
@@ -100,10 +107,10 @@ Start with all `@` files.
 - Follow imports to understand relationships
 - Document dependency chains
 
-For a purge/refactor, the exploration goal is a **complete reference list**: every call site,
+For a purge or refactor, the exploration goal is a **complete reference list**: every call site,
 every implementer of the interface, every config key, every test, every doc mention. Grep for
-the type and function names, not just the ones in the `@` files. An incomplete reference list
-is the main way a phased purge fails halfway through.
+the type and function names, not just the ones in the `@` files. An incomplete reference list is
+the main way a phased change fails halfway through.
 
 For each file you encounter, document:
 
@@ -129,31 +136,10 @@ For each file you encounter, document:
 
 This bridges raw input and implementation.
 
-### Step 4: Scope Triage — SINGLE or ROADMAP
+### Step 4: Worktree Setup
 
-Decide from the evidence gathered in Step 2, not from the length of the user's prompt.
-
-Choose **ROADMAP** if **any** of these hold:
-- The change spans **3+ packages** or **~15+ files**
-- There is a **required order** (something must be removed before something else can be)
-- Intermediate states need to stay shippable (each step must build and pass tests on its own)
-- The work mixes distinct kinds of change — e.g. delete an abstraction *and* migrate its callers *and* clean up config/docs
-- The user asked for phases, a roadmap, or a plan-per-phase
-
-Otherwise choose **SINGLE**.
-
-`--phases N` forces ROADMAP with exactly N phases. `--phases 1` forces SINGLE.
-
-State the decision to the user in one line with the reason before proceeding:
-`Scope: ROADMAP (4 phases) — 23 files across 5 packages, deletion order matters.`
-
-**SINGLE →** skip Step 5, write the analysis document (Step 6), then stop at Step 10.
-**ROADMAP →** set up the worktree first (Step 5), then write everything inside it.
-
-### Step 5: Worktree Setup (ROADMAP only — before writing anything)
-
-Roadmap work lands over several sessions, so the plans and the code they describe belong on
-one branch from the start. Create it before writing any artifact. Skip if `--no-worktree`.
+Cut the branch before writing anything. Plans quote code as it exists on a specific tree; if the
+tree moves under them they go stale, and `/implement` applies them as written.
 
 ```bash
 ROOT=$(git rev-parse --show-toplevel)
@@ -174,33 +160,47 @@ Choosing `<BASE>`:
 Then:
 - All artifacts are written under the worktree root, by absolute path. The session's own cwd
   does not change — every subagent must be told the worktree root explicitly.
-- If the repo is not a git repo, or `git worktree add` fails, degrade to writing in place and
-  say so plainly. Do not stop.
+- **Skip on `--no-worktree`**, or if this is not a git repo, or if `git worktree add` fails.
+  Write in place, and say plainly which branch the plans are pinned to.
 - If already inside a worktree that isn't the default branch, reuse it — do not nest.
 
-### Step 6: Write the Analysis Document
+### Step 5: Write the Analysis Document
 
-Create `<session-id>_code_analyzer.md` at the repository root — inside the worktree root if
-Step 5 created one. Template in **Analysis Document Template** below.
+Create `<session-id>_code_analyzer.md` at the worktree root. Template below.
 
-### Step 7: Decompose Into Phases (ROADMAP only)
+### Step 6: Decompose Into Phases
+
+Decide N from the evidence in Step 2, not from the length of the user's prompt.
 
 A phase is a unit that:
 1. **Builds and passes tests on its own.** No phase leaves the tree broken for the next one.
 2. **Is reviewable in one sitting** — roughly one package, or one kind of change.
 3. **Has explicit dependencies** — states which earlier phases it requires.
 
-Order for a removal/purge is usually: retire call sites → collapse the abstraction → delete the
-now-dead types/config → clean up tests and docs. Order for a migration is usually the reverse:
+**N = 1** when the work fits in one reviewable change. This is the common case for a bug fix,
+and it is not a lesser mode — it still gets a plan index and a full plan file.
+
+**N > 1** when any of these hold:
+- The change spans 3+ packages or ~15+ files
+- There is a required order (something must be removed before something else can be)
+- Intermediate states need to stay shippable
+- The work mixes distinct kinds of change — delete an abstraction *and* migrate its callers
+  *and* clean up config and docs
+
+Order for a removal is usually: retire call sites → collapse the abstraction → delete the
+now-dead types and config → clean up tests and docs. For a migration it is the reverse:
 introduce the new thing → move callers → delete the old thing.
 
 Cap at **6 phases**. If the work needs more, group related ones and say what you grouped.
-If the decomposition comes out as 1 phase, downgrade to SINGLE — say so and continue.
+`--phases N` overrides the decision.
 
-Write a **draft** `<SLUG>_ROADMAP.md` at the worktree root now, with the phase table filled in
-and each phase's boundary stated. This draft is the shared contract the planners plan against.
+State it in one line before proceeding:
+`Plan: 4 phases — 23 files across 5 packages, deletion order matters.`
 
-### Step 8: Swarm — One Planner Per Phase (ROADMAP only)
+Then write a **draft** `<SLUG>_PLAN.md` at the worktree root with the phase table filled in and
+each phase's boundary stated. This draft is the contract the planners plan against.
+
+### Step 7: Write the Phase Plans
 
 Dispatch **all N phase planners in a single message** so they run concurrently
 (`subagent_type: phase-planner`, see `agents/phase-planner.md`). Wait for all of them.
@@ -209,27 +209,31 @@ Each planner gets:
 
 ```yaml
 worktree_root: "{absolute path}"
-roadmap_file: "{worktree_root}/{SLUG}_ROADMAP.md"    # the draft
+plan_index: "{worktree_root}/{SLUG}_PLAN.md"          # the draft
 analysis_file: "{worktree_root}/{session-id}_code_analyzer.md"
 phase_number: N
 phase_title: "{title}"
 phase_scope: "{what this phase owns — and what it must NOT touch}"
 depends_on: [{earlier phase numbers}]
-other_phases:                                         # boundaries only, not full plans
+other_phases:                                          # boundaries only, not full plans
   - number: 1
     title: "..."
     owns: "..."
-output_file: "{worktree_root}/.workflows/roadmap/{SLUG}/phase-{N}.md"
+output_file: "{worktree_root}/.workflows/plan/{slug}/phase-{N}.md"
 ```
 
-Planners read files themselves — pass paths, never file contents. They write their plan file
-and return a short summary plus their interface contract. They do not edit code.
+Planners read files themselves — pass paths, never file contents. They write their plan file and
+return a short summary plus their interface contract. They do not edit code.
 
-### Step 9: Reconcile (ROADMAP only)
+With N = 1 this is one planner. Dispatch it the same way.
+
+### Step 8: Reconcile (N > 1 only)
+
+With one phase there is nothing to reconcile — skip to Step 9.
 
 The planners worked in parallel and could not see each other's output, so their plans will
-disagree. Dispatch **one** `plan-reconciler` subagent (see `agents/plan-reconciler.md`) with
-the worktree root, the roadmap path, the analysis path, and all N plan file paths.
+disagree. Dispatch **one** `plan-reconciler` subagent (see `agents/plan-reconciler.md`) with the
+worktree root, the plan index path, the analysis path, and all N plan file paths.
 
 It checks, and **edits the plan files in place** to fix:
 - **Deleted-then-used** — a symbol deleted in phase K still referenced by a later phase
@@ -240,12 +244,20 @@ It checks, and **edits the plan files in place** to fix:
 - **Gap** — an impact point in the analysis that no phase owns
 - **Broken-build phase** — a phase that leaves the tree uncompilable
 
-Then it rewrites `<SLUG>_ROADMAP.md` from draft to final and appends a **Reconciliation Log**
-recording each inconsistency and its resolution.
+Then it rewrites `<SLUG>_PLAN.md` from draft to final and appends a **Reconciliation Log**.
 
-If its edits changed any interface contract, run it **once** more to verify. Cap at 2 rounds;
-if contradictions survive, record them under **Open Questions** in the roadmap rather than
-inventing an answer.
+If its edits changed any interface contract, run it **once** more to verify. Cap at 2 rounds; if
+contradictions survive, record them under **Open Questions** rather than inventing an answer.
+
+### Step 9: Finalize the Plan Index
+
+For N = 1, promote the draft yourself: fill the phase row from the planner's return value, set
+`**Status:** planned`, and leave the Reconciliation Log with the note
+`single phase — nothing to reconcile`.
+
+Before terminating, verify: every phase has a plan file, every plan file's code blocks are
+complete, and every impact point in the analysis is owned by some phase. Nothing downstream
+will fill a gap you leave.
 
 ### Step 10: Terminate
 
@@ -261,10 +273,10 @@ Create `<session-id>_code_analyzer.md`:
 # Code Analysis: <Target>
 
 **Type:** [Bug Investigation | Feature Implementation | Feature Update | Refactoring]
-**Scope:** [SINGLE | ROADMAP — N phases]
 **Date:** <timestamp>
 **Session ID:** <id>
-**Worktree:** <path + branch, or "none">
+**Plan:** `<SLUG>_PLAN.md` (<N> phase(s))
+**Worktree:** <path + branch, or "none — planned against <branch>">
 
 ---
 
@@ -353,26 +365,27 @@ this is what the phase decomposition is built from.>
 ---
 
 ## Impact Points (files that WILL need changes)
-1. `file1.go` — why
+1. `file1.go` — why, and which phase owns it
 
-**Analysis complete. No implementation proposed.**
+**This document describes. The plan files prescribe.**
 ```
 
 ---
 
-## Roadmap Template
+## Plan Index Template
 
-Create `<SLUG>_ROADMAP.md` at the worktree root (`SLUG` in SCREAMING_SNAKE, e.g.
-`PURGE_DIRECT_STREAMING_TOOL_ROADMAP.md`):
+Create `<SLUG>_PLAN.md` at the worktree root (`SLUG` in SCREAMING_SNAKE, e.g.
+`PURGE_DIRECT_STREAMING_TOOL_PLAN.md`):
 
 ```markdown
-# Roadmap: <Title>
+# Plan: <Title>
 
 **Slug:** <kebab-slug>
 **Date:** <timestamp>
 **Analysis:** `<session-id>_code_analyzer.md`
 **Worktree:** `<path>`
 **Branch:** `feature/<slug>` (base: `<base ref>` @ `<short sha>`)
+**Phases:** <N>
 **Status:** planned
 
 ---
@@ -394,18 +407,17 @@ Rules every phase must hold — e.g. "the tree builds and tests pass at the end 
 
 ## Phases
 
-| # | Title | Package | Files | Depends on | Difficulty | Plan |
-|---|-------|---------|-------|-----------|------------|------|
-| 1 | ... | `tools/toolcore` | 6 | — | NORMAL | `.workflows/roadmap/<slug>/phase-1.md` |
-| 2 | ... | `chatbot/bowl` | 4 | 1 | HARD | `.workflows/roadmap/<slug>/phase-2.md` |
+| # | Title | Package | Files | Depends on | Difficulty | Plan | TaskID |
+|---|-------|---------|-------|-----------|------------|------|--------|
+| 1 | ... | `tools/toolcore` | 6 | — | NORMAL | `.workflows/plan/<slug>/phase-1.md` | — |
+| 2 | ... | `chatbot/bowl` | 4 | 1 | HARD | `.workflows/plan/<slug>/phase-2.md` | — |
+
+<The TaskID column is filled in by /implement when it creates the tasks.>
 
 ### Phase 1 — <Title>
 **Owns:** <what this phase changes>
 **Does not touch:** <boundary>
 **Exit criteria:** <what is true when it is done>
-
-### Phase 2 — <Title>
-...
 
 ## Reconciliation Log
 
@@ -413,9 +425,12 @@ Rules every phase must hold — e.g. "the tree builds and tests pass at the end 
 |---|---|---|
 | `StreamHandler` deleted in P1 but called in P3 | 1, 3 | deletion moved to P3; P1 only drops call sites |
 
+<For a single-phase plan: "single phase — nothing to reconcile">
+
 ## Open Questions
 
-<Contradictions reconciliation could not resolve. Empty is the good outcome.>
+<Contradictions reconciliation could not resolve. Empty is the good outcome —
+/implement stops and asks about anything left here.>
 
 ## Rollback
 
@@ -423,7 +438,7 @@ Rules every phase must hold — e.g. "the tree builds and tests pass at the end 
 
 ## Next
 
-    /implement -f <SLUG>_ROADMAP.md
+    /implement -f <SLUG>_PLAN.md
 ```
 
 ---
@@ -451,30 +466,20 @@ Get the date from `date +%Y%m%d-%H%M%S` — never guess it.
 
 ## Termination
 
-**SINGLE mode:**
-```bash
-Analysis written to <session-id>_code_analyzer.md
-Scope: SINGLE
-Token count: ~<estimate>
-
-Run in a new session:
-/implement -f <session-id>_code_analyzer.md
-```
-
-**ROADMAP mode:**
 ```bash
 Analysis written to <worktree>/<session-id>_code_analyzer.md
-Roadmap written to <worktree>/<SLUG>_ROADMAP.md
-Scope: ROADMAP — <N> phases, <M> inconsistencies reconciled
+Plan written to     <worktree>/<SLUG>_PLAN.md   (<N> phase(s)<, M inconsistencies reconciled>)
 
 Worktree: <path>
 Branch:   feature/<slug>  (base <ref> @ <sha>)
 
 Phases:
-  1. <title>  -> .workflows/roadmap/<slug>/phase-1.md
-  2. <title>  -> .workflows/roadmap/<slug>/phase-2.md
+  1. <title>  -> .workflows/plan/<slug>/phase-1.md
+  2. <title>  -> .workflows/plan/<slug>/phase-2.md
+
+<If Open Questions is non-empty, list them here — /implement will stop and ask.>
 
 Run from the worktree, in a new session:
 cd <worktree>
-/implement -f <SLUG>_ROADMAP.md
+/implement -f <SLUG>_PLAN.md
 ```

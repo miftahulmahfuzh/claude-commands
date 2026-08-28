@@ -25,6 +25,11 @@ You find tasks by TaskID across a repository. Return data only — do not modify
    - `type` — from `**Type**:` line (Bug | Feature | Refactor | Docs)
    - `title` — heading text after the TaskID
    - `context` — first ~3 lines of body text
+   - `plan_file` — from the `**Plan**:` line; resolve it relative to `package_path` and report
+     whether the file actually exists on disk. Downstream this decides whether the plan is
+     adopted or a brief is built, so an unverified path is worse than none.
+   - `plan_set` — from the `**Plan Set**:` line, if present (the plan index and phase number)
+   - `depends_on` — TaskIDs from the `**Depends on**:` line, if present
 
 ## Output
 ```yaml
@@ -36,6 +41,9 @@ task_metadata:
   type: "Bug|Feature|Refactor|Docs"
   title: "{title}"
   context: "{context}"
+  plan_file: "{path}" | ""          # only when it exists on disk
+  plan_set: "{SLUG}_PLAN.md phase {N}" | ""
+  depends_on: ["{TaskID}"]
 ```
 
 On error:

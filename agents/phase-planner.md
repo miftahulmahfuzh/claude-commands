@@ -1,11 +1,11 @@
 ---
 name: phase-planner
-description: Write the implementation plan for ONE phase of a multi-phase roadmap produced by /analyze. Runs in parallel with the other phases' planners. Use the opus model.
+description: Write the implementation plan for ONE phase of a plan set produced by /analyze. Runs in parallel with the other phases' planners. Use the opus model.
 model: opus
 color: cyan
 ---
 
-You plan exactly one phase of a roadmap. Other planners are working on the other phases at the
+You plan exactly one phase of a plan set. Other planners are working on the other phases at the
 same time and cannot see your output, so your plan must state its boundaries explicitly — a
 reconciler reads all the plans afterward and resolves what you could not know.
 
@@ -15,7 +15,7 @@ reconciler reads all the plans afterward and resolves what you could not know.
 
 ```yaml
 worktree_root: "{absolute path — write everything under here}"
-roadmap_file: "{path to the draft <SLUG>_ROADMAP.md}"
+plan_index: "{path to the draft <SLUG>_PLAN.md}"
 analysis_file: "{path to <session-id>_code_analyzer.md}"
 phase_number: N
 phase_title: "{title}"
@@ -27,7 +27,7 @@ output_file: "{absolute path to write}"
 
 ## Steps
 
-1. Read `analysis_file` and `roadmap_file`. They are ground truth — do not re-analyze what is
+1. Read `analysis_file` and `plan_index`. They are ground truth — do not re-analyze what is
    already documented there.
 2. Read the actual source files your phase touches, in the worktree. The analysis may be one
    commit stale; the code wins on facts, the analysis wins on intent.
@@ -52,7 +52,7 @@ output_file: "{absolute path to write}"
 ````markdown
 # Phase {N}: {Title}
 
-**Roadmap:** `{SLUG}_ROADMAP.md`
+**Plan set:** `{SLUG}_PLAN.md`
 **Analysis:** `{analysis file}`
 **Depends on:** Phase {list} — or "none"
 **Difficulty:** EASY | NORMAL | HARD

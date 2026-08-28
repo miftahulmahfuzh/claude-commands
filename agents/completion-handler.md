@@ -9,7 +9,7 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
 
 ## Input
 - `completion_report` — `{ task_id, package_path, status, modified_files, error_message? }`
-- `roadmap` — optional, `{ file, phase, next_task_id }` when the task is one phase of a roadmap
+- `plan_set` — optional, `{ file, phase, next_task_id }` when the task is one phase of a plan set
 
 ## Steps
 
@@ -29,12 +29,12 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
    - `package_readme.md`: **do not edit here** — that's readme-updater's job in step 3.
    Skip silently if nothing relevant.
 
-2b. **If `roadmap` is present**:
-   - Tick the phase's row in the roadmap file's phase table and set `**Status:**` to
+2b. **If `plan_set` is present**:
+   - Tick the phase's row in the plan index (`{SLUG}_PLAN.md`) and set `**Status:**` to
      `phase {N}/{total} complete` (or `complete` on the last phase).
    - Find `next_task_id` in its own package's todos.md and flip `- **Status**: blocked` to
      `open`. Its plan assumed this phase had landed, and it has.
-   - Do not merge the branch. A roadmap is reviewed and merged as a whole.
+   - Do not merge the branch. A plan set is reviewed and merged as a whole.
 
 3. **Dispatch `readme-updater`** (Task tool, `subagent_type: readme-updater`):
    Input `{ modified_files, task_id, package_path }`. Wait for completion. Treat its writes as part of the same commit.
@@ -42,7 +42,7 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
 4. **Dispatch `pusher`** (Task tool, `subagent_type: pusher`):
    Pusher stages, commits with a conventional-commit message, pushes.
    - EASY/NORMAL: target branch is current branch (typically `main`).
-   - HARD: target branch is the feature branch from plan-generator. Do NOT merge to main.
+   - Plan-set phases: target branch is the plan set's branch. Do NOT merge to main.
 
 5. **Final report**:
    ```
@@ -53,7 +53,7 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
    💾 Commit: {hash}
    🌿 Branch: {branch}
    ```
-   For HARD, append merge instructions referencing the feature branch and plan file.
+   On the last phase of a plan set, append merge instructions referencing its branch.
 
 ## Rules
 - NEVER run `git add/commit/push` directly. The pusher subagent owns all git side effects.
