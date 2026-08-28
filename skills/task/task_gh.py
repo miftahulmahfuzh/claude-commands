@@ -10,6 +10,8 @@ Subcommands:
   list [--status NAME]            cards on the board
   resolve REF [--repo OWNER/REPO] one card: body, every comment in order, status, plan block
   create --repo OWNER/REPO TITLE  open an issue, put it on the board, set the stage
+  create ... --parent REF         the same, as a sub-issue: one phase of a plan set
+  subissue PARENT CHILD           link (or --remove) an existing issue under a parent
   promote REF --repo OWNER/REPO   convert a draft item into a real issue
   status REF NAME                 set the Status field (and reopen a closed issue)
   comment REF TEXT                add a comment (issues only)
@@ -21,6 +23,9 @@ Subcommands:
   land REF                        sync with the base, emit the repo's CI gate; exit 2 on conflict
   land REF --after-gate           the gate passed: push, merge the PR, complete the card
   finish REF                      Completed: needs a merged linked PR; leaves it closed
+  finish REF --child-of P --commit SHA
+                                  Completed for one phase: the parent owns the PR, so the
+                                  evidence is a commit on the parent's branch
 
 REF forms: 14 | owner/repo#14 | https://github.com/owner/repo/issues/14 | PVTI_xxx
            | draft:<substring of the title>
@@ -49,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from taskcore import (  # noqa: E402
     PLAN_CLOSE,
     PLAN_OPEN,
+    STAGE_ALIASES,
     TaskError,
     map_stages,
     parse_plan_block,
@@ -464,8 +470,215 @@ def cmd_resolve(args):
     # Round two: a plan is already recorded and something was said after it.
     out["round"] = len(out["plans"]) + 1 if out["plans"] else 1
     out["commentsAfterLastPlan"] = len(out["comments"])
+
+    if item["kind"] == "issue" and item["repo"] and item["number"]:
+        out.update(family(items, item["repo"], item["number"]))
+
     print(json.dumps(out, indent=2))
     return 0
+
+
+def family(items, repo, number):
+    """Where this card sits in a plan set: parent, siblings, children, what blocks it.
+
+    A phase card is useless on its own -- the branch, the worktree and the pull request
+    all belong to its parent -- so resolving one has to answer "whose phase am I, and
+    which phase am I" in the same breath, or the session cuts its own branch off the
+    base and implements a plan against code that is not there.
+    """
+    tree = sub_issue_tree(repo, number)
+    out = {
+        "nodeId": tree["id"],
+        "subIssues": tree["summary"],
+        "children": annotate_children(items, tree["children"], repo),
+        "parent": None,
+        "position": None,
+        "blockedBy": [],
+        # Who opens and merges the pull request. A phase never does: its work lands as a
+        # commit on the parent's branch, and the parent's PR carries the whole plan set.
+        "ownsPullRequest": tree["parent"] is None,
+    }
+    if not tree["parent"]:
+        return out
+
+    parent = dict(tree["parent"])
+    parent_repo = parent.get("repo") or repo
+    ptree = sub_issue_tree(parent_repo, parent["number"])
+    siblings = annotate_children(items, ptree["children"], parent_repo)
+    on_board = next(
+        (i for i in items
+         if i["kind"] == "issue" and i["repo"] == parent_repo and i["number"] == parent["number"]),
+        None,
+    )
+    body = gh("issue", "view", str(parent["number"]), "--repo", parent_repo,
+              "--json", "body", as_json=True).get("body") or ""
+    parent.update({
+        "status": on_board["status"] if on_board else None,
+        "onBoard": on_board is not None,
+        # The parent's plan block is where the plan index and the branch are recorded,
+        # and it is what a phase session needs before it touches anything.
+        "plans": parse_plan_block(body),
+        "children": siblings,
+    })
+    out["parent"] = parent
+    out["position"] = next((c["position"] for c in siblings if c["number"] == number), None)
+    out["blockedBy"] = [
+        {"number": c["number"], "title": c["title"],
+         "position": c["position"], "stage": c["status"] or c["state"]}
+        for c in blocking_siblings(siblings, number)
+    ]
+    return out
+
+
+# ------------------------------------------------------------------- sub-issues
+
+# A plan set from /analyze is one ordered run of phases, and the board has to be able
+# to say which phase is being worked without inventing a second numbering scheme.
+# GitHub's native sub-issues already do that: every phase is a real issue with its own
+# number, so `/task 13` addresses one directly, while `parent`, `subIssues` and
+# `subIssuesSummary` carry the order and the progress the parent card shows.
+#
+# The one rule that is not GitHub's: the PARENT owns the worktree, the branch and the
+# pull request. Phase 2 builds on phase 1's work, which is not on origin/main yet, so a
+# child that cut its own branch off the base would be broken by construction. That is
+# why a phase completes on a commit -- see `finish --child-of` -- and only the parent
+# completes on a merge.
+
+_SUBTREE_QUERY = (
+    "query($owner:String!,$name:String!,$number:Int!){"
+    "repository(owner:$owner,name:$name){issue(number:$number){"
+    "id number title url state "
+    "parent{number title url state repository{nameWithOwner}} "
+    "subIssues(first:100){nodes{number title url state repository{nameWithOwner}}} "
+    "subIssuesSummary{total completed percentCompleted}}}}"
+)
+
+# Every stage name that means "done", including the backends' shipped defaults. Shared
+# with taskcore so a board still using GitHub's "Done" is read correctly.
+_DONE_NAMES = {a.strip().lower() for a in STAGE_ALIASES["Completed"]}
+
+
+def _node_repo(node, default_repo):
+    return normalise_repo((node.get("repository") or {}).get("nameWithOwner")) or default_repo
+
+
+def sub_issue_tree(repo, number):
+    """This issue's node id, its parent, and its sub-issues in GitHub's own order.
+
+    That order is the order the sub-issues were added, which is the phase order
+    `create-task` created them in -- so position 1 is phase 1. Never sort it: sorting
+    by number breaks the moment a phase is added late, and `reprioritizeSubIssue` is
+    what moves a phase deliberately.
+    """
+    owner, name = repo.split("/", 1)
+    data = gh(
+        "api", "graphql",
+        "-f", f"query={_SUBTREE_QUERY}",
+        "-f", f"owner={owner}",
+        "-f", f"name={name}",
+        "-F", f"number={number}",
+        as_json=True,
+    )
+    issue = ((data.get("data") or {}).get("repository") or {}).get("issue")
+    if not issue:
+        raise TaskError(f"GitHub returned no issue #{number} in {repo}.")
+
+    def shape(node, position=None):
+        out = {
+            "number": node.get("number"),
+            "title": node.get("title"),
+            "url": node.get("url"),
+            "state": node.get("state"),
+            "repo": _node_repo(node, repo),
+        }
+        if position is not None:
+            out["position"] = position
+        return out
+
+    nodes = (issue.get("subIssues") or {}).get("nodes") or []
+    return {
+        "id": issue.get("id"),
+        "number": issue.get("number"),
+        "title": issue.get("title"),
+        "url": issue.get("url"),
+        "state": issue.get("state"),
+        "repo": repo,
+        "parent": shape(issue["parent"]) if issue.get("parent") else None,
+        "children": [shape(n, i + 1) for i, n in enumerate(nodes) if n],
+        "summary": issue.get("subIssuesSummary") or {"total": 0, "completed": 0},
+    }
+
+
+def issue_node_id(repo, number):
+    return gh("issue", "view", str(number), "--repo", repo, "--json", "id", as_json=True)["id"]
+
+
+def add_sub_issue(parent_repo, parent_number, child_url):
+    """Attach CHILD under PARENT, then read the parent back to prove it took.
+
+    Same reasoning as `create`'s board read-back: a mutation that returned 200 is not
+    evidence that the relationship is there to be seen by the next session.
+    """
+    parent = sub_issue_tree(parent_repo, parent_number)
+    if not parent["id"]:
+        raise TaskError(f"Could not read the node id of {parent_repo}#{parent_number}.")
+    mutation = (
+        "mutation($p:ID!,$u:String!){addSubIssue(input:{issueId:$p,subIssueUrl:$u}){"
+        "subIssue{number url} issue{number subIssuesSummary{total completed}}}}"
+    )
+    gh("api", "graphql", "-f", f"query={mutation}",
+       "-f", f"p={parent['id']}", "-f", f"u={child_url}", as_json=True)
+    return sub_issue_tree(parent_repo, parent_number)
+
+
+def remove_sub_issue(parent_repo, parent_number, child_repo, child_number):
+    parent_id = issue_node_id(parent_repo, parent_number)
+    child_id = issue_node_id(child_repo, child_number)
+    mutation = (
+        "mutation($p:ID!,$c:ID!){removeSubIssue(input:{issueId:$p,subIssueId:$c}){"
+        "issue{number subIssuesSummary{total completed}}}}"
+    )
+    gh("api", "graphql", "-f", f"query={mutation}",
+       "-f", f"p={parent_id}", "-f", f"c={child_id}", as_json=True)
+    return sub_issue_tree(parent_repo, parent_number)
+
+
+def annotate_children(items, children, default_repo):
+    """Add each sub-issue's board Status, which is the stage a phase actually carries.
+
+    A phase card is completed by `finish --child-of` and NOT closed -- only the parent's
+    merge closes anything -- so `state` alone reads every finished phase as unfinished.
+    The board field is the authority; `state` is the fallback for a card that is not on
+    the board at all.
+    """
+    by_key = {(i["repo"], i["number"]): i for i in items if i["kind"] == "issue"}
+    out = []
+    for child in children:
+        hit = by_key.get((child.get("repo") or default_repo, child.get("number")))
+        out.append(dict(child, status=hit["status"] if hit else None, onBoard=hit is not None))
+    return out
+
+
+def child_done(child):
+    """Completed on the board, or closed. Either one means the phase is not blocking."""
+    status = str(child.get("status") or "").strip().lower()
+    if status:
+        return status in _DONE_NAMES
+    return str(child.get("state") or "").strip().upper() == "CLOSED"
+
+
+def blocking_siblings(children, number):
+    """The earlier phases of this plan set that are not done yet.
+
+    Order is `sub_issue_tree`'s, i.e. phase order. A later phase quotes the tree as it
+    will look after the earlier ones, so starting one out of order applies a plan to
+    code that does not exist yet -- which is why this is reported rather than inferred
+    from the plan files.
+    """
+    index = next((i for i, c in enumerate(children) if c.get("number") == number), None)
+    if index is None:
+        return []
+    return [c for c in children[:index] if not child_done(c)]
 
 
 def board_item_for_issue(cfg, repo, number, attempts=1, delay=1.0):
@@ -517,6 +730,12 @@ def cmd_create(args):
     if args.draft:
         if repo:
             raise TaskError("--draft and --repo are mutually exclusive: a draft item has no repo.")
+        if args.parent:
+            raise TaskError(
+                "--draft and --parent are mutually exclusive: GitHub sub-issues are issues, and "
+                "a draft item is not one yet. Create the phase with --repo, or promote it later "
+                "and link it with `subissue`."
+            )
         result = gh(
             "project", "item-create", str(cfg["projectNumber"]),
             "--owner", cfg["owner"],
@@ -580,6 +799,33 @@ def cmd_create(args):
     gh("project", "item-edit", "--id", item_id, "--project-id", cfg["projectId"],
        "--field-id", cfg["statusFieldId"], "--single-select-option-id", option_id)
 
+    # ── PARENT: this card is one phase of a plan set. Linking is a fourth operation and
+    # it is read back like the other three -- an unlinked phase is invisible as a phase.
+    parent_out = None
+    if args.parent:
+        parent = match_ref(fetch_items(cfg), args.parent, repo)
+        if parent["kind"] != "issue":
+            raise TaskError(
+                "A draft item cannot be a parent -- it has no issue to hang sub-issues on. "
+                f"Promote it first: task_gh.py promote {args.parent} --repo {repo}"
+            )
+        tree = add_sub_issue(parent["repo"], parent["number"], url)
+        mine = next((c for c in tree["children"]
+                     if c["number"] == number and (c["repo"] or parent["repo"]) == repo), None)
+        parent_out = {
+            "repo": parent["repo"], "number": parent["number"], "title": parent["title"],
+            "linked": mine is not None,
+            "position": mine["position"] if mine else None,
+            "subIssues": tree["summary"],
+            "verdict": (
+                f"#{number} is sub-issue {mine['position']} of {tree['summary']['total']} "
+                f"under #{parent['number']}"
+                if mine else
+                f"#{number} was created but #{parent['number']} does not list it as a sub-issue "
+                f"— re-run: task_gh.py subissue {parent['number']} {number}"
+            ),
+        }
+
     # READ BACK. The point of the command is board membership, so prove it rather than
     # assume the two mutations above took.
     placed = board_item_for_issue(cfg, repo, number, attempts=8, delay=1.5)
@@ -597,8 +843,50 @@ def cmd_create(args):
         "created": created, "adopted": args.issue is not None, "addedToBoard": added,
         "kind": "issue", "repo": repo, "number": number, "url": url, "title": title,
         "itemId": item_id, "status": landed, "onBoard": on_board, "verdict": verdict,
+        **({"parent": parent_out} if parent_out else {}),
     }, indent=2))
-    return 0 if on_board else 1
+    return 0 if on_board and (parent_out is None or parent_out["linked"]) else 1
+
+
+def issue_url(item):
+    return item.get("url") or f"https://github.com/{item['repo']}/issues/{item['number']}"
+
+
+def cmd_subissue(args):
+    """Link or unlink an existing issue under a parent. Repair, and after a promote."""
+    cfg = board_config(refresh=args.refresh)
+    items = fetch_items(cfg)
+    parent = match_ref(items, args.parent_ref, args.repo)
+    child = match_ref(items, args.child_ref, args.repo)
+    for label, item in (("parent", parent), ("child", child)):
+        if item["kind"] != "issue":
+            raise TaskError(
+                f"The {label} is a draft item, and sub-issues are issues. Promote it first: "
+                f"task_gh.py promote {args.parent_ref if label == 'parent' else args.child_ref} "
+                f"--repo OWNER/REPO"
+            )
+    if parent["number"] == child["number"] and parent["repo"] == child["repo"]:
+        raise TaskError("A card cannot be its own sub-issue.")
+
+    if args.remove:
+        tree = remove_sub_issue(parent["repo"], parent["number"], child["repo"], child["number"])
+        linked = any(c["number"] == child["number"] for c in tree["children"])
+        print(json.dumps({
+            "removed": not linked, "parent": parent["number"], "child": child["number"],
+            "subIssues": tree["summary"],
+            "children": [c["number"] for c in tree["children"]],
+        }, indent=2))
+        return 0 if not linked else 1
+
+    tree = add_sub_issue(parent["repo"], parent["number"], issue_url(child))
+    mine = next((c for c in tree["children"] if c["number"] == child["number"]), None)
+    print(json.dumps({
+        "linked": mine is not None, "parent": parent["number"], "child": child["number"],
+        "position": mine["position"] if mine else None,
+        "subIssues": tree["summary"],
+        "children": [c["number"] for c in tree["children"]],
+    }, indent=2))
+    return 0 if mine else 1
 
 
 def has_body(args):
@@ -1210,19 +1498,114 @@ def cmd_reopen(args):
     return 0
 
 
+def phase_commit_evidence(root, sha, base=None):
+    """Prove SHA is real work sitting on the branch being worked, not on the base.
+
+    This is what a phase card has instead of a merged pull request. Three questions,
+    each of which has a wrong answer that a session could otherwise complete a card on:
+    does the commit exist, is it on this branch, and is it actually new work.
+    """
+    if not git_ok("cat-file", "-e", f"{sha}^{{commit}}", cwd=root):
+        raise TaskError(
+            f"{sha} is not a commit in {root}. A phase completes on a commit that exists — "
+            f"pass the sha this phase produced, from the parent card's worktree."
+        )
+    full = git_out("rev-parse", sha, cwd=root)
+    branch = git_out("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
+    if not git_ok("merge-base", "--is-ancestor", full, "HEAD", cwd=root):
+        raise TaskError(
+            f"{full[:12]} is not on {branch!r}. Run this from the parent card's worktree, on "
+            f"the branch the phase was committed to."
+        )
+    if base and git_ok("merge-base", "--is-ancestor", full, base, cwd=root):
+        raise TaskError(
+            f"{full[:12]} is already on {base}, so it is not this phase's own work. If the "
+            f"plan set already landed, the cards are completed by the parent's merge and the "
+            f"ordinary `finish`, not by --child-of."
+        )
+    return {
+        "commit": full[:12],
+        "branch": branch,
+        "base": base,
+        "subject": git_out("log", "-1", "--format=%s", full, cwd=root),
+    }
+
+
+def verify_phase(items, item, parent_ref, sha, dir_=None, base=None):
+    """The evidence a phase card completes on: it is a phase, and its commit is real.
+
+    Requiring a merged PR per phase would make every phase but the last uncompletable —
+    the parent owns the one pull request — and reaching for --allow-unmerged instead
+    would blunt that check for every ordinary card. So this asks for the evidence a
+    phase actually has, and refuses to accept it for a card that is not a phase.
+    """
+    if not sha:
+        raise TaskError(
+            "--child-of needs --commit <sha>: the phase's commit is what replaces the merged "
+            "pull request as evidence."
+        )
+    parent = match_ref(items, parent_ref, item["repo"])
+    if parent["kind"] != "issue":
+        raise TaskError("A draft item cannot be a parent. Promote it first.")
+    tree = sub_issue_tree(parent["repo"], parent["number"])
+    siblings = annotate_children(items, tree["children"], parent["repo"])
+    mine = next(
+        (c for c in siblings
+         if c["number"] == item["number"] and (c["repo"] or parent["repo"]) == item["repo"]),
+        None,
+    )
+    if mine is None:
+        listed = ", ".join(f"#{c['number']}" for c in siblings) or "none"
+        raise TaskError(
+            f"#{item['number']} is not a sub-issue of #{parent['number']} (it lists {listed}). "
+            f"--child-of completes a phase, so link it first: "
+            f"task_gh.py subissue {parent['number']} {item['number']}"
+        )
+    root = repo_root(dir_ or os.getcwd())
+    assert_same_repo(item, root)
+    try:
+        base_ref = resolve_base(root, base)
+    except TaskError:
+        base_ref = None  # a repo with no origin still has a branch and a commit
+    evidence = phase_commit_evidence(root, sha, base_ref)
+    evidence.update({
+        "parent": parent["number"],
+        "parentRepo": parent["repo"],
+        "position": mine["position"],
+        "of": tree["summary"].get("total") or len(siblings),
+        # Reported, not refused: the commit is real either way, and refusing here would
+        # leave a finished phase reading In Progress. Order is enforced when work is
+        # PICKED UP, which is the skill's job, not this command's.
+        "outOfOrder": [c["position"] for c in blocking_siblings(siblings, item["number"])],
+    })
+    return evidence
+
+
 def cmd_finish(args):
     """Completed, on evidence: a merged linked PR and the Status field.
 
     Does NOT reopen the issue the merge closed. That closure is GitHub reporting
     the truth, and the board keeps showing the card regardless (auto-archive is
     off -- see ensure_issue_open). `reopen REF` exists for when work resurfaces.
+
+    With --child-of the evidence changes but never disappears: see verify_phase.
     """
     cfg = board_config(refresh=args.refresh)
-    item = match_ref(fetch_items(cfg), args.ref, args.repo)
+    items = fetch_items(cfg)
+    item = match_ref(items, args.ref, args.repo)
     if item["kind"] != "issue":
         raise TaskError("A draft item cannot be completed. Promote it first.")
+    evidence = None
+    if args.child_of:
+        evidence = verify_phase(items, item, args.child_of, args.commit, args.dir, args.base)
+    elif args.commit:
+        raise TaskError(
+            "--commit only means something with --child-of. An ordinary card completes on a "
+            "merged pull request, not on a commit."
+        )
     print(json.dumps(
-        complete_card(cfg, item, note=args.note, allow_unmerged=args.allow_unmerged),
+        complete_card(cfg, item, note=args.note, allow_unmerged=args.allow_unmerged,
+                      child_evidence=evidence),
         indent=2))
     return 0
 
@@ -1428,15 +1811,38 @@ def pr_mergeable(repo, number, attempts=3, delay=2.0):
     return last
 
 
-def complete_card(cfg, item, note=None, allow_unmerged=False):
-    """Completed, on evidence. Shared by `finish` and by `land --after-gate`."""
+def complete_card(cfg, item, note=None, allow_unmerged=False, child_evidence=None):
+    """Completed, on evidence. Shared by `finish` and by `land --after-gate`.
+
+    A phase card carries `child_evidence` instead of a merged PR -- verified by
+    verify_phase, which is stricter about what a phase is than --allow-unmerged is
+    about anything. The requirement is swapped, never dropped.
+    """
     report = link_report(item)
     merged = [p for p in report["issueLinks"]["pullRequests"] if p["merged"]]
-    if not merged and not allow_unmerged:
+    if not merged and child_evidence is None and not allow_unmerged:
         raise TaskError(
             f"No merged pull request is linked to #{item['number']}: {report['verdict']}. "
             f"Merge the PR first, or pass --allow-unmerged if this card genuinely has no PR."
         )
+
+    # A parent card whose PR merged means every phase landed, so a phase still reading
+    # In Progress is the board lying about work that is in main. Reported, not cascaded:
+    # a merge is not evidence that a phase nobody completed was actually built, and
+    # writing Completed on that guess is exactly the failure this skill cannot absorb.
+    open_children = None
+    if child_evidence is None and item.get("kind") == "issue" and item.get("number"):
+        try:
+            tree = sub_issue_tree(item["repo"], item["number"])
+        except TaskError:
+            tree = None
+        if tree and tree["children"]:
+            kids = annotate_children(fetch_items(cfg), tree["children"], item["repo"])
+            open_children = [
+                {"number": c["number"], "position": c["position"],
+                 "stage": c["status"] or c["state"]}
+                for c in kids if not child_done(c)
+            ]
 
     name, option_id = resolve_stage(cfg, "Completed")
     changed = (item["status"] or "") != name
@@ -1445,7 +1851,13 @@ def complete_card(cfg, item, note=None, allow_unmerged=False):
            "--field-id", cfg["statusFieldId"], "--single-select-option-id", option_id)
     state = issue_state(item)
 
-    if note is None and merged:
+    if note is None and child_evidence:
+        note = (
+            f"Phase {child_evidence['position']} of {child_evidence['of']} complete in "
+            f"`{child_evidence['commit']}` on `{child_evidence['branch']}` "
+            f"({child_evidence['subject']}). #{child_evidence['parent']} owns the pull request."
+        )
+    elif note is None and merged:
         shas = ", ".join(f"#{p['number']} ({(p['mergeCommit'] or '')[:8]})" for p in merged)
         note = f"Completed. Merged in {shas}."
     if note:
@@ -1458,6 +1870,9 @@ def complete_card(cfg, item, note=None, allow_unmerged=False):
         "mergedPrs": [p["number"] for p in merged],
         "commented": bool(note),
         "issue": {"state": state, "reopened": False},
+        **({"childOf": child_evidence["parent"], "evidence": child_evidence}
+           if child_evidence else {}),
+        **({"openChildren": open_children} if open_children else {}),
         **report,
     }
 
@@ -1890,6 +2305,129 @@ def cmd_selftest(args):
     else:
         print("selftest: git absent, landing merge assertions skipped", file=sys.stderr)
 
+    # sub-issues: the phase order, and which earlier phases still block this one.
+    # A completed phase card is NOT closed -- only the parent's merge closes anything --
+    # so the board Status has to win over the issue state, in both directions.
+    kids = [
+        {"number": 13, "title": "phase 1", "position": 1, "repo": "me/alpha", "state": "OPEN"},
+        {"number": 14, "title": "phase 2", "position": 2, "repo": "me/alpha", "state": "OPEN"},
+        {"number": 15, "title": "phase 3", "position": 3, "repo": "me/alpha", "state": "CLOSED"},
+    ]
+    board = [
+        {"kind": "issue", "repo": "me/alpha", "number": 13, "status": "Completed"},
+        {"kind": "issue", "repo": "me/alpha", "number": 14, "status": "In Progress"},
+        {"kind": "issue", "repo": "me/beta", "number": 13, "status": "Open"},
+    ]
+    annotated = annotate_children(board, kids, "me/alpha")
+    eq("child status from the board", annotated[0]["status"], "Completed")
+    eq("child not on the board", annotated[2]["status"], None)
+    eq("child on-board flag", [c["onBoard"] for c in annotated], [True, True, False])
+    eq("done by board status", child_done(annotated[0]), True)
+    eq("in progress is not done", child_done(annotated[1]), False)
+    eq("closed and unlisted is done", child_done(annotated[2]), True)
+    eq("done by GitHub default name", child_done({"status": "Done"}), True)
+    # an OPEN issue whose board says Completed is done; the reverse is not
+    eq("board beats open state", child_done({"status": "Completed", "state": "OPEN"}), True)
+    eq("board beats closed state", child_done({"status": "Open", "state": "CLOSED"}), False)
+
+    eq("phase 1 blocks nothing", blocking_siblings(annotated, 13), [])
+    eq("phase 2 is unblocked once 1 is done", blocking_siblings(annotated, 14), [])
+    eq("phase 3 waits on 2", [c["number"] for c in blocking_siblings(annotated, 15)], [14])
+    eq("a card outside the set blocks nothing", blocking_siblings(annotated, 99), [])
+    eq("empty set", blocking_siblings([], 13), [])
+    # order is the sub-issue order, never the numbers: a phase added late sorts wrong
+    late = annotate_children(board, [kids[1], kids[0]], "me/alpha")
+    eq("order is positional, not numeric",
+       [c["number"] for c in blocking_siblings(late, 13)], [14])
+
+    # the sub-issue tree, parsed out of the real GraphQL shape
+    payload = {"data": {"repository": {"issue": {
+        "id": "I_kw1", "number": 14, "title": "phase 2", "url": "u14", "state": "OPEN",
+        "parent": {"number": 12, "title": "delete", "url": "u12", "state": "OPEN",
+                   "repository": {"nameWithOwner": "me/alpha"}},
+        "subIssues": {"nodes": []},
+        "subIssuesSummary": {"total": 0, "completed": 0, "percentCompleted": 0},
+    }}}}
+    with _mock.patch(__name__ + ".gh", return_value=payload):
+        t = sub_issue_tree("me/alpha", 14)
+    eq("tree node id", t["id"], "I_kw1")
+    eq("tree parent", t["parent"]["number"], 12)
+    eq("tree parent repo", t["parent"]["repo"], "me/alpha")
+    eq("tree children", t["children"], [])
+
+    payload["data"]["repository"]["issue"]["parent"] = None
+    payload["data"]["repository"]["issue"]["subIssues"] = {"nodes": [
+        {"number": 13, "title": "p1", "url": "u13", "state": "OPEN", "repository": None},
+        {"number": 15, "title": "p3", "url": "u15", "state": "OPEN",
+         "repository": {"nameWithOwner": "me/other"}},
+    ]}
+    with _mock.patch(__name__ + ".gh", return_value=payload):
+        t = sub_issue_tree("me/alpha", 12)
+    eq("positions are 1-based", [c["position"] for c in t["children"]], [1, 2])
+    eq("repo defaults to the parent's", t["children"][0]["repo"], "me/alpha")
+    eq("cross-repo child keeps its own", t["children"][1]["repo"], "me/other")
+    eq("no parent means it owns the PR", t["parent"], None)
+
+    with _mock.patch(__name__ + ".gh", return_value={"data": {"repository": {"issue": None}}}):
+        try:
+            sub_issue_tree("me/alpha", 99)
+            failures.append("a missing issue should have raised")
+        except TaskError:
+            pass
+
+    # a phase completes on a commit. Same temp-repo discipline as the landing test:
+    # git only, no gh, no network.
+    if shutil.which("git"):
+        tmp2 = tempfile.mkdtemp(prefix="task-phase-")
+        try:
+            def g2(*a):
+                return git_run(*a, cwd=tmp2)
+
+            g2("init", "-q", "-b", "main")
+            g2("config", "user.email", "t@t"); g2("config", "user.name", "T")
+            Path(tmp2, "a.txt").write_text("base\n")
+            g2("add", "-A"); g2("commit", "-qm", "base")
+            base_sha = git_out("rev-parse", "HEAD", cwd=tmp2)
+
+            g2("checkout", "-q", "-b", "feature/history-retry")
+            Path(tmp2, "b.txt").write_text("phase 1\n")
+            g2("add", "-A"); g2("commit", "-qm", "feat(db): soft delete column")
+            sha = git_out("rev-parse", "HEAD", cwd=tmp2)
+
+            ev = phase_commit_evidence(tmp2, sha, "main")
+            eq("evidence commit", ev["commit"], sha[:12])
+            eq("evidence branch", ev["branch"], "feature/history-retry")
+            eq("evidence subject", ev["subject"], "feat(db): soft delete column")
+            eq("short sha accepted", phase_commit_evidence(tmp2, sha[:8], "main")["commit"], sha[:12])
+
+            for bad, why in [
+                ("deadbeef", "no such commit"),
+                (base_sha, "already on the base"),
+            ]:
+                try:
+                    phase_commit_evidence(tmp2, bad, "main")
+                    failures.append(f"{why} should have raised")
+                except TaskError:
+                    pass
+
+            # a commit on another branch is not on HEAD, however real it is
+            g2("checkout", "-q", "-b", "feature/elsewhere", "main")
+            Path(tmp2, "c.txt").write_text("other\n")
+            g2("add", "-A"); g2("commit", "-qm", "elsewhere")
+            other = git_out("rev-parse", "HEAD", cwd=tmp2)
+            g2("checkout", "-q", "feature/history-retry")
+            try:
+                phase_commit_evidence(tmp2, other, "main")
+                failures.append("a commit on another branch should have raised")
+            except TaskError:
+                pass
+            # no base to compare against: still evidence, just one check fewer
+            eq("no base", phase_commit_evidence(tmp2, sha, None)["base"], None)
+        finally:
+            shutil.rmtree(tmp2, ignore_errors=True)
+    else:
+        print("selftest: git absent, phase evidence assertions skipped", file=sys.stderr)
+
     # the other session's card, read out of the base branch's merge commits
     log = [
         "b84765a Merge pull request #5 from miftahulmahfuzh/task/3-make-toggle-editable",
@@ -1952,7 +2490,15 @@ def main(argv=None):
                    help="a board draft item with no repo yet (promote it later)")
     p.add_argument("--issue", type=int,
                    help="adopt an existing issue onto the board instead of creating one")
+    p.add_argument("--parent",
+                   help="REF of the card this belongs under: one phase of a plan set")
     p.set_defaults(fn=cmd_create)
+
+    p = add("subissue")
+    p.add_argument("parent_ref", metavar="PARENT")
+    p.add_argument("child_ref", metavar="CHILD")
+    p.add_argument("--remove", action="store_true", help="unlink instead of link")
+    p.set_defaults(fn=cmd_subissue)
 
     p = add("promote")
     p.add_argument("ref")
@@ -2034,6 +2580,11 @@ def main(argv=None):
     p.add_argument("--note", help="comment to post (default: names the merged PR)")
     p.add_argument("--allow-unmerged", dest="allow_unmerged", action="store_true",
                    help="complete a card that has no merged pull request")
+    p.add_argument("--child-of", dest="child_of",
+                   help="REF of the parent: complete one phase on its commit, not on a merge")
+    p.add_argument("--commit", help="with --child-of, the sha this phase produced")
+    p.add_argument("--dir", help="the parent's worktree the commit lives in (default: cwd)")
+    p.add_argument("--base", help="with --child-of, the base the commit must NOT be on")
     p.set_defaults(fn=cmd_finish)
 
     args = parser.parse_args(argv)
