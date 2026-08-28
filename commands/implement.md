@@ -50,8 +50,9 @@ The plan index names the worktree and branch it was written against. Compare wit
 
 ## Step 2: Read the Plan Index
 
-Extract: slug, the **Why** section, the invariants, the phase table (number, title, package,
-depends-on, difficulty, plan file, TaskID), and **Open Questions**.
+Extract: slug, the **Why** section, the **Requirements** table, the invariants, the phase table
+(number, title, satisfies, package, depends-on, difficulty, plan file, TaskID, card), and
+**Open Questions**.
 
 **If Open Questions is non-empty, resolve it before implementing.** Ask with
 `AskUserQuestion` — one question per item, each with your own recommendation. `/analyze`'s
@@ -79,8 +80,10 @@ Dispatch one subagent to create every phase's task. For each phase:
     - **Context**: {phase Owns + Exit criteria}
     - **Status**: {in_progress for the first phase, blocked for the rest}
     - **Plan Set**: `{SLUG}_PLAN.md` (phase {N} of {total})
+    - **Satisfies**: {R id(s)} — {that requirement's one-line text from the index}
     - **Depends on**: {TaskIDs of the phases this one requires}
     - **Plan**: `.workflows/plan/{TaskID}.md`
+    - **Card**: {the index's Card column, e.g. `owner/repo#13`} — omit the line if it is `—`
   ```
 - **Adopt the plan file — never rewrite it.** Copy `.workflows/plan/{slug}/phase-{N}.md` to
   `{pkg}/.workflows/plan/{TaskID}.md`, prepending:

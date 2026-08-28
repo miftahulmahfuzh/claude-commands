@@ -20,6 +20,7 @@ analysis_file: "{path to <session-id>_code_analyzer.md}"
 phase_number: N
 phase_title: "{title}"
 phase_scope: "{what this phase owns, and what it must NOT touch}"
+satisfies: [{requirement ids this phase serves, e.g. R1 — from the index's Requirements table}]
 depends_on: [{earlier phase numbers}]
 other_phases: [{number, title, owns}]
 output_file: "{absolute path to write}"
@@ -34,6 +35,10 @@ output_file: "{absolute path to write}"
 3. Plan **only** your phase. If you find work that belongs to another phase, do not do it —
    record it under **Assumptions** as something you expect that phase to have done, or under
    **Handoffs** as something you are leaving for it.
+   `satisfies` is a boundary as well as a label: if a step of yours serves a requirement id
+   that is not in your `satisfies` list, it belongs to another phase. Put it in **Handoffs**
+   and name the requirement — a phase that quietly grows a second R breaks the card shape
+   built from the index, not just its own scope.
 4. Assume every phase in `depends_on` has already landed. Quote files as they will look *after*
    those phases, not as they look today. Say so where it matters.
 5. Write `output_file`. Create parent directories if needed.
@@ -54,6 +59,7 @@ output_file: "{absolute path to write}"
 
 **Plan set:** `{SLUG}_PLAN.md`
 **Analysis:** `{analysis file}`
+**Satisfies:** {requirement ids, e.g. R1} — the user-facing thing this phase serves
 **Depends on:** Phase {list} — or "none"
 **Difficulty:** EASY | NORMAL | HARD
 **Package:** {primary package path}
@@ -119,6 +125,7 @@ Return a short summary to the caller — not the plan file's contents:
 ```yaml
 phase: N
 plan_file: "{path}"
+satisfies: ["R1"]
 difficulty: "EASY|NORMAL|HARD"
 files_touched: {count}
 contract:

@@ -61,7 +61,7 @@ Every run, without exception:
 | `<SLUG>_PLAN.md` | repo/worktree root | the plan index — phases, order, invariants, open questions |
 | `.workflows/plan/<slug>/phase-{N}.md` | repo/worktree root | one implementation plan per phase, with complete code |
 
-The only thing that varies is **N**, the number of phases (1 to 6). A one-phase plan set has a
+The only thing that varies is **N**, the number of phases (1 to 20). A one-phase plan set has a
 short index and a single plan file; nothing else about the shape changes.
 
 `/implement -f <SLUG>_PLAN.md` executes what you wrote. **It does no planning of its own**, and
@@ -94,6 +94,15 @@ Neither touches source code.
   do not clean up, do not drop the numbered rationale. On a refactor or purge, the *reasons*
   are the specification — they say what may be deleted and what may not.
 - **User-Provided Files** — everything marked with `@`.
+- **Requirement IDs** — split the raw input into the distinct things the user asked for and
+  number them `R1`, `R2`, … in the order they were written. One R per deliverable the user
+  would recognise as separate — a numbered list in the prompt is already that split, so use
+  its numbering. One paragraph asking for one thing is `R1` alone.
+
+  This is a *restatement*, not a decomposition: an R is what the user wants, a phase is how
+  it gets built, and the mapping between them is what Step 6 decides. Every downstream
+  consumer — the phase table, `/implement`, and `create-task` when it shapes the cards —
+  reads that mapping instead of re-deriving it from the prose.
 
 ### Step 1: Read Explicitly Mentioned Files
 
@@ -194,8 +203,20 @@ introduce the new thing → move callers → delete the old thing.
 Cap at **20 phases**. If the work needs more, group related ones and say what you grouped.
 `--phases N` overrides the decision.
 
+**Then map the phases onto the requirement IDs from Step 0.** Every phase declares the R (or
+Rs) it serves, and every R is served by at least one phase. Two properties matter, and both are
+checkable rather than felt:
+
+- **No R is unowned.** An R that no phase satisfies is work you decomposed away — fix the
+  decomposition, do not drop the R.
+- **Prefer phases that serve exactly one R.** A phase spanning two Rs couples two things the
+  user asked for separately, so it cannot be tracked, reviewed, or shipped against either one
+  alone. Split it if the split leaves both halves building green; if it genuinely cannot be
+  split — one schema migration both features need — keep it and say so, because that coupling is
+  a real fact about the work and downstream consumers act on it.
+
 State it in one line before proceeding:
-`Plan: 4 phases — 23 files across 5 packages, deletion order matters.`
+`Plan: 4 phases — 23 files across 5 packages, deletion order matters. R1 -> 3,4 · R2 -> 1,2.`
 
 Then write a **draft** `<SLUG>_PLAN.md` at the worktree root with the phase table filled in and
 each phase's boundary stated. This draft is the contract the planners plan against.
@@ -214,6 +235,7 @@ analysis_file: "{worktree_root}/{session-id}_code_analyzer.md"
 phase_number: N
 phase_title: "{title}"
 phase_scope: "{what this phase owns — and what it must NOT touch}"
+satisfies: [{requirement ids this phase serves, e.g. R1}]
 depends_on: [{earlier phase numbers}]
 other_phases:                                          # boundaries only, not full plans
   - number: 1
@@ -256,8 +278,8 @@ For N = 1, promote the draft yourself: fill the phase row from the planner's ret
 `single phase — nothing to reconcile`.
 
 Before terminating, verify: every phase has a plan file, every plan file's code blocks are
-complete, and every impact point in the analysis is owned by some phase. Nothing downstream
-will fill a gap you leave.
+complete, every impact point in the analysis is owned by some phase, and **every requirement ID
+from Step 0 is satisfied by at least one phase**. Nothing downstream will fill a gap you leave.
 
 ### Step 10: Terminate
 
@@ -290,6 +312,15 @@ Create `<session-id>_code_analyzer.md`:
 
 ### User-Provided Files
 - file1.go
+
+### Requirement IDs
+<The distinct things the user asked for, numbered in the order written. A restatement of the
+raw input above, not a decomposition — the phases that serve each one live in the plan index.>
+
+| ID | What the user asked for |
+|---|---|
+| R1 | ... |
+| R2 | ... |
 
 ---
 
@@ -395,6 +426,16 @@ Create `<SLUG>_PLAN.md` at the worktree root (`SLUG` in SCREAMING_SNAKE, e.g.
 <The user's rationale, verbatim. This is the specification for what may be removed and what
 may not — do not paraphrase it away.>
 
+## Requirements
+
+<Carried from the analysis document's Requirement IDs — the plan index must stand alone, because
+`create-task` shapes the cards from this table and never reads the analysis.>
+
+| ID | What the user asked for | Phases |
+|---|---|---|
+| R1 | Coba ulang: refill a reading that never finished | 3, 4 |
+| R2 | Swipe-left to soft-delete a history item | 1, 2 |
+
 ## Scope
 
 **In scope:** <what changes>
@@ -407,14 +448,17 @@ Rules every phase must hold — e.g. "the tree builds and tests pass at the end 
 
 ## Phases
 
-| # | Title | Package | Files | Depends on | Difficulty | Plan | TaskID |
-|---|-------|---------|-------|-----------|------------|------|--------|
-| 1 | ... | `tools/toolcore` | 6 | — | NORMAL | `.workflows/plan/<slug>/phase-1.md` | — |
-| 2 | ... | `chatbot/bowl` | 4 | 1 | HARD | `.workflows/plan/<slug>/phase-2.md` | — |
+| # | Title | Satisfies | Package | Files | Depends on | Difficulty | Plan | TaskID | Card |
+|---|-------|-----------|---------|-------|-----------|------------|------|--------|------|
+| 1 | ... | R2 | `tools/toolcore` | 6 | — | NORMAL | `.workflows/plan/<slug>/phase-1.md` | — | — |
+| 2 | ... | R2 | `chatbot/bowl` | 4 | 1 | HARD | `.workflows/plan/<slug>/phase-2.md` | — | — |
 
-<The TaskID column is filled in by /implement when it creates the tasks.>
+<The TaskID column is filled in by /implement when it creates the tasks; the Card column by
+`create-task --from-plan`, with the sub-issue it minted for that phase (`owner/repo#13`).
+Leave both `—` — writing a card ref here yourself invents one.>
 
 ### Phase 1 — <Title>
+**Satisfies:** R2
 **Owns:** <what this phase changes>
 **Does not touch:** <boundary>
 **Exit criteria:** <what is true when it is done>
@@ -438,7 +482,8 @@ Rules every phase must hold — e.g. "the tree builds and tests pass at the end 
 
 ## Next
 
-    /implement -f <SLUG>_PLAN.md
+    /implement -f <SLUG>_PLAN.md          # execute the phases
+    /create-task --from-plan <SLUG>_PLAN.md   # put them on the board first (GitHub repos)
 ```
 
 ---
@@ -464,6 +509,21 @@ Get the date from `date +%Y%m%d-%H%M%S` — never guess it.
 
 ---
 
+## If the Same Prompt Also Asked for Task Cards
+
+A prompt that says "2 cards and /analyze" is asking for both, and the order is not negotiable:
+**`/analyze` runs first, and the cards are created from the finished plan index.** The user's
+count of cards is a statement of *deliverables*; the phase set is the decomposition, and only
+this command has read the code well enough to produce it. Cards minted before the plan exists
+commit the board to a shape nothing downstream agrees with.
+
+So: finish every step above, then hand the plan index to `create-task --from-plan` (see the
+`create-task` skill, which owns the parent/sub-issue shape and the GitHub-only limits). Do not
+mint cards from this command directly, and do not adjust the phase count to match the number of
+cards the user asked for — the **Requirements** table is what reconciles the two counts.
+
+---
+
 ## Termination
 
 ```bash
@@ -473,9 +533,13 @@ Plan written to     <worktree>/<SLUG>_PLAN.md   (<N> phase(s)<, M inconsistencie
 Worktree: <path>
 Branch:   feature/<slug>  (base <ref> @ <sha>)
 
+Requirements:
+  R1 <what the user asked for>   -> phases 3, 4
+  R2 <what the user asked for>   -> phases 1, 2
+
 Phases:
-  1. <title>  -> .workflows/plan/<slug>/phase-1.md
-  2. <title>  -> .workflows/plan/<slug>/phase-2.md
+  1. <title>  [R2]  -> .workflows/plan/<slug>/phase-1.md
+  2. <title>  [R2]  -> .workflows/plan/<slug>/phase-2.md
 
 <If Open Questions is non-empty, list them here — /implement will stop and ask.>
 
