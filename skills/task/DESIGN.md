@@ -384,3 +384,45 @@ this loop never completed is not evidence that anything was built.
 its open phases — see the 2026-08-28 amendment. `openChildren` reports them, and
 with phases closing as they land that list is now empty on the normal path, which
 is what makes a non-empty one worth reading.
+
+## Amendment, 2026-08-30: the session names itself after its card
+
+**The ask.** Five terminals open, all working different cards in the same repo, all
+called `jmtarot-8f` / `jmtarot-d4` / `claude-commands-06` — Claude Code derives a
+name from the directory, which is exactly the part every one of them shares. The
+user was already fixing this by hand with `/rename task-18` and wanted it done by
+the skill; there are sessions on this machine named `task-6`, `task-18`, `task-19`
+with `nameSource: user`, which is that habit.
+
+**`/rename` is a built-in CLI command, not a skill**, so nothing in this loop can
+invoke it — the Skill tool does not reach built-ins, and the model cannot type into
+its own prompt.
+
+**Rejected: writing `~/.claude/sessions/<pid>.json`.** The name lives there, and
+MEASURED, poking it does change what `/resume` lists — which is what makes it a
+trap. The running process keeps its own copy: after the write, `ListAgents` still
+reported the old name, so the tab title and the address peers use would have stayed
+stale until restart. Half a rename is worse than none, because the two halves
+disagree about what the window is called.
+
+**The mechanism, which is documented rather than discovered.** Every tool a session
+runs inherits `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN` and
+`CLAUDE_CODE_SESSION_ID`; the socket speaks newline-delimited JSON, an `auth` line
+then messages, and takes `{"type":"control","action":"rename","name":…}` — the same
+message FleetView sends when it renames a session from another window. So the
+process performs its own rename and every surface follows at once. Verified on this
+session: `nameSource` went to `peer` and `ListAgents` reported the new name.
+
+**It cannot fail the caller.** No socket, no token, a session started some other way,
+a refused connect — all return `renamed: false` with a reason and exit 0. A task loop
+that lost a night's work because it could not rename a terminal window would be an
+absurd trade, and the name is a convenience while the card is the work.
+
+**The number is the card that was asked for**, not the phase currently open. A session
+that picks up phases 3 and 4 on the way to 5 is still the errand `/task 5` sent it on,
+and a name that tracked the working file would change under the user mid-task.
+
+**No socket dependency.** `nc -N -U` is the client the binary's own help text suggests
+and it works, but `session.py` opens the AF_UNIX socket from Python directly —
+`nc`/`socat` are not installed everywhere, and this must not become the reason a rename
+fails on a fresh laptop.

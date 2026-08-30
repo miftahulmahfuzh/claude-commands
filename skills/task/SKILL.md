@@ -190,6 +190,7 @@ behaves oddly, and quote its output rather than diagnosing from a stack trace.
 ```bash
 python3 $S/task_gh.py resolve <ref>        # or task_gl.py
 python3 $S/task_gl.py status <ref> "In Progress"
+python3 $S/session.py rename task-<number>   # this window is now task-17
 ```
 
 **Move the card to In Progress immediately, as part of fetching it** — not later.
@@ -205,6 +206,20 @@ Two consequences to honour rather than ignore:
   introduces, and it is yours to prevent.
 - It is idempotent, so a card already In Progress reports `changed: false`. Bare
   `/task` with no id is a listing and claims nothing.
+
+**Rename the session in the same breath**, to `task-<the number that was asked for>`.
+Five open terminals all called `jmtarot-8f`, `jmtarot-d4` say which repo and not which
+card, so the right window is found by reading scrollback and `/resume` a week later
+offers a row of near-identical titles. The number is the one label that separates them,
+and it is known the moment the card resolves. `session.py rename` is the same rename
+`/rename` performs — it reaches the running process over the session's own socket, so
+the tab title, the `/resume` row and the name peers address all follow together.
+
+Two rules: use **the card that was asked for**, even when `blockedBy` sends you through
+earlier phases first — the session is named for its errand, not its current file — and
+**never let it stop anything.** It cannot fail by design (no socket, no token, a session
+started some other way → `renamed: false` and a reason), and a card is not worth losing
+over the name of a window.
 
 `<ref>` is `14`, `owner/repo#14`, `group/project#7`, an issue URL, and on GitHub
 also a `PVTI_…` item id or `draft:<part of the title>`.
@@ -795,10 +810,12 @@ task_gh.py    GitHub Issues + Projects v2 via the gh CLI, plus the worktree,
               pull-request and linked-PR plumbing (GitHub-only, by design)
 task_gl.py    GitLab Issues, via REST and urllib
 todos.py      the .workflows/todos.md corpus: scan, validate, mint, rename
+session.py    rename this Claude Code session to `task-<n>`, over its own socket —
+              backend-agnostic, and unable to fail the caller
 ```
 
 Every one has a `selftest` (`python3 taskcore.py` for the shared half) that runs
-offline with no token and no network. Run all four after touching any of them —
+offline with no token and no network. Run all five after touching any of them —
 `taskcore` is imported by both backends, so a change there moves both.
 
 The `create-task` skill is a SKILL.md and nothing else; both its backends are the

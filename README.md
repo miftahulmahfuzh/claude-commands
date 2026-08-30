@@ -275,9 +275,14 @@ showing 55 open issues, 44 of them finished (now 11); on GitHub it took a parent
 `0 of 2` while both its phases were green, because sub-issue progress counts *closed* children
 and only the parent's PR carried a closing keyword.
 
+Claiming a card also renames the terminal to `task-<n>`: five sessions in one repo otherwise
+all carry the same derived name, and the card number is the only thing that separates them.
+It goes over the session's own messaging socket, the way `/rename` does, so the tab title,
+the `/resume` row and the peer address change together — and it can never fail the loop.
+
 **Layout:** `taskcore.py` (shared codec and stages) · `task_gh.py` (gh CLI) · `task_gl.py`
-(GitLab REST over urllib) · `todos.py` (the TaskID corpus). Every module has an offline
-`selftest`.
+(GitLab REST over urllib) · `todos.py` (the TaskID corpus) · `session.py` (the rename).
+Every module has an offline `selftest`.
 
 **Setup:** GitHub needs `gh auth refresh -s project,read:project` and the **Linked pull
 requests** field as a board column. GitLab needs a PAT with `api` scope in
@@ -516,7 +521,7 @@ claude-commands/
 │   ├── confluence-reader/    # + confluence_fetch.py, credentials.example
 │   ├── issue-ticket-reader/  # + issue_fetch.py, credentials.example
 │   ├── create-task/
-│   ├── task/                 # + DESIGN.md, taskcore/task_gh/task_gl/todos.py
+│   ├── task/                 # + DESIGN.md, taskcore/task_gh/task_gl/todos/session.py
 │   ├── sync-todos-into-gitlab-board/  # + sync_todos.py
 │   ├── reap-orphaned-blobs/
 │   └── update-ats-cv/        # + SCHEMA.md, cv_render/cv_extract/cv_preview.py, fonts
