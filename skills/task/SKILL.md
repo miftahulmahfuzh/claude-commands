@@ -77,9 +77,12 @@ in the tree. Say in the terminal which extra phases you picked up and why, then 
 
 Two consequences that are easy to get wrong:
 
-- **A completed phase card is not closed.** Only the parent's merge closes anything, so the
-  board's Status is the authority on whether a phase is done — `child_done` reads it first and
-  falls back to the issue state. Never infer phase progress from open/closed.
+- **A completed phase closes its own issue**, and nothing else would: `Closes #N` sits on the
+  *parent's* pull request and closes the parent alone. `finish --child-of` therefore writes
+  Completed and then closes, because GitHub's own sub-issue progress counts **closed**
+  sub-issues — leave a phase open and the parent card reads `0 of 2` with both phases green on
+  the board. The board's Status still leads when the two disagree (`child_done` reads Status
+  first, issue state second): a card dragged back to Open is open work whatever its state says.
 - **The parent completes last, on the merge.** If its PR merges while a phase still reads In
   Progress, the board is lying about code that is in `main`; `complete_card` reports those under
   `openChildren` so they can be swept. Complete each phase as it lands and the list stays empty.
@@ -532,6 +535,17 @@ four checks are what replace the merged-PR requirement — do not reach for `--a
 here, which asserts nothing at all. Run it as each phase lands, so the parent's own completion
 never has to sweep an `openChildren` list.
 
+It then **closes the phase's issue**, which is the last thing a phase card needs and the only
+thing no merge will do for it — see **A card with phases** above. So a finished phase is
+Completed *and* closed while the parent is still open and still holds the pull request; that is
+the correct shape, not a contradiction.
+
+Once the plan set has landed, `--child-of` no longer applies — it refuses a commit that is
+already on the base, on purpose. A phase left unswept until after the merge is completed with
+the ordinary `finish 14 --allow-unmerged --note "Landed in #<pr> (<sha>) via parent #<n>."`,
+which is the one honest use of that flag: the code is in `main`, it just went in under the
+parent's PR rather than a PR of its own.
+
 `finish` remains for the paths that skipped `land`:
 
 ```bash
@@ -589,50 +603,62 @@ the board. So `pr` writes `Closes #14` itself and repairs the body if the keywor
 is missing, rather than trusting whatever text it was handed.
 
 The keyword's other effect is intended: **merging the PR closes the issue**, and
-that closure is allowed to stand. `finish` records Completed and leaves the issue
-closed. Only the *live* stages reopen — see the closing section for why that
-asymmetry is the whole rule.
+that closure is allowed to stand. `finish` records Completed and leaves it closed —
+and closes the issue itself when no merge did, which is every phase card, since the
+keyword sits on the parent's PR and closes the parent alone. Only the *live* stages
+reopen; see the closing section for why that asymmetry is the whole rule.
 
 `links <ref>` answers "is the board actually showing it?" from two sources — the
 issue's links and the board field itself — and names which one answered. The
 board field can lag the link by a few seconds, so an empty field beside a live
 link is a refresh, not a bug.
 
-## Closing: the two backends differ, and the reason is measured
+## Closing: Completed means closed, and the reason is measured
 
-**GitHub — a merge closes the card, and that is left alone.** `Completed` is the
-Status field, and `task_gh.py` still has no `close` subcommand: it never closes an
-issue itself. But a merged PR carrying `Closes #14` does, and that closure is
-GitHub reporting the truth, so nothing undoes it.
+**One rule on both backends: the live stages open the issue, `Completed` closes
+it.** `Open` and `In Progress` reopen a closed card, because "nobody has picked
+this up" and "being worked" cannot be true of a finished issue. `Completed` does
+the reverse. `ensure_issue_open` and `ensure_issue_closed` hold the two halves.
 
-This reverses what this file said earlier, on evidence. The old rule reopened the
-issue on *every* stage write, to dodge Projects' **auto-archive** workflow — a
-closed item disappears off the board, which would have broken the reopen loop.
-**Measured on this board: six closed issues sit in `Done` and every one is still
-visible.** Auto-archive is not enabled, so the hazard the rule existed for does
-not exist, and all the rule actually produced was a column of cards that were
-Done-but-open forever, fighting GitHub's own semantics on every command.
-
-So the reopen is now scoped to the stages where a closed issue would make the
-board *lie*:
-
-| Stage written | Closed issue is… |
+| Stage written | The issue is… |
 |---|---|
 | `Open` | reopened — nobody can pick up a finished card |
 | `In Progress` | reopened — "being worked" and "closed" cannot both be true |
-| `Completed` | **left closed** |
+| `Completed` | **closed** — by the merge if there was one, by the stage write if not |
 
-`ensure_issue_open` holds that asymmetry in one place. When a card resurfaces
-months later, `reopen <ref>` puts it back — that is exactly what the subcommand is
-for — and the next `/task <id>` picks it up normally.
+That took two reversals to reach, both on evidence, and both are worth knowing
+because each undid a rule that sounded right:
 
-If you ever turn auto-archive **on**, this flips back: completed cards would start
-vanishing from the board, and the reopen rule would have to return. `doctor`
-reports what it can see; the setting itself is browser-only.
+**First: stop reopening.** The original rule reopened the issue on *every* stage
+write, to dodge Projects' **auto-archive** workflow — a closed item disappears off
+the board, which would have broken the reopen loop. **Measured on this board: six
+closed issues sit in `Done` and every one is still visible.** Auto-archive is not
+enabled, so the hazard the rule existed for does not exist, and all the rule
+produced was a column of cards that were Done-but-open forever, fighting GitHub's
+own semantics on every command.
 
-**GitLab — Completed *is* closed.** `task_gl.py status <ref> Completed` sets the
-label **and** closes the issue, in one PUT; `Open` and `In Progress` reopen it.
-This reverses what this file said earlier, on evidence:
+**Second: close the ones no merge closes.** Leaving that at "don't reopen" quietly
+assumed every completed card had a merged PR carrying `Closes #14` to close it for
+free. Two do not, and both were stranding cards: a **phase**, whose closing keyword
+lives on the *parent's* PR, and `finish --allow-unmerged`, the card that has no PR
+at all. **Measured on `jmtarot`: #13 Done and closed on its merge; #14 and #15
+built, verified, Completed — both still open, and the parent's sub-issue progress
+reading `0 of 2`,** because GitHub counts *closed* sub-issues and nothing on the
+board can tell it otherwise. So `complete_card` closes what it completes, last and
+best-effort — the Status field is the authority and is already written, so a failed
+close is reported (`issue.closed`) and never costs the card its stage.
+
+When a card resurfaces months later, `reopen <ref>` puts it back — that is exactly
+what the subcommand is for — and the next `/task <id>` picks it up normally.
+
+If you ever turn auto-archive **on**, the first reversal flips back: completed
+cards would start vanishing from the board, and the reopen rule would have to
+return. `doctor` reports what it can see; the setting itself is browser-only.
+
+**GitLab reached the same rule first, from a different direction.** `task_gl.py
+status <ref> Completed` sets the label **and** closes the issue, in one PUT;
+`Open` and `In Progress` reopen it. This reverses what this file said earlier, on
+evidence:
 
 - A GitLab **label list shows open issues only**, and the project's default issue
   list shows open issues only. So a completed card that stayed open sat in a

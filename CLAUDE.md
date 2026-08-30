@@ -79,8 +79,9 @@ Requirements table reconciles them — one parent card per `R` with its phases a
 or one parent for the whole set when a phase serves two `R`s. The invariant the code enforces:
 **the parent owns the worktree, the branch and the pull request; a phase owns a commit**
 (`finish --child-of`), because a phase branched off `origin/main` would be planning against code
-that has not landed. GitHub only — GitLab has no sub-issues below Premium. A completed phase card
-is **not** closed, so phase progress is read from the board Status, never from open/closed.
+that has not landed. GitHub only — GitLab has no sub-issues below Premium. A completed phase closes its own issue
+(`Closes #N` sits on the *parent's* PR, and GitHub's sub-issue progress counts closed children),
+but the board's Status still leads when the two disagree.
 
 ### Pusher agent (`agents/pusher.md`)
 Owns *all* git side effects for command-driven work. `/do` and `/implement` no longer perform direct git operations — they delegate to `pusher`. If you add a new command that mutates files, end it by spawning `pusher` rather than running `git` inline. Users can also invoke it directly by saying "run pusher".

@@ -331,3 +331,56 @@ phases it picked up.
 (child issues are an Epic feature). There the phases are already flat TaskIDs in
 `todos.md` and `/do` walks them, so the board gets one card carrying the plan index
 and the phase list. `task_gl.py` gains no `--parent`.
+
+## Amendment, 2026-08-30: Completed means closed
+
+**The measured failure.** `jmtarot` #13 is the parent of phases #14 and #15. Both
+phases were built, verified and completed; the parent's PR #25 merged and closed
+#13 on its `Closes #13`. On the board all three read Done. On GitHub, #14 and #15
+were still **open**, and #13's own sub-issue progress read **0 of 2** — because
+`subIssuesSummary.completed` counts *closed* sub-issues, and no amount of board
+Status can tell GitHub otherwise. The parent card showed no progress for work that
+was already in `main`.
+
+**The cause was an assumption, not a bug.** The 2026-08-21 amendment replaced
+"never leave a card closed" with "never *reopen* a completed card", which was
+right, but it left closing entirely to the merge. That silently assumed every
+completed card has a merged PR carrying its own closing keyword. Two paths do not:
+
+- a **phase**, whose `Closes #N` sits on the *parent's* pull request — by design,
+  since the parent owns the PR;
+- `finish --allow-unmerged`, the card that genuinely has no pull request.
+
+Both were stranding cards Done-and-open forever, which is precisely the state the
+2026-08-21 amendment was written to eliminate. It eliminated it for one path.
+
+**The fix is the missing half of an existing pair.** `ensure_issue_closed` mirrors
+`ensure_issue_open`, and `cmd_status` and `complete_card` route through whichever
+the stage calls for. The rule is now symmetric and statable in one line: **the live
+stages open the issue, `Completed` closes it** — the same rule `task_gl.py` has
+enforced since it started closing on Completed, so the two backends now agree
+instead of differing for reasons nobody could restate.
+
+**Best-effort, and last.** The Status field is the authority and is already written
+by the time the close is attempted, so a failure is reported as `issue.closed:
+false` rather than raised. Same reasoning as `remoteBranchDeleted` in `land`: a
+tidy-up is not worth failing a card that genuinely completed.
+
+**Rejected: closing only phases.** The narrow fix for the measured case. But
+`--allow-unmerged` produces the identical state from the identical cause, and two
+rules where one will do is how the first assumption survived unexamined.
+
+**Rejected: a `--no-close` escape hatch.** Nothing in the loop wants a completed
+card left open, `reopen REF` already undoes it in one command, and an unattended
+loop never types a flag anyway.
+
+**Unchanged: `child_done` reads the board first.** Now that the two agree in the
+normal case the fallback matters less, but the precedence still decides the two
+disagreements, and each has one correct answer: a card dragged back to Open in the
+browser is open work however its issue state reads, and a card closed by hand that
+this loop never completed is not evidence that anything was built.
+
+**Unchanged: no cascading completion.** A parent's merge still does not complete
+its open phases — see the 2026-08-28 amendment. `openChildren` reports them, and
+with phases closing as they land that list is now empty on the normal path, which
+is what makes a non-empty one worth reading.

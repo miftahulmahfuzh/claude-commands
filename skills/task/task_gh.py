@@ -22,7 +22,7 @@ Subcommands:
   reopen REF                      reopen an issue a merged PR closed
   land REF                        sync with the base, emit the repo's CI gate; exit 2 on conflict
   land REF --after-gate           the gate passed: push, merge the PR, complete the card
-  finish REF                      Completed: needs a merged linked PR; leaves it closed
+  finish REF                      Completed: needs a merged linked PR; closes the issue
   finish REF --child-of P --commit SHA
                                   Completed for one phase: the parent owns the PR, so the
                                   evidence is a commit on the parent's branch
@@ -542,7 +542,8 @@ def family(items, repo, number):
 # pull request. Phase 2 builds on phase 1's work, which is not on origin/main yet, so a
 # child that cut its own branch off the base would be broken by construction. That is
 # why a phase completes on a commit -- see `finish --child-of` -- and only the parent
-# completes on a merge.
+# completes on a merge. Each still closes its own issue: `subIssuesSummary.completed`
+# counts closed sub-issues, so a phase left open holds the parent's progress bar at 0.
 
 _SUBTREE_QUERY = (
     "query($owner:String!,$name:String!,$number:Int!){"
@@ -646,10 +647,11 @@ def remove_sub_issue(parent_repo, parent_number, child_repo, child_number):
 def annotate_children(items, children, default_repo):
     """Add each sub-issue's board Status, which is the stage a phase actually carries.
 
-    A phase card is completed by `finish --child-of` and NOT closed -- only the parent's
-    merge closes anything -- so `state` alone reads every finished phase as unfinished.
-    The board field is the authority; `state` is the fallback for a card that is not on
-    the board at all.
+    `finish --child-of` writes Completed and then closes, so the two agree in the normal
+    case. The board field still leads: a card dragged back to Open in the browser is
+    open work whatever its issue state says, and a phase closed by hand without ever
+    being completed is not evidence that it was built. `state` is the fallback for a
+    card that is not on the board at all.
     """
     by_key = {(i["repo"], i["number"]): i for i in items if i["kind"] == "issue"}
     out = []
@@ -660,7 +662,11 @@ def annotate_children(items, children, default_repo):
 
 
 def child_done(child):
-    """Completed on the board, or closed. Either one means the phase is not blocking."""
+    """Completed on the board, or closed. Either one means the phase is not blocking.
+
+    Board first: `finish --child-of` writes Completed before it closes, so a card that
+    is closed but not Completed was closed by something other than this loop.
+    """
     status = str(child.get("status") or "").strip().lower()
     if status:
         return status in _DONE_NAMES
@@ -965,11 +971,11 @@ def cmd_status(args):
             "--field-id", cfg["statusFieldId"],
             "--single-select-option-id", option_id,
         )
-    # Live stages reopen; Completed does not (see ensure_issue_open). Runs even when
-    # the stage did not change, so a card dragged back to Open in the browser without
-    # being reopened is still repaired by the next stage write.
+    # Live stages reopen, Completed closes -- ensure_issue_open and its mirror. Runs even
+    # when the stage did not change, so a card dragged across the board in the browser
+    # without its state following is still repaired by the next stage write.
     if name == stage_map(cfg)["Completed"]:
-        issue = {"state": issue_state(item), "reopened": False}
+        issue = {"reopened": False, **ensure_issue_closed(item)}
     else:
         issue = ensure_issue_open(item)
     print(
@@ -1291,13 +1297,14 @@ def ensure_issue_open(item):
     combination says "nobody is working this, and also it is finished", and the
     board is the thing people trust instead of re-reading the code.
 
-    Completed is deliberately NOT routed through here. A merged PR closing its
-    issue is GitHub working correctly, and fighting it every time produced cards
-    that were Done-but-open forever. MEASURED on this board: six closed issues sit
-    in Done and are all still visible, so the auto-archive workflow this function
-    was originally written to dodge is not enabled -- the reason for reopening a
-    completed card does not apply. A card that resurfaces gets reopened by hand,
-    or with `reopen REF`, which is what that subcommand is for.
+    Completed is deliberately NOT routed through here; it goes to its mirror,
+    ensure_issue_closed. A merged PR closing its issue is GitHub working
+    correctly, and fighting it every time produced cards that were Done-but-open
+    forever. MEASURED on this board: six closed issues sit in Done and are all
+    still visible, so the auto-archive workflow this function was originally
+    written to dodge is not enabled -- the reason for reopening a completed card
+    does not apply. A card that resurfaces gets reopened by hand, or with
+    `reopen REF`, which is what that subcommand is for.
     """
     if item.get("kind") != "issue" or not item.get("number"):
         return {"state": None, "reopened": False}
@@ -1309,6 +1316,40 @@ def ensure_issue_open(item):
         return {"state": state, "reopened": False}
     gh("issue", "reopen", str(item["number"]), "--repo", item["repo"])
     return {"state": "OPEN", "reopened": True}
+
+
+def ensure_issue_closed(item, state=None):
+    """Completed means closed -- the mirror of ensure_issue_open, for the one stage it skips.
+
+    The ordinary card arrives here already closed, by its own merged PR's `Closes #N`,
+    so this is a no-op on the common path. The two paths with no such merge are what it
+    exists for, and both were leaving cards Done-and-open forever:
+
+      * a PHASE, because `Closes #N` sits on the PARENT's pull request and closes the
+        parent alone. GitHub's `subIssuesSummary.completed` counts CLOSED sub-issues, so
+        an open phase holds the parent card's own progress bar at 0 however green the
+        board is. MEASURED on jmtarot: #13 Done and closed on its merge, #14 and #15
+        built, verified and Completed, both still open, parent progress 0 of 2.
+      * `finish --allow-unmerged`, the card that genuinely has no pull request.
+
+    It also settles the asymmetry with GitLab, where `status <ref> Completed` has always
+    closed the issue in the same PUT. One rule on both backends: the live stages open, the
+    completed stage closes, and `reopen` is how work comes back.
+
+    Best-effort, and called last by every caller: the Status field is the authority and is
+    already written, so a failed close is worth reporting and never worth failing on.
+    """
+    if item.get("kind") != "issue" or not item.get("number"):
+        return {"state": None, "closed": False}
+    state = state if state is not None else issue_state(item)
+    if (state or "").upper() == "CLOSED":
+        return {"state": state, "closed": False}
+    try:
+        gh("issue", "close", str(item["number"]), "--repo", item["repo"],
+           "--reason", "completed")
+        return {"state": "CLOSED", "closed": True}
+    except TaskError as exc:
+        return {"state": state, "closed": False, "closeError": str(exc)}
 
 
 # --------------------------------------------------- worktree / pr subcommands
@@ -1588,7 +1629,9 @@ def cmd_finish(args):
     the truth, and the board keeps showing the card regardless (auto-archive is
     off -- see ensure_issue_open). `reopen REF` exists for when work resurfaces.
 
-    With --child-of the evidence changes but never disappears: see verify_phase.
+    With --child-of the evidence changes but never disappears: see verify_phase --
+    and there the close is performed rather than inherited, since the parent's
+    `Closes #N` closes the parent alone.
     """
     cfg = board_config(refresh=args.refresh)
     items = fetch_items(cfg)
@@ -1864,12 +1907,16 @@ def complete_card(cfg, item, note=None, allow_unmerged=False, child_evidence=Non
         gh("issue", "comment", str(item["number"]), "--repo", item["repo"], "--body-file", "-",
            stdin=note)
 
+    # Completed means closed -- last, and best-effort, so a failed close never costs a
+    # card the Status it earned. See ensure_issue_closed for the two paths that need it.
+    issue = {"reopened": False, **ensure_issue_closed(item, state)}
+
     return {
         "status": name,
         "changed": changed,
         "mergedPrs": [p["number"] for p in merged],
         "commented": bool(note),
-        "issue": {"state": state, "reopened": False},
+        "issue": issue,
         **({"childOf": child_evidence["parent"], "evidence": child_evidence}
            if child_evidence else {}),
         **({"openChildren": open_children} if open_children else {}),
@@ -2326,7 +2373,11 @@ def cmd_selftest(args):
     eq("in progress is not done", child_done(annotated[1]), False)
     eq("closed and unlisted is done", child_done(annotated[2]), True)
     eq("done by GitHub default name", child_done({"status": "Done"}), True)
-    # an OPEN issue whose board says Completed is done; the reverse is not
+    # the shape `finish --child-of` leaves behind: Completed on the board, issue closed
+    eq("a completed phase is closed too",
+       child_done({"status": "Completed", "state": "CLOSED"}), True)
+    # and the two disagreements, where the board wins either way: a close that failed,
+    # and a card closed by hand that this loop never completed
     eq("board beats open state", child_done({"status": "Completed", "state": "OPEN"}), True)
     eq("board beats closed state", child_done({"status": "Open", "state": "CLOSED"}), False)
 

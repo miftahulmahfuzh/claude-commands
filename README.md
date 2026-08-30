@@ -244,7 +244,7 @@ the reason commented on it; everything else gets decided.
 | Cards | GitHub Issues + a `Tasks` Projects board | GitLab Issues |
 | Stage | the board's Status field | `status::*` labels |
 | Development | worktree off `origin/main`, ending in a PR the session merges | mints a TaskID, hands off to `/do` |
-| Completed | linked PR merged | issue closed |
+| Completed | linked PR merged; the issue is closed either way | issue closed |
 | Phases of a plan set | sub-issues; the parent owns the branch and the PR | flat TaskIDs in `todos.md` |
 
 On GitHub the gate is the repo's **own** `.github/workflows` — every `run:` step of every
@@ -270,8 +270,10 @@ gate — but a resolution that removes the other card's behavior is not a resolu
 Three things measured rather than assumed: GitLab CE doesn't enforce scoped-label exclusivity,
 so transitions rewrite the whole label set and verify; in `todos.md` the checkbox is the stage
 only under `## Active Tasks`; and package codes aren't unique, so uniqueness is checked on the
-whole TaskID. On GitLab, Completed means **closed** — a shared repo showed 55 open issues, 44 of
-them finished; now 11.
+whole TaskID. **Completed means closed on both backends** — on GitLab that took a shared repo
+showing 55 open issues, 44 of them finished (now 11); on GitHub it took a parent card reading
+`0 of 2` while both its phases were green, because sub-issue progress counts *closed* children
+and only the parent's PR carried a closing keyword.
 
 **Layout:** `taskcore.py` (shared codec and stages) · `task_gh.py` (gh CLI) · `task_gl.py`
 (GitLab REST over urllib) · `todos.py` (the TaskID corpus). Every module has an offline
