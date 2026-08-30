@@ -215,6 +215,15 @@ and it is known the moment the card resolves. `session.py rename` is the same re
 `/rename` performs — it reaches the running process over the session's own socket, so
 the tab title, the `/resume` row and the name peers address all follow together.
 
+**It renames the tmux window too**, which under tmux is the only one of those the user
+can actually see — the status line covers the terminal's tab title, so a session rename
+alone leaves the window still reading `claude`. Two things it handles rather than
+assumes: tmux answers `display-message` for the *active* window unless the pane is named
+with `-t`, and a window can hold more than one session. A window shared with an ordinary
+session keeps the plain `task-20`, since that session makes no competing claim; a window
+holding two *task* sessions becomes `task-15+17`, because no single number is honest
+there. `--no-tmux` skips the half.
+
 Two rules: use **the card that was asked for**, even when `blockedBy` sends you through
 earlier phases first — the session is named for its errand, not its current file — and
 **never let it stop anything.** It cannot fail by design (no socket, no token, a session
@@ -810,7 +819,7 @@ task_gh.py    GitHub Issues + Projects v2 via the gh CLI, plus the worktree,
               pull-request and linked-PR plumbing (GitHub-only, by design)
 task_gl.py    GitLab Issues, via REST and urllib
 todos.py      the .workflows/todos.md corpus: scan, validate, mint, rename
-session.py    rename this Claude Code session to `task-<n>`, over its own socket —
+session.py    rename this Claude Code session — and its tmux window — to `task-<n>`,
               backend-agnostic, and unable to fail the caller
 ```
 

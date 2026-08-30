@@ -28,7 +28,14 @@ this can go wrong -- no socket in the environment (an SDK or print session), a s
 socket, a refused connection -- prints `renamed: false` with a reason and exits 0. A
 session that could not be renamed is a session with a duller name, not a broken task.
 
+THE TMUX WINDOW IS RENAMED TOO, because that is the label actually on screen. Claude
+Code's rename reaches the terminal's own tab title, which tmux covers up with its status
+line -- so in tmux the session rename is invisible and the window keeps whatever
+`automatic-rename` derived, which for every one of these is `claude`. `rename-window`
+also switches `automatic-rename` off for that window, so the name then stays put.
+
     python3 session.py rename task-17
+    python3 session.py rename task-17 --no-tmux
     python3 session.py name                 # what this session is called now
 """
 
@@ -37,6 +44,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
 from pathlib import Path
 
@@ -101,11 +109,109 @@ def send(lines, timeout=3.0):
     return True, None
 
 
-def rename(name):
+# ----------------------------------------------------------------- the tmux window
+
+TASK_NAME = re.compile(r"^task-(\d+)$")
+TMUX_ADDR = re.compile(r"(@\d+)\.(%\d+)")
+
+
+def tmux(*args):
+    """Run a tmux command, or return None if there is no tmux to run it against."""
+    if not os.environ.get("TMUX"):
+        return None
+    try:
+        out = subprocess.run(("tmux",) + args, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() if out.returncode == 0 else None
+
+
+def window_name(mine, siblings):
+    """What to call a window holding `mine` and, possibly, other task sessions.
+
+    A window is one label for however many panes are in it, and MEASURED here, panes get
+    shared: window @1 holds a task session and an ordinary one. So the rule is about who
+    has a competing claim. An ordinary session (`tarot-app-8f`) has none -- it is a
+    window that happens to also hold task 20, and `task-20` is the right name for it.
+    Two task sessions both have one, and no single number is honest, so both are shown.
+    """
+    names = [n for n in siblings if n and n != mine]
+    claims = sorted({mine, *[n for n in names if TASK_NAME.match(n)]},
+                    key=lambda n: (int(TASK_NAME.match(n).group(1)) if TASK_NAME.match(n)
+                                   else 0, n))
+    if len(claims) == 1:
+        return mine
+    if all(TASK_NAME.match(n) for n in claims):
+        return "task-" + "+".join(TASK_NAME.match(n).group(1) for n in claims)
+    return "+".join(claims)
+
+
+def panes_in_my_window():
+    """(window id, my pane id, every pane id in that window), or None outside tmux."""
+    pane = os.environ.get("TMUX_PANE")
+    if not pane:
+        return None
+    window = tmux("display-message", "-p", "-t", pane, "-F", "#{window_id}")
+    if not window:
+        return None
+    listed = tmux("list-panes", "-t", window, "-F", "#{pane_id}")
+    return window, pane, set((listed or "").split())
+
+
+def sessions_by_pane():
+    """The newest session record per tmux pane.
+
+    Newest wins because the records outlive their processes: pane %0 carries two, and
+    the stale one names a session that ended hours ago. `updatedAt` is the only thing
+    that separates them, and reading the older one would invent a sibling that is not
+    there.
+    """
+    out = {}
+    if not SESSIONS_DIR.is_dir():
+        return out
+    for path in SESSIONS_DIR.glob("*.json"):
+        try:
+            rec = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        hit = TMUX_ADDR.search(str(rec.get("tmux") or ""))
+        if not hit or not rec.get("name"):
+            continue
+        pane = hit.group(2)
+        if rec.get("updatedAt", 0) >= out.get(pane, {}).get("updatedAt", -1):
+            out[pane] = rec
+    return out
+
+
+def rename_window(mine):
+    """Rename this session's tmux window. Every failure is a report, never a raise."""
+    if not os.environ.get("TMUX"):
+        return {"renamed": False, "reason": "not inside tmux"}
+    found = panes_in_my_window()
+    if not found:
+        return {"renamed": False, "reason": "tmux did not report this pane's window"}
+    window, my_pane, panes = found
+    by_pane = sessions_by_pane()
+    siblings = [rec["name"] for pane, rec in by_pane.items()
+                if pane in panes and pane != my_pane]
+    wanted = slug(window_name(mine, siblings))
+    before = tmux("display-message", "-p", "-t", window, "-F", "#{window_name}")
+    if before == wanted:
+        return {"renamed": False, "window": window, "name": wanted,
+                "reason": "already named that"}
+    if tmux("rename-window", "-t", window, wanted) is None:
+        return {"renamed": False, "window": window, "requested": wanted,
+                "reason": "tmux rename-window failed"}
+    out = {"renamed": True, "window": window, "name": wanted, "from": before}
+    if siblings:
+        out["sharedWith"] = siblings
+    return out
+
+
+def rename_session(wanted):
     token = os.environ.get(TOKEN_ENV)
     if not token:
         return {"renamed": False, "reason": f"{TOKEN_ENV} is not set"}
-    wanted = slug(name)
     before = (session_record() or {}).get("name")
     if before == wanted:
         return {"renamed": False, "name": wanted, "reason": "already named that"}
@@ -119,21 +225,43 @@ def rename(name):
     return {"renamed": True, "name": wanted, "from": before}
 
 
+def rename(name, tmux_too=True):
+    """Both names, independently. The two can disagree and neither blocks the other.
+
+    A window already called `task-17` says nothing about whether the session is, and a
+    session rename that no-ops because it was already right must not leave a window
+    still reading `claude`. So the tmux half runs whatever the session half returned.
+    """
+    wanted = slug(name)
+    out = dict(rename_session(wanted), requested=wanted)
+    if tmux_too:
+        out["tmux"] = rename_window(wanted)
+    return out
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("rename", help="rename this session, e.g. task-17")
     p.add_argument("name")
+    p.add_argument("--no-tmux", dest="tmux", action="store_false",
+                   help="leave the tmux window name alone")
     sub.add_parser("name", help="print this session's current name")
     sub.add_parser("selftest", help="offline checks, no socket needed")
     args = parser.parse_args(argv)
 
     if args.cmd == "rename":
-        print(json.dumps(rename(args.name), indent=2))
+        print(json.dumps(rename(args.name, tmux_too=args.tmux), indent=2))
     elif args.cmd == "name":
         rec = session_record() or {}
+        # -t is not optional: without it tmux answers for the ACTIVE window, which is
+        # whichever one the user is looking at, not the one this command is running in.
+        pane = os.environ.get("TMUX_PANE")
         print(json.dumps({"name": rec.get("name"), "source": rec.get("nameSource"),
-                          "sessionId": rec.get("sessionId")}, indent=2))
+                          "sessionId": rec.get("sessionId"),
+                          "tmuxWindow": tmux("display-message", "-p", "-t", pane, "-F",
+                                             "#{window_id} #{window_name}")
+                          if pane else None}, indent=2))
     else:
         return selftest()
     return 0
@@ -154,15 +282,33 @@ def selftest():
     eq("never empty", slug("///"), "task")
     eq("length capped", len(slug("t" * 200)), MAX_NAME)
 
+    # A window alone keeps the plain name; an ordinary session sharing it has no
+    # competing claim, and a second TASK session does.
+    eq("alone", window_name("task-17", []), "task-17")
+    eq("an ordinary session is not a claim",
+       window_name("task-20", ["tarot-app-8f"]), "task-20")
+    eq("two tasks share the label", window_name("task-17", ["task-15"]), "task-15+17")
+    eq("numeric order, not string order",
+       window_name("task-9", ["task-17"]), "task-9+17")
+    eq("three", window_name("task-9", ["task-17", "task-2"]), "task-2+9+17")
+    eq("a duplicate is not a sibling", window_name("task-17", ["task-17"]), "task-17")
+    eq("an ordinary sibling drops out of a shared label",
+       window_name("task-17", ["hotfix", "task-2"]), "task-2+17")
+    # the only way a non-task name survives is being the one asked for
+    eq("mixed shapes fall back to whole names",
+       window_name("hotfix", ["task-2"]), "hotfix+task-2")
+
     # No socket in the environment must be a report, never an exception: a task loop
     # that died because it could not rename a window would be an absurd way to lose work.
-    saved = {k: os.environ.pop(k, None) for k in (SOCKET_ENV, TOKEN_ENV)}
+    saved = {k: os.environ.pop(k, None) for k in (SOCKET_ENV, TOKEN_ENV, "TMUX")}
     try:
         eq("no token is a soft no", rename("task-1")["renamed"], False)
+        eq("no tmux is a soft no", rename("task-1")["tmux"]["renamed"], False)
         os.environ[TOKEN_ENV] = "x"
         out = rename("task-1")
         eq("no socket is a soft no", out["renamed"], False)
         eq("and says why", SOCKET_ENV in out["reason"], True)
+        eq("--no-tmux omits the half", "tmux" in rename("task-1", tmux_too=False), False)
     finally:
         os.environ.pop(TOKEN_ENV, None)
         for k, v in saved.items():

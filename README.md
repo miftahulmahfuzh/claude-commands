@@ -278,7 +278,8 @@ and only the parent's PR carried a closing keyword.
 Claiming a card also renames the terminal to `task-<n>`: five sessions in one repo otherwise
 all carry the same derived name, and the card number is the only thing that separates them.
 It goes over the session's own messaging socket, the way `/rename` does, so the tab title,
-the `/resume` row and the peer address change together — and it can never fail the loop.
+the `/resume` row and the peer address change together — plus the tmux window, which under
+tmux is the only one of those actually on screen. It can never fail the loop.
 
 **Layout:** `taskcore.py` (shared codec and stages) · `task_gh.py` (gh CLI) · `task_gl.py`
 (GitLab REST over urllib) · `todos.py` (the TaskID corpus) · `session.py` (the rename).

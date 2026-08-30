@@ -426,3 +426,37 @@ and a name that tracked the working file would change under the user mid-task.
 and it works, but `session.py` opens the AF_UNIX socket from Python directly —
 `nc`/`socat` are not installed everywhere, and this must not become the reason a rename
 fails on a fresh laptop.
+
+## Amendment, 2026-08-30: the tmux window, which is the name actually on screen
+
+**Renaming the session was half the job.** Claude Code's rename reaches the terminal's
+own tab title — and tmux covers that with its status line. MEASURED: with the session
+renamed to `task-99`, the tmux window still read `claude`, so under tmux the whole
+feature was invisible to the person it was for. `tmux rename-window` is the other half,
+and it also switches that window's `automatic-rename` off, so the name then stays put
+instead of reverting to the running command.
+
+**Two things the obvious one-liner gets wrong, both measured on this machine:**
+
+- **`display-message` answers for the ACTIVE window** unless the pane is named with
+  `-t $TMUX_PANE`. The first version of the `name` subcommand reported `@1 task-20`
+  while running in `@2` — the window the user happened to be looking at. A rename built
+  on that would have renamed somebody else's window.
+- **A window can hold more than one session.** Window `@1` holds a task session and an
+  ordinary one. One window has one name, so the question is who has a competing claim:
+  `tarot-app-8f` has none — it is a window that also happens to hold task 20, and
+  `task-20` is the right name for it. Two *task* sessions both do, and no single number
+  is honest, so the window becomes `task-15+17`.
+
+**Session records are matched newest-first per pane.** They outlive their processes:
+pane `%0` carries two, and the stale one names a session that ended hours ago. Reading
+the older record would invent a sibling that is not there and produce a combined name
+for a window that holds one session.
+
+**Rejected: restoring the old name when the card completes.** The window would flick
+back to `claude` the moment work landed, which is precisely when the user is looking for
+which window did what. The name is history worth keeping until something else claims it.
+
+**Rejected: skipping the rename on a shared window.** It is the safe-looking option and
+it is wrong — the window keeps whatever stale name it had, which is how `@1` ended up
+named for a session that is no longer in it.
