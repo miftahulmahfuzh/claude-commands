@@ -38,6 +38,27 @@ deletes inside `~/.claude/commands/` and is safe to re-run.
 | `/token-maxxing` | Starts a high-consumption session on deliberately useful work |
 | `/token-maxxing-update-docs` | Records that session |
 
+### Session names
+
+Five terminals open on one repo all carry the same derived name — `agentic-8f`, `agentic-d4` —
+which says which repo and not which piece of work. So the long-running commands rename the
+session after their errand, as soon as they know it:
+
+| Command | Name | Renamed at |
+|---|---|---|
+| `/task <n>` | `task-<n>` | claiming the card |
+| `/analyze` | `analyze-<slug>` | step 4, with the worktree — and also without one |
+| `/implement` | `impl-<slug>-p<N>` | step 2 from the index, sharpened once the phase is picked |
+| `/do <TaskID>` | `do-<TaskID>` | immediately; the id is the argument |
+| `/token-maxxing` | `tokenmax-<idea>` | step 7, with the day's branch |
+
+All five call `skills/task/session.py`, which sends the same `/rename` control message over the
+session's own messaging socket — so the tab title, the `/resume` row and the name peers address
+change together, instead of a file write the running process would ignore. It renames the **tmux
+window** too, which under tmux is the only one of those actually on screen, since the status line
+covers the terminal's tab title. It can never fail the caller: no socket, no tmux, or a
+non-interactive session all produce `renamed: false` with a reason and exit 0.
+
 ### `/analyze`
 
 Traces dataflow, documents structure, and **writes the implementation plan**. It is the only

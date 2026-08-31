@@ -173,6 +173,28 @@ Then:
   Write in place, and say plainly which branch the plans are pinned to.
 - If already inside a worktree that isn't the default branch, reuse it — do not nest.
 
+**Then name the session after the slug, in the same breath:**
+
+```bash
+python3 ~/.claude/skills/task/session.py rename "analyze-$SLUG"
+```
+
+Five terminals open on one repo all carry the same derived name — `agentic-8f`, `agentic-d4` —
+which says which repo and not which piece of work, so the right window is found by reading
+scrollback and `/resume` a week later offers a row of near-identical titles. The slug is the one
+label that separates them, and it is known here. This is the same rename `/rename` performs: it
+reaches the running process over the session's own socket, so the tab title, the `/resume` row
+and the name peers address all follow together — **and the tmux window too**, which under tmux is
+the only one of those the user can actually see, because the status line covers the terminal's
+tab title. `--no-tmux` skips that half.
+
+Two rules. **The rename is not part of the worktree:** do it even when `git worktree add` was
+skipped by `--no-worktree` or failed, because the name is about finding the window, not about the
+branch. And **never let it stop anything** — it cannot fail by design (no socket, no tmux, a
+session started some other way → `renamed: false` with a reason, exit 0), and an analysis is not
+worth losing over the name of a window. Keep the slug to three or four words; the name is capped
+at 60 characters and a tmux window is narrow.
+
 ### Step 5: Write the Analysis Document
 
 Create `<session-id>_code_analyzer.md` at the worktree root. Template below.
@@ -532,6 +554,7 @@ Plan written to     <worktree>/<SLUG>_PLAN.md   (<N> phase(s)<, M inconsistencie
 
 Worktree: <path>
 Branch:   feature/<slug>  (base <ref> @ <sha>)
+Session:  analyze-<slug>  <or the reason it kept its old name>
 
 Requirements:
   R1 <what the user asked for>   -> phases 3, 4

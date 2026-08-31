@@ -25,6 +25,32 @@ gets one from `/analyze`.
 
 ## Pipeline
 
+### Phase 0: Name the Session (Main Context)
+
+The moment the TaskID validates — before the locator runs, because the id is the argument and
+needs nothing looked up:
+
+```bash
+python3 ~/.claude/skills/task/session.py rename "do-P1-DB-A236"
+```
+
+Five terminals open on one repo all carry the same derived name — `agentic-8f`, `agentic-d4` —
+which says which repo and not which task, so the right window is found by reading scrollback and
+`/resume` a week later offers a row of near-identical titles. The TaskID is the one label that
+separates them. It is the same rename `/rename` performs: it reaches the running process over the
+session's own socket, so the tab title, the `/resume` row and the name peers address all follow
+together — **and the tmux window too**, which under tmux is the only one of those the user can
+actually see, because the status line covers the terminal's tab title. `--no-tmux` skips that
+half.
+
+Use **the TaskID that was asked for**, even on a plan-set phase that sends you through an earlier
+task first — the session is named for its errand, not for its current file. And **never let it
+stop anything**: it cannot fail by design (no socket, no tmux, a session started some other way →
+`renamed: false` with a reason, exit 0), and a task is not worth losing over the name of a window.
+
+This does not breach the main-context rule below: it reads no `.workflows` file, no
+documentation, and runs no git. It is one command that names the terminal.
+
 ### Phase 1: Preparation (Subagents 1 → 2 → 3)
 
 All preparation happens in isolated subagent contexts.
@@ -148,6 +174,7 @@ Stages, writes a conventional-commit message, commits, pushes.
 
 | Phase | Context | Reads | Writes |
 |---|---|---|---|
+| `session.py rename` | main context | nothing | the session's own name |
 | `task-locator` | isolated | all `todos.md` | none |
 | `context-loader` | isolated | `todos.md`, docs | none |
 | `plan-generator` | isolated | plan file, if any | none |
@@ -202,6 +229,7 @@ Extract the package path from the match: `./chatbot/bowl/.workflows/todos.md` �
 
 **Progress:**
 ```
+🏷️  Session renamed: do-P1-DB-A236
 🔍 Locating task... (task-locator)
 📁 Found: P1-DB-A236 in db/.workflows/todos.md
 📋 Loading context... (context-loader)

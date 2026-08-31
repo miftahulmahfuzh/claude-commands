@@ -88,6 +88,29 @@ git checkout -b "token-maxxing-<DATE>" 2>/dev/null || git checkout "token-maxxin
 One branch per day — reuse it if it already exists. All work lands here; do NOT merge
 to `main` automatically (the user reviews and merges later).
 
+Then name the session after the idea, not after the day:
+
+```bash
+python3 ~/.claude/skills/task/session.py rename "tokenmax-<IDEA-SLUG>"
+```
+
+Five terminals open on one repo all carry the same derived name — `agentic-8f`, `agentic-d4` —
+which says which repo and not which work, so the right window is found by reading scrollback and
+`/resume` a week later offers a row of near-identical titles. The branch is per *day* and the
+sessions under it are not, so the idea is what separates them: `tokenmax-queue-refactor`, not
+`tokenmax-2026-08-31`. Keep it to three or four words — the name is capped at 60 characters and a
+tmux window is narrow.
+
+It is the same rename `/rename` performs: it reaches the running process over the session's own
+socket, so the tab title, the `/resume` row and the name peers address all follow together — **and
+the tmux window too**, which under tmux is the only one of those the user can actually see,
+because the status line covers the terminal's tab title. `--no-tmux` skips that half. It cannot
+fail (no socket, no tmux, a session started some other way → `renamed: false` with a reason, exit
+0), and a session is not worth stopping over the name of a window.
+
+If the scope changes mid-session (a `reroll`, or the work turns into something else), rename
+again — it is idempotent and costs nothing.
+
 ### 8. Roll
 Do the work. Commit real increments with clear messages. Follow the project's skills
 (TDD, systematic-debugging, etc.) as normal — quality still matters. Be thorough and
@@ -107,6 +130,10 @@ against each other before anything is implemented. `--no-worktree` keeps the wor
 
 This is also high burn spent well: N planners in parallel plus a reconciliation pass, on work
 that ends in a reviewed plan rather than a half-finished refactor.
+
+`/analyze` renames the session to `analyze-<slug>` as part of its own step 4. Leave it — that name
+is *more* specific than the day's idea, and it is the one the plan index and the artifacts carry.
+Rename back to `tokenmax-<IDEA-SLUG>` only once planning is done and implementation moves on.
 
 ### 9. Auto-write the session doc when done
 When you judge the work complete (or at a natural stopping point), **spawn a fresh

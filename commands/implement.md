@@ -61,6 +61,26 @@ reconciliation deliberately left these for a human; implementing over them guess
 Read only the index here. Phase plans are read in Step 4, one at a time, so the main context
 never holds plans for phases it is not implementing.
 
+**Then name the session after the slug**, which the index just gave you:
+
+```bash
+python3 ~/.claude/skills/task/session.py rename "impl-<slug>"
+```
+
+Five terminals open on one repo all carry the same derived name — `agentic-8f`, `agentic-d4` —
+which says which repo and not which plan, so the right window is found by reading scrollback and
+`/resume` a week later offers a row of near-identical titles. The slug is the one label that
+separates them. It is the same rename `/rename` performs: it reaches the running process over the
+session's own socket, so the tab title, the `/resume` row and the name peers address all follow
+together — **and the tmux window too**, which under tmux is the only one of those the user can
+actually see, because the status line covers the terminal's tab title. `--no-tmux` skips that
+half.
+
+**Never let it stop anything.** It cannot fail by design (no socket, no tmux, a session started
+some other way → `renamed: false` with a reason, exit 0), and a plan is not worth losing over the
+name of a window. Keep the slug to three or four words if the index's is long — the name is
+capped at 60 characters and a tmux window is narrow.
+
 ## Step 3: Create the Tasks (Subagent — required)
 
 Only on the first run against this plan. Detect a re-run from the index's TaskID column, or by
@@ -101,6 +121,17 @@ it must not alter the plan content it copies.
 
 Pick the phase: `--phase N` if given, else the lowest-numbered phase whose task is not complete.
 Refuse a phase whose `Depends on` tasks are incomplete — name the blocker.
+
+Then sharpen the session's name with the phase you just picked, so two terminals on the same plan
+set are still distinguishable:
+
+```bash
+python3 ~/.claude/skills/task/session.py rename "impl-<slug>-p<N>"
+```
+
+A second rename costs nothing — it is idempotent, and reports `renamed: false` when the name is
+already right. **With `--all` skip it:** that session works every remaining phase, so a phase
+number in its name would be stale for most of its life; `impl-<slug>` from Step 2 stays.
 
 Read that phase's plan file and apply its steps in order. The code blocks are complete by
 construction; use them.
@@ -155,6 +186,7 @@ A single-phase plan finishes in one run either way.
 Files modified: {count}
 Plan: {pkg}/.workflows/plan/{TaskID}.md
 Branch: {branch}
+Session: impl-{slug}-p{N}
 Verification: {command} — passed
 
 Remaining: phase {N+1} ({TaskID}), phase {N+2} ({TaskID})
@@ -203,7 +235,7 @@ missing part of a plan.
 
 ```
 Main context (Steps 1–2)
-    → read the plan index only
+    → read the plan index only, then name the session impl-<slug>
     ↓
 Subagent (Step 3)
     → todos.md entries + adopted plan copies

@@ -823,6 +823,14 @@ session.py    rename this Claude Code session — and its tmux window — to `ta
               backend-agnostic, and unable to fail the caller
 ```
 
+`session.py` has consumers outside this skill: `/analyze` names itself `analyze-<slug>`, `/do`
+`do-<TaskID>`, `/implement` `impl-<slug>-p<N>`, `/token-maxxing` `tokenmax-<idea>`. So **keep it
+free of task-specific behaviour** — it takes a name and applies it. One shape is privileged and
+should stay that way: `window_name` collapses two `task-<n>` sessions sharing a tmux window into
+`task-15+17`, and anything else joins whole names, which is correct but long. That is a display
+nicety for the backend that actually gets five windows open at once, not a contract the other
+commands rely on.
+
 Every one has a `selftest` (`python3 taskcore.py` for the shared half) that runs
 offline with no token and no network. Run all five after touching any of them —
 `taskcore` is imported by both backends, so a change there moves both.
