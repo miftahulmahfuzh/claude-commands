@@ -142,19 +142,28 @@ noted, large drift stops with `Re-run /analyze`.
 ```bash
 /do P2-CL-A001                                    # EASY — brief from the task text
 /do P1-DB-A236 --note="also handle the bulk path"
-/do P1-TC-A002                                    # a plan-set phase — adopts its plan
+/do P1-TC-A002                                    # a plan-set phase — executes its plan directly
 ```
 
-Five subagents around one main-context step: `task-locator` finds the TaskID, `context-loader`
-condenses the docs, `plan-generator` emits a routing brief, **the main context writes the code**,
-and `completion-handler` updates `todos.md` before chaining `readme-updater` and `pusher`.
+Subagents around one main-context step, and **the route depends on whether the task has a plan**.
+`task-locator` finds the TaskID either way. Then:
 
-The main context never reads `todos.md`, `package_readme.md`, `analysis_report.md`, or plan
-files, and never runs git — that isolation is the point of the design.
+- **Adopted path** — the task carries a `**Plan**:` line and the file is there, which is every
+  phase of an `/analyze` plan set. `context-loader` and `plan-generator` are both skipped and
+  **the main context reads that plan and applies it.** The plan's code blocks are complete by
+  construction, and a brief has nowhere to put them, so passing a cooked plan through
+  `plan-generator` would compress them into prose the executor then works from instead of the
+  code. `/implement` has always read the phase plan directly; this is the same behavior reached
+  from a TaskID.
+- **Brief path** — no plan file. `context-loader` condenses the docs, `plan-generator` emits a
+  routing brief, and **the main context writes the code**. A **HARD task with no plan file is
+  refused**, pointing at `/analyze`: that's exactly the case where a real plan matters.
 
-`plan-generator` adopts the task's plan file when there is one and builds a brief from the task
-text when there isn't. A **HARD task with no plan file is refused**, pointing at `/analyze`:
-that's exactly the case where a real plan matters.
+Either way `completion-handler` updates `todos.md` before chaining `readme-updater` and `pusher`.
+
+The main context never reads `todos.md`, `package_readme.md` or `analysis_report.md`, and never
+runs git. It reads exactly one plan file — the adopted one — and no other `.workflows` file;
+that isolation is the point of the design.
 
 ### `/dbg`
 
@@ -206,8 +215,8 @@ Dispatched by `subagent_type`. `haiku` for mechanical work, `opus` where judgmen
 | Agent | Model | Purpose |
 |---|---|---|
 | `task-locator` | haiku | find a TaskID across every `todos.md`, return metadata |
-| `context-loader` | opus | read package docs, return a condensed packet |
-| `plan-generator` | opus | routing brief — adopts a plan file, never writes one |
+| `context-loader` | opus | read package docs, return a condensed packet (brief path only) |
+| `plan-generator` | opus | routing brief for a task with no plan; refuses one that has a plan |
 | `phase-planner` | opus | plan one phase, in parallel with the others |
 | `plan-reconciler` | opus | resolve cross-phase conflicts by editing the plans |
 | `completion-handler` | opus | update `todos.md`, then chain readme-updater and pusher |
