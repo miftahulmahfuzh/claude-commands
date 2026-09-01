@@ -504,9 +504,18 @@ Leave both `—` — writing a card ref here yourself invents one.>
 
 ## Next
 
-    /implement -f <SLUG>_PLAN.md          # execute the phases
-    /create-task --from-plan <SLUG>_PLAN.md   # put them on the board first (GitHub repos)
+Execute the phases, starting at phase 1:
+
+    /implement -f <SLUG>_PLAN.md --phase 1
+
+Or put them on the board first (GitHub repos only):
+
+    /create-task --from-plan <SLUG>_PLAN.md
 ```
+
+Note the shape of that section: each command sits alone on its line with its explanation
+**above** it. A trailing `#` on a slash-command line is read as arguments, not as a comment, so a
+commented command is not a pasteable one.
 
 ---
 
@@ -566,7 +575,16 @@ Phases:
 
 <If Open Questions is non-empty, list them here — /implement will stop and ask.>
 
-Run from the worktree, in a new session:
-cd <worktree>
-/implement -f <SLUG>_PLAN.md
+Next — phase 1 of <N>, in a new session:
+
+  cd <worktree>
+  /implement -f <SLUG>_PLAN.md --phase 1
 ```
+
+`--phase 1` is explicit on purpose: the plan set has just been written, so phase 1 is what starts
+it, and naming it means the line still says what it does when it is read back a week later.
+`/implement` refuses a `--phase N` whose task is already complete, so a re-paste is safe.
+
+The command sits alone on its own line so it can be selected and pasted, and nothing follows it
+on that line — a trailing `# comment` is read as arguments to the slash command. `/do` and
+`/implement` end with the same shape.

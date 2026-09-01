@@ -44,7 +44,24 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
    - EASY/NORMAL: target branch is current branch (typically `main`).
    - Plan-set phases: target branch is the plan set's branch. Do NOT merge to main.
 
-5. **Final report**:
+5. **Work out the next session's command.** You are the only step that has read the plan
+   index, so this is yours to produce and the calling command's only to print. It is what
+   lets a plan set be walked from phase 1 to phase N without anyone re-deriving the order.
+
+   - **`plan_set`, and a later phase exists** → `next_command` is `/do {next_task_id}` and
+     `next_label` is `phase {N+1} of {total}`. Use the `next_task_id` you were given; if it
+     was empty, read the next unfinished phase's TaskID out of the plan index you just
+     ticked in step 2b.
+   - **`plan_set`, and this was the last phase** → there is no next task. Leave
+     `next_command` empty and return the merge line instead:
+     `git checkout main && git merge {branch}`.
+   - **No `plan_set`** → `next_command` is empty. A standalone task has no successor, and
+     a suggestion at the end of every EASY task is noise.
+
+   **Never invent a TaskID.** If the plan index names none, return it empty and say why —
+   a wrong command that looks pasteable is worse than no command.
+
+6. **Final report**:
    ```
    ✅ Task Completed: {task_id}
    📦 Package: {package_path}
@@ -53,7 +70,18 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
    💾 Commit: {hash}
    🌿 Branch: {branch}
    ```
-   On the last phase of a plan set, append merge instructions referencing its branch.
+   Then, when `next_command` is non-empty, the hand-off block — a label saying what it
+   starts, then the command **alone on its own line** so it can be selected and pasted:
+   ```
+   Next — {next_label}, in a new session:
+
+     cd {the plan set's worktree, when it has one}
+     {next_command}
+   ```
+   Put nothing after the command on that line. A trailing `# comment` is read as arguments
+   to the slash command, not as a comment.
+
+   On the last phase of a plan set, the merge line goes in that slot instead.
 
 ## Rules
 - NEVER run `git add/commit/push` directly. The pusher subagent owns all git side effects.

@@ -122,6 +122,11 @@ it must not alter the plan content it copies.
 Pick the phase: `--phase N` if given, else the lowest-numbered phase whose task is not complete.
 Refuse a phase whose `Depends on` tasks are incomplete — name the blocker.
 
+**Refuse an explicit `--phase N` whose task is already complete**, and name the phase that is
+actually next. `/analyze` hands the user `--phase 1` to paste, so that flag will be re-pasted;
+applying a landed phase's plan to a tree that already contains it produces conflicts that look
+like drift.
+
 Then sharpen the session's name with the phase you just picked, so two terminals on the same plan
 set are still distinguishable:
 
@@ -166,12 +171,18 @@ and no git operations.
 
 ## Step 5: Stop or Continue
 
-**Default: stop after one phase.** Print the next command and let the user start a fresh
+**Default: stop after one phase.** Print the hand-off block and let the user start a fresh
 session — a phase is exactly the unit that fits in one clean context, and phase N+1's plan was
 written assuming phase N had landed and been reviewed.
 
+Every terminating branch below ends with a Next block, including the failures: a session that
+stops without saying what to run next has handed the user a puzzle. The command sits alone on its
+own line so it can be selected and pasted, and nothing follows it on that line — a trailing
+`# comment` is read as arguments to the slash command. `/do` and `/analyze` print the same shape.
+
 **With `--all`:** loop back to Step 4 for the next phase in the same session. Say once, up
-front, that context grows across phases.
+front, that context grows across phases. When the loop ends, print the **All phases done** block
+— the same terminal hand-off a one-phase-at-a-time run reaches.
 
 A single-phase plan finishes in one run either way.
 
@@ -191,8 +202,10 @@ Verification: {command} — passed
 
 Remaining: phase {N+1} ({TaskID}), phase {N+2} ({TaskID})
 
-Next, in a fresh session from this worktree:
-/do {TaskID of phase N+1}
+Next — phase {N+1} of {total}, in a new session:
+
+  cd {worktree}
+  /do {TaskID of phase N+1}
 ```
 
 **All phases done:**
@@ -200,21 +213,35 @@ Next, in a fresh session from this worktree:
 ✓ Plan complete — {SLUG}_PLAN.md ({total} phase(s))
 
 Branch: {branch}
-Review and merge:
+
+Next — review and merge:
+
+  cd {worktree}
   git checkout main && git merge {branch}
 ```
 
 **Blocked:**
 ```
 ✗ Phase {N} ({TaskID}) depends on {TaskID}, which is not complete.
+
+Next — the blocking phase, in a new session:
+
+  cd {worktree}
+  /do {blocking TaskID}
 ```
 
 **Drifted:**
 ```
 ✗ Phase {N} plan does not match the current tree.
   {what drifted}
-  Re-run /analyze to re-plan against the current tree.
+
+Next — re-plan against the current tree, in a new session:
+
+  cd {worktree}
+  /analyze {plan set title} — re-planning {SLUG}_PLAN.md, {what drifted}
 ```
+`/analyze` takes free-form prose, so the drift note travels with the command instead of being
+something the user has to remember to retype.
 
 ---
 
