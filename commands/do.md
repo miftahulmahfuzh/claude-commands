@@ -154,7 +154,14 @@ completion_report:
 Marks the task complete in `todos.md` (`- [ ]` → `- [x]`, completion metadata, move to
 **Completed Tasks**, update Quick Stats), updates `analysis_report.md` if a documented finding
 was resolved, and — for a plan-set phase — ticks the phase in the plan index and unblocks the
-next phase's task. Then dispatches:
+next phase's task.
+
+It also returns **the next session's command** — `/do {next TaskID}`, or the merge line when the
+phase just completed was the last one. It is the only step in this pipeline that has read the plan
+index, so the main context prints what it returns instead of deriving it; deriving it would mean
+reading `todos.md` in the main context, which is the thing this pipeline exists to prevent.
+
+Then dispatches:
 
 #### Step 5: `readme-updater` (opus)
 
@@ -251,6 +258,41 @@ Extract the package path from the match: `./chatbot/bowl/.workflows/todos.md` �
 💾 Commit: abc1234
 🌿 Branch: main
 ```
+
+**Success — a plan-set phase with another phase to go.** End with the hand-off block, exactly as
+`completion-handler` returned it, and print nothing after it:
+```
+✅ Task Completed: P1-TC-A001
+📦 Package: toolcore
+📄 Modified: caller.go, caller_test.go
+📝 Updated: todos.md, PURGE_DIRECT_STREAMING_TOOL_PLAN.md
+💾 Commit: abc1234
+🌿 Branch: feature/purge-direct-streaming-tool
+
+Next — phase 2 of 4, in a new session:
+
+  cd ~/.worktrees/agentic/purge-direct-streaming-tool
+  /do P1-TC-A002
+```
+
+**Success — the last phase of a plan set.** No next task exists, so the hand-off is the merge:
+```
+✅ Task Completed: P1-TC-A004
+📦 Package: toolcore
+🌿 Branch: feature/purge-direct-streaming-tool
+
+Plan complete — 4/4 phases. Next, to review and merge:
+
+  cd ~/.worktrees/agentic/purge-direct-streaming-tool
+  git checkout main && git merge feature/purge-direct-streaming-tool
+```
+
+**A task that is not a plan-set phase prints no Next block.** There is no successor to name, and
+guessing one would put a wrong command at the end of every EASY task.
+
+Two rules for the block, wherever it appears: the command sits **alone on its own line** so it can
+be selected and pasted, and **nothing follows it on that line** — a trailing `# comment` is read
+as arguments to the slash command. `/implement` and `/analyze` print the same shape.
 
 **Errors:**
 ```

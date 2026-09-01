@@ -393,11 +393,20 @@ you're on.
 # → worktree feature/<slug>, an analysis doc, PURGE_..._PLAN.md, and
 #   .workflows/plan/<slug>/phase-N.md for each phase, reconciled against each other
 
-# Session 2..N — one phase each
+# Session 2 — phase 1, which also creates one task per phase
 cd ~/.worktrees/<repo>/<slug>
-/implement -f PURGE_..._PLAN.md         # phase 1, creates a task per phase
-/do P1-TC-A002                          # phase 2, in a fresh session
+/implement -f PURGE_..._PLAN.md --phase 1
+
+# Session 3..N — one phase each
+cd ~/.worktrees/<repo>/<slug>
+/do P1-TC-A002
 ```
+
+**You don't have to remember any of those commands.** Each session ends by printing the next
+one, ready to paste: `/analyze` hands you the `--phase 1` line, and every `/do` or `/implement`
+that finishes a phase hands you the following phase's `/do`. The last phase hands you the merge
+instead. The command is always alone on its own line so it can be selected and pasted — nothing
+follows it there, because a trailing `#` on a slash-command line is read as arguments.
 
 Read the plan index's **Open Questions** before starting — reconciliation puts anything it
 couldn't resolve without guessing there. Merge the branch once as a whole.
