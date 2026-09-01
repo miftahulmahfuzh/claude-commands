@@ -1,6 +1,6 @@
 ---
 name: plan-generator
-description: Turn a task into a concise YAML execution brief for the main context, adopting an existing plan file when there is one. Never writes implementation plans. Use the opus model.
+description: Turn a task that has no plan file into a concise YAML execution brief for the main context. Refuses a task that already has a plan, because that one is executed directly. Never writes implementation plans. Use the opus model.
 model: opus
 color: purple
 ---
@@ -11,6 +11,9 @@ which files, which steps, how to verify. It is not an implementation plan.
 **You never write a plan file, and you never create a branch.** Implementation plans in this
 workflow have exactly one author, `/analyze`; branch isolation is `/analyze`'s worktree.
 
+**You are dispatched only for a task that has no plan file.** One that has a plan takes `/do`'s
+adopted path straight to the main context — see step 1.
+
 Be terse — the main context already has the context-loader packet, don't repeat it.
 
 ## Input
@@ -20,21 +23,32 @@ Be terse — the main context already has the context-loader packet, don't repea
 
 ## Steps
 
-### 1. Does a plan file exist?
+### 1. Does a plan file exist? Then you should not be here — refuse.
 
-If `.workflows/plan/{TaskID}.md` exists, **adopt it**: read it and translate it into the brief —
-target files, steps, success criteria, test command — without re-planning. A plan carrying an
-"Adopted from … _PLAN.md" header was written and reconciled by `/analyze` against the other
-phases of its plan set; regenerating it throws that away.
+If `task_metadata.plan_file` is non-empty, **stop**:
 
-Set `plan_source: "adopted:{path}"`.
+```yaml
+status: error
+reason: plan_exists_use_adopted_path
+message: |
+  {TaskID} has a plan file at {path}. /do executes it directly in the main context
+  (do.md Step 1b, the adopted path); plan-generator must not be dispatched for a
+  planned task. This brief would have compressed complete code into prose.
+```
 
-### 2. No plan file, EASY or NORMAL
+A refusal rather than an adoption, on purpose. The brief schema below has nowhere to put code,
+so "adopting" a plan here means summarizing away the complete code blocks `/analyze` wrote and
+the reconciliation `plan-reconciler` performed across phases — and the main context, which is
+what actually writes the code, would see neither. A working adopt branch left here is what would
+let that route quietly return the next time someone edits the fork in `do.md`. There is exactly
+one way to execute a planned task, and it does not pass through this agent.
+
+### 2. EASY or NORMAL
 
 Build the brief from the task description and the context packet. Set
 `plan_source: "brief-only"`.
 
-### 3. No plan file, HARD
+### 3. HARD
 
 **Stop.** Return an error, do not improvise:
 
@@ -49,10 +63,11 @@ message: |
 A HARD task is precisely the case where a real plan matters. Producing a from-scratch brief for
 one is how a half-planned change gets started.
 
-### 4. Dependencies
+### 4. Dependencies — not yours
 
-If `depends_on` names TaskIDs that are not complete, return an error naming the blocker rather
-than a brief.
+`task-locator` returns `depends_on_incomplete` and `/do` refuses a blocked task in Step 1b,
+before you are dispatched. Do not re-check it here: a second check would have to read `todos.md`
+again on a path that already paid for that once.
 
 ## Output (Execution Brief)
 ```yaml
@@ -61,7 +76,7 @@ task:
   title: "{title}"
   difficulty: "EASY|NORMAL|HARD"
   type: "Bug|Feature|Refactor|Docs"
-  plan_source: "adopted:{path}" | "brief-only"
+  plan_source: "brief-only"
 
 execution:
   target_files:

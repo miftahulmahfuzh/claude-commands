@@ -30,6 +30,16 @@ You find tasks by TaskID across a repository. Return data only — do not modify
      adopted or a brief is built, so an unverified path is worse than none.
    - `plan_set` — from the `**Plan Set**:` line, if present (the plan index and phase number)
    - `depends_on` — TaskIDs from the `**Depends on**:` line, if present
+6. For every TaskID in `depends_on`, find its own entry and report whether it is complete.
+   Return the ones that are not as `depends_on_incomplete`. You are already reading every
+   `todos.md` in the repo, so this costs one more grep — and downstream it is what lets `/do`
+   refuse a blocked task after one haiku call instead of after two opus ones.
+
+   **Read completeness from the task's entry, not from the first line that matches.** A TaskID
+   legitimately appears several times in one file: the rolling summary (`### Today` /
+   `This Week` / `This Month`) and the append-only `## Recent Activity` log both echo it, and an
+   echo records what was true *then*. The entry under `## Active Tasks` or `## Completed Tasks`
+   is the one that states the current stage.
 
 ## Output
 ```yaml
@@ -44,6 +54,7 @@ task_metadata:
   plan_file: "{path}" | ""          # only when it exists on disk
   plan_set: "{SLUG}_PLAN.md phase {N}" | ""
   depends_on: ["{TaskID}"]
+  depends_on_incomplete: ["{TaskID}"]   # the subset of depends_on that is not complete
 ```
 
 On error:

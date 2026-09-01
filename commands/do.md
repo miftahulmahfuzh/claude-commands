@@ -7,6 +7,10 @@ Like `/implement`, `/do` **does not write implementation plans**. It adopts the 
 wrote, or works from the task description for small tasks. Anything big enough to need a plan
 gets one from `/analyze`.
 
+**A task that carries a plan file takes the adopted path** (Step 1b): the main context reads that
+plan and applies it, and neither `context-loader` nor `plan-generator` runs. Only a task with no
+plan goes through the brief pipeline.
+
 ## Arguments
 - Required: `{TaskID}` (e.g. `P0-DB-A236`, `P1-CB-B789`)
 - Optional: `--note="{additional instructions}"`
@@ -51,9 +55,10 @@ stop anything**: it cannot fail by design (no socket, no tmux, a session started
 This does not breach the main-context rule below: it reads no `.workflows` file, no
 documentation, and runs no git. It is one command that names the terminal.
 
-### Phase 1: Preparation (Subagents 1 → 2 → 3)
+### Phase 1: Preparation (Subagent 1, then one of two routes)
 
-All preparation happens in isolated subagent contexts.
+All preparation happens in isolated subagent contexts. **Which route is taken is decided by the
+locator's output, not by the difficulty tag** — see Step 1b.
 
 #### Step 1: Locate Task — `task-locator` (haiku)
 
@@ -73,9 +78,35 @@ task_metadata:
   context: "{context}"
   plan_file: "{path or empty}"
   depends_on: ["{TaskID}"]
+  depends_on_incomplete: ["{TaskID}"]
 ```
 
-#### Step 2: Load Context — `context-loader` (opus)
+#### Step 1b: Fork on the Plan File (Main Context)
+
+One check, on the locator's output, and it chooses the whole rest of Phase 1:
+
+| `plan_file` | Route | What runs |
+|---|---|---|
+| non-empty | **adopted path** | nothing else in Phase 1 — straight to Phase 2 with the path |
+| empty | **brief path** | Step 2 and Step 3, below |
+
+**The adopted path is the point of this command's existence on a plan set.** `/analyze` wrote
+that file with complete code and `plan-reconciler` reconciled it against the other phases;
+`plan-generator`'s brief schema has nowhere to put code, so routing a cooked plan through it
+compresses complete code into a 2–3 sentence `approach` before the main context — the thing that
+actually writes the code — ever sees it. That is not a saving, it is a loss. `/implement` has
+always read the phase plan directly in its own main context (`implement.md` Step 4); this is the
+same behavior, reached from a TaskID instead of from a plan index.
+
+**First, though, honour `depends_on_incomplete`.** If the locator returned any, stop and name
+them — on either route. The check lives in the locator because it is already reading every
+`todos.md`; refusing here costs one haiku call instead of two opus ones.
+
+**No difficulty tag changes this fork.** A HARD task cannot reach the adopted path without a
+plan, because the path is defined by the plan existing — so the HARD refusal in Step 3 still
+guards exactly the case it always did.
+
+#### Step 2: Load Context — `context-loader` (opus) — brief path only
 
 Reads `todos.md`, `package_readme.md`, `analysis_report.md`, and **synthesizes** — it returns a
 context packet, never raw file contents.
@@ -88,18 +119,18 @@ context_packet:
   related_tasks: ["{TaskID}"]
 ```
 
-#### Step 3: Generate Execution Brief — `plan-generator` (opus)
+#### Step 3: Generate Execution Brief — `plan-generator` (opus) — brief path only
 
 A brief is routing information — target files and steps. It is **not** an implementation plan,
 and this subagent writes no plan files.
 
-1. **Plan file exists** (`.workflows/plan/{TaskID}.md`) → **adopt it.** Read it and translate it
-   into the brief. Do not re-plan. Plans adopted from a `/analyze` plan set were reconciled
-   against the other phases; regenerating one discards that.
-2. **No plan file, EASY or NORMAL** → build the brief from the task description and context
-   packet.
-3. **No plan file, HARD** → **stop.** Return an error naming `/analyze`. A HARD task without a
-   plan is exactly the case that needs one, and this is not the command that writes it.
+1. **EASY or NORMAL** → build the brief from the task description and the context packet.
+2. **HARD** → **stop.** Return an error naming `/analyze`. A HARD task without a plan is exactly
+   the case that needs one, and this is not the command that writes it.
+
+There is no third case. A task that *has* a plan never reaches this subagent — Step 1b routed it
+away — and `plan-generator` refuses one that arrives anyway rather than summarizing it, so the
+lossy route cannot come back through a later edit to the fork.
 
 `plan-generator` creates no branches. Branch isolation belongs to `/analyze`, which cuts a
 worktree when it plans.
@@ -110,7 +141,7 @@ task:
   title: "{title}"
   difficulty: "EASY|NORMAL|HARD"
   type: "{Bug|Feature|Refactor|Docs}"
-  plan_source: "adopted:{path}" | "brief-only"
+  plan_source: "brief-only"
 
 execution:
   target_files:
@@ -129,21 +160,39 @@ validation:
 
 ### Phase 2: Execution (Main Context)
 
-**The only phase in the main context.**
+**The only phase in the main context**, and it opens differently on each route.
+
+**Adopted path** — the plan is the brief:
+
+1. Read the plan file the locator named. This is the one `.workflows` file the main context ever
+   opens, and it is opened here and nowhere else.
+2. Apply its steps in order. **The code blocks are complete by construction; use them** rather
+   than re-deriving the change from the prose around them.
+3. Run the plan's own **Verification** commands. A failing build or test is a failure, not a
+   caveat.
+4. Return the completion report.
+
+A `--note` is applied on top of the plan and **never overrides it** — the same rule
+`/implement` states for its own `-note`. If the note and the plan disagree, that is drift in the
+request rather than in the tree: follow the plan and say so in the completion report.
+
+**Brief path** — the brief is all there is:
 
 1. Display the task summary from the brief
 2. For each `target_file`: read, apply the steps, write
 3. Run `test_command` if provided
 4. Return the completion report
 
-**The main context does NOT:** read `todos.md` or any `.workflows` file · read documentation ·
-update `todos.md` · run git · write plans.
+**On both routes the main context does NOT:** read `todos.md`, `package_readme.md` or
+`analysis_report.md` · read documentation · update `todos.md` · run git · write plans.
 
 ```yaml
 completion_report:
   task_id: "{TaskID}"
   status: "success|failure"
+  plan_source: "adopted:{path}" | "brief-only"
   modified_files: ["{file}"]
+  drift_notes: ["{if any}"]
   error_message: "{if failure}"
 ```
 
@@ -183,15 +232,24 @@ Stages, writes a conventional-commit message, commits, pushes.
 |---|---|---|---|
 | `session.py rename` | main context | nothing | the session's own name |
 | `task-locator` | isolated | all `todos.md` | none |
-| `context-loader` | isolated | `todos.md`, docs | none |
-| `plan-generator` | isolated | plan file, if any | none |
-| **Main context** | clean | target files only | target files only |
+| `context-loader` | isolated — brief path only | `todos.md`, docs | none |
+| `plan-generator` | isolated — brief path only | nothing but its inputs | none |
+| **Main context** | clean | target files, **and the adopted plan file** | target files only |
 | `completion-handler` | isolated | `todos.md`, plan index | `todos.md`, plan index |
 | `readme-updater` | isolated | `package_readme.md` | `package_readme.md` |
 | `pusher` | isolated | `git diff` | git only |
 
-**The main context never loads** `todos.md`, `package_readme.md`, `analysis_report.md`, or plan
-files. Preserve this when editing the flow: don't move doc-reading or git into the main-context
+**The main context never loads** `todos.md`, `package_readme.md` or `analysis_report.md`. It
+reads **exactly one plan file — the adopted one — and no other `.workflows` file.**
+
+That is the invariant stated precisely, not weakened. The rule exists to keep the main context
+small while code is being edited, which is why it names the three background documents. A plan
+file is not background: it is the instruction set for the edit, and the one thing the executor
+cannot do its job without — `/implement` has read it in the main context all along. The narrower
+reading, that the main context reads nothing at all and the brief must therefore carry
+everything, is precisely what produced the summarization this fork removes.
+
+Preserve the rest when editing the flow: don't move doc-reading or git into the main-context
 step, and don't have subagents write code.
 
 ---
@@ -202,7 +260,8 @@ A task carrying a `**Plan Set**:` field is one phase of a plan `/analyze` wrote.
 
 1. **Check `Depends on:` first.** If any prerequisite TaskID is incomplete, stop and name it.
    The phase's plan quotes code as it will look *after* the earlier phases land.
-2. **Adopt the plan, never regenerate it** (Step 3).
+2. **Adopt the plan, never regenerate it.** Step 1b routes it to the main context directly, and
+   no subagent stands between the plan and the code.
 3. **Stay on the plan set's branch.** No new branch — the plan set owns one and every phase
    lands on it. If the current worktree is not the one the plan index names, stop and print the
    `cd` command.
@@ -234,16 +293,31 @@ Extract the package path from the match: `./chatbot/bowl/.workflows/todos.md` �
 
 ## Messages
 
-**Progress:**
+**Progress — brief path** (the task has no plan file):
 ```
 🏷️  Session renamed: do-P1-DB-A236
 🔍 Locating task... (task-locator)
 📁 Found: P1-DB-A236 in db/.workflows/todos.md
 📋 Loading context... (context-loader)
-📋 Generating brief... (plan-generator)  [adopted .workflows/plan/P1-DB-A236.md]
+📋 Generating brief... (plan-generator)
 
 🎯 Executing: P1-DB-A236 (main context)
   📄 manager.go → modify
+✅ Implementation complete
+
+📝 Completing... (completion-handler)
+```
+
+**Progress — adopted path** (the task carries a plan). Two fewer opus dispatches, and the line
+says so out loud, because a silently shorter run reads like a step was skipped by accident:
+```
+🏷️  Session renamed: do-P1-TC-A002
+🔍 Locating task... (task-locator)
+📁 Found: P1-TC-A002 in tools/toolcore/.workflows/todos.md
+📖 Adopting plan: .workflows/plan/P1-TC-A002.md  [context-loader + plan-generator skipped]
+
+🎯 Executing: P1-TC-A002 (main context)
+  📄 caller.go → modify
 ✅ Implementation complete
 
 📝 Completing... (completion-handler)
@@ -321,8 +395,8 @@ Deployed to `~/.claude/agents/` by `sync.sh`, dispatched by `subagent_type`:
 | Agent | Model | Purpose |
 |---|---|---|
 | `task-locator` | haiku | find the TaskID, extract metadata |
-| `context-loader` | opus | load and synthesize context |
-| `plan-generator` | opus | execution brief — adopts a plan, never writes one |
+| `context-loader` | opus | load and synthesize context — **brief path only** |
+| `plan-generator` | opus | execution brief for a task with no plan — **brief path only** |
 | `completion-handler` | opus | update `todos.md`, dispatch readme-updater and pusher |
 | `readme-updater` | opus | update the most-impacted `package_readme.md` |
 | `pusher` | haiku | stage, commit, push |

@@ -141,6 +141,12 @@ number in its name would be stale for most of its life; `impl-<slug>` from Step 
 Read that phase's plan file and apply its steps in order. The code blocks are complete by
 construction; use them.
 
+`/do` reaches the same plan the same way — its **adopted path** (Step 1b) routes a task carrying
+a `**Plan**:` line straight to its own main context, with no subagent between the plan and the
+code. Keep the two
+aligned: this command hands off with `/do {TaskID of phase N+1}`, so a phase planned here and
+executed there has to be read identically in both.
+
 **If the code has drifted from what the plan quotes:**
 - Small drift (a moved line, a renamed local, an added field the plan doesn't touch) → follow
   the plan's intent, note the drift, carry it into the completion report.
