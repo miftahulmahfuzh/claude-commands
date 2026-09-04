@@ -91,7 +91,7 @@ to `main` automatically (the user reviews and merges later).
 Then name the session after the idea, not after the day:
 
 ```bash
-python3 ~/.claude/skills/task/session.py rename "tokenmax-<IDEA-SLUG>"
+python3 ~/.claude/skills/task/session.py rename "tokenmax-<IDEA-SLUG>" --no-widen
 ```
 
 Five terminals open on one repo all carry the same derived name — `agentic-8f`, `agentic-d4` —

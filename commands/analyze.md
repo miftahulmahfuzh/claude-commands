@@ -193,7 +193,7 @@ Then:
 **Then name the session after the slug, in the same breath:**
 
 ```bash
-python3 ~/.claude/skills/task/session.py rename "analyze-$SLUG"
+python3 ~/.claude/skills/task/session.py rename "analyze-$SLUG" --no-widen
 ```
 
 Five terminals open on one repo all carry the same derived name — `agentic-8f`, `agentic-d4` —

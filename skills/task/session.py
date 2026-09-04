@@ -34,8 +34,20 @@ line -- so in tmux the session rename is invisible and the window keeps whatever
 `automatic-rename` derived, which for every one of these is `claude`. `rename-window`
 also switches `automatic-rename` off for that window, so the name then stays put.
 
+A RENAME MUST NEVER WIDEN A LAUNCH NAME. `claude -n impl-<slug>-p2` gives a session its
+peer address before it boots, which is how a swarm coordinator addresses a phase without
+racing the child's own rename. A later rename to `impl-<slug>` -- the same name minus the
+part that says which phase -- hands every phase of that set one address. MEASURED: a
+seven-phase set had four sessions pass through the bare `impl-admin-album-file-manager`
+on their way to their own numbers, and the one whose sharpening did not land stayed
+there, so the coordinator's recorded address for phase 2 pointed at nothing while an
+ambiguous one answered for everybody. `--no-widen` refuses that half of a rename: a name
+that is a prefix of the one already held is strictly less specific, and a duller name is
+worth having only when it is still unique.
+
     python3 session.py rename task-17
     python3 session.py rename task-17 --no-tmux
+    python3 session.py rename impl-x-p2 --no-widen   # keeps a launch name that says more
     python3 session.py name                 # what this session is called now
 """
 
@@ -62,6 +74,19 @@ def slug(name):
     """`task-17`, or the nearest safe thing to whatever was passed."""
     out = re.sub(r"[^A-Za-z0-9._-]+", "-", str(name).strip()).strip("-.")
     return out[:MAX_NAME] or "task"
+
+
+def widens(current, wanted):
+    """Would renaming `current` -> `wanted` throw away specificity?
+
+    True only when `wanted` is `current` with a trailing part lopped off at a separator:
+    `impl-x-p2` -> `impl-x` yes, `impl-x` -> `impl-x-p2` no, `do-P0-AB-1` -> `impl-x` no.
+    Prefix alone is not enough -- `task-1` -> `task-17` shares one but says something
+    else entirely, and refusing it would be wrong.
+    """
+    if not current or current == wanted or not current.startswith(wanted):
+        return False
+    return current[len(wanted)] in "-_."
 
 
 def session_record():
@@ -225,14 +250,25 @@ def rename_session(wanted):
     return {"renamed": True, "name": wanted, "from": before}
 
 
-def rename(name, tmux_too=True):
+def rename(name, tmux_too=True, no_widen=False):
     """Both names, independently. The two can disagree and neither blocks the other.
 
     A window already called `task-17` says nothing about whether the session is, and a
     session rename that no-ops because it was already right must not leave a window
     still reading `claude`. So the tmux half runs whatever the session half returned.
+
+    The one exception is a refused widening, where BOTH halves stand down: the point of
+    the refusal is that the name already held is the specific one, and renaming only the
+    window to the vaguer name would put the two surfaces of one session out of step for
+    no gain.
     """
     wanted = slug(name)
+    if no_widen:
+        current = (session_record() or {}).get("name")
+        if widens(current, wanted):
+            return {"renamed": False, "name": current, "requested": wanted,
+                    "reason": f"{current} is more specific than {wanted}; "
+                              "refused to widen"}
     out = dict(rename_session(wanted), requested=wanted)
     if tmux_too:
         out["tmux"] = rename_window(wanted)
@@ -246,12 +282,16 @@ def main(argv=None):
     p.add_argument("name")
     p.add_argument("--no-tmux", dest="tmux", action="store_false",
                    help="leave the tmux window name alone")
+    p.add_argument("--no-widen", action="store_true",
+                   help="keep the current name if it is this one plus a suffix, e.g. "
+                        "a launch name impl-x-p2 asked to become impl-x")
     sub.add_parser("name", help="print this session's current name")
     sub.add_parser("selftest", help="offline checks, no socket needed")
     args = parser.parse_args(argv)
 
     if args.cmd == "rename":
-        print(json.dumps(rename(args.name, tmux_too=args.tmux), indent=2))
+        print(json.dumps(rename(args.name, tmux_too=args.tmux,
+                                no_widen=args.no_widen), indent=2))
     elif args.cmd == "name":
         rec = session_record() or {}
         # -t is not optional: without it tmux answers for the ACTIVE window, which is
@@ -297,6 +337,16 @@ def selftest():
     # the only way a non-task name survives is being the one asked for
     eq("mixed shapes fall back to whole names",
        window_name("hotfix", ["task-2"]), "hotfix+task-2")
+
+    # Widening: the phase number is the part that makes a swarm address unique, so a
+    # rename that drops it is refused rather than performed.
+    eq("dropping the phase widens", widens("impl-x-p2", "impl-x"), True)
+    eq("adding one does not", widens("impl-x", "impl-x-p2"), False)
+    eq("same name is not widening", widens("impl-x", "impl-x"), False)
+    eq("unrelated name is not widening", widens("do-P0-AB-1", "impl-x"), False)
+    eq("a shared prefix mid-token is not widening", widens("task-17", "task-1"), False)
+    eq("an unnamed session cannot widen", widens(None, "impl-x"), False)
+    eq("other separators count too", widens("impl_x.p2", "impl_x"), True)
 
     # No socket in the environment must be a report, never an exception: a task loop
     # that died because it could not rename a window would be an absurd way to lose work.

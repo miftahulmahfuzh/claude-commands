@@ -190,7 +190,7 @@ behaves oddly, and quote its output rather than diagnosing from a stack trace.
 ```bash
 python3 $S/task_gh.py resolve <ref>        # or task_gl.py
 python3 $S/task_gl.py status <ref> "In Progress"
-python3 $S/session.py rename task-<number>   # this window is now task-17
+python3 $S/session.py rename task-<number> --no-widen   # this window is now task-17
 ```
 
 **Move the card to In Progress immediately, as part of fetching it** — not later.

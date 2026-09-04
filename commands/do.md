@@ -35,7 +35,7 @@ The moment the TaskID validates — before the locator runs, because the id is t
 needs nothing looked up:
 
 ```bash
-python3 ~/.claude/skills/task/session.py rename "do-P1-DB-A236"
+python3 ~/.claude/skills/task/session.py rename "do-P1-DB-A236" --no-widen
 ```
 
 Five terminals open on one repo all carry the same derived name — `agentic-8f`, `agentic-d4` —

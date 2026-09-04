@@ -109,7 +109,7 @@ derives to `pending` means a phase was abandoned half-done; the user may know wh
 Then name this session, so the phases have somewhere to report:
 
 ```bash
-python3 ~/.claude/skills/task/session.py rename "orch-<slug>"
+python3 ~/.claude/skills/task/session.py rename "orch-<slug>" --no-widen
 ```
 
 ## Step 4: Drive

@@ -44,6 +44,12 @@ Three consequences the swarm depends on:
 
 - **Set the child's name at launch.** `claude -n impl-<slug>-p<N>` means the coordinator never
   reads a name it did not choose, and no other session will adopt that shape.
+- **A session never renames itself to something less specific.** The child runs `/implement`,
+  which renames itself too — and `impl-<slug>` is the launch name minus the one part that says
+  which phase, so adopting it gives every phase of the set one address and leaves the recorded
+  one answering nowhere. MEASURED: four of seven phases passed through the bare
+  `impl-admin-album-file-manager`, and the one whose re-sharpening never landed stayed there.
+  Every rename in this workflow passes `session.py rename … --no-widen`, which refuses that.
 - **Re-read `ListAgents` immediately before sending.** Never send to a name captured earlier in
   the session; a cached name is a guess about the present.
 - **The ledger records `coordinator_session_id` alongside the name.** Before reporting, confirm

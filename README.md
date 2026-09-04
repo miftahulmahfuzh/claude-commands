@@ -49,10 +49,14 @@ session after their errand, as soon as they know it:
 |---|---|---|
 | `/task <n>` | `task-<n>` | claiming the card |
 | `/analyze` | `analyze-<slug>` | step 4, with the worktree — and also without one |
-| `/implement` | `impl-<slug>-p<N>` | step 2 from the index, sharpened once the phase is picked |
+| `/implement` | `impl-<slug>-p<N>` | step 2, phase included when `--phase` gave one; never widening a launch name |
 | `/do <TaskID>` | `do-<TaskID>` | immediately; the id is the argument |
 | `/analyze-orchestrator` | `orch-<slug>` | step 3, once the ledger is verified |
 | `/token-maxxing` | `tokenmax-<idea>` | step 7, with the day's branch |
+
+A rename never *widens*: `--no-widen` refuses one whose target is the name already held minus a
+suffix, so a phase session launched as `impl-<slug>-p2` cannot rename itself down to
+`impl-<slug>` and share that address with every other phase of the set.
 
 All six call `skills/task/session.py`, which sends the same `/rename` control message over the
 session's own messaging socket — so the tab title, the `/resume` row and the name peers address

@@ -61,11 +61,27 @@ reconciliation deliberately left these for a human; implementing over them guess
 Read only the index here. Phase plans are read in Step 4, one at a time, so the main context
 never holds plans for phases it is not implementing.
 
-**Then name the session after the slug**, which the index just gave you:
+**Then name the session**, from the slug the index just gave you — and from the phase, if the
+command line already names one:
 
 ```bash
-python3 ~/.claude/skills/task/session.py rename "impl-<slug>"
+# --phase N was passed: the phase is known now, so say it now
+python3 ~/.claude/skills/task/session.py rename "impl-<slug>-p<N>" --no-widen
+# no --phase, or --all: the slug is all that is known here
+python3 ~/.claude/skills/task/session.py rename "impl-<slug>" --no-widen
 ```
+
+**`--no-widen` is not optional, and neither is naming the phase when `--phase` gave you one.**
+A phase session in a swarm is launched as `claude -n impl-<slug>-p<N>`, so it already answers on
+the address its coordinator recorded, *before* this command's first line runs. Renaming it to
+`impl-<slug>` here throws the phase number away and hands every phase of the set one address:
+between this step and Step 4 they are indistinguishable, a report arrives as
+`from="impl-<slug>"` with nothing to say which phase sent it, and a coordinator that writes to
+the name it recorded finds nothing there. MEASURED on a seven-phase set: four sessions passed
+through the bare `impl-admin-album-file-manager`, and phase 2's — whose Step 4 sharpening never
+landed — stayed on it, while `.runtime.json` still addressed phase 2 as
+`impl-admin-album-file-manager-p2`. `--no-widen` refuses a rename that is the current name minus
+a suffix, so the launch name survives this step even when the branch above picks the bare one.
 
 Five terminals open on one repo all carry the same derived name — `agentic-8f`, `agentic-d4` —
 which says which repo and not which plan, so the right window is found by reading scrollback and
@@ -131,12 +147,18 @@ Then sharpen the session's name with the phase you just picked, so two terminals
 set are still distinguishable:
 
 ```bash
-python3 ~/.claude/skills/task/session.py rename "impl-<slug>-p<N>"
+python3 ~/.claude/skills/task/session.py rename "impl-<slug>-p<N>" --no-widen
 ```
 
 A second rename costs nothing — it is idempotent, and reports `renamed: false` when the name is
-already right. **With `--all` skip it:** that session works every remaining phase, so a phase
-number in its name would be stale for most of its life; `impl-<slug>` from Step 2 stays.
+already right, which is exactly what it reports when `--phase N` let Step 2 name the phase
+already. This step is what names the phase when the phase was *derived* here rather than
+passed on the command line — where `--phase N` gave one, Step 2 has already used it, and waiting
+until here would leave the session sharing a bare address for the whole of Step 3. **With
+`--all` skip it:** that session works every remaining phase, so a phase number in its name would
+be stale for most of its life; `impl-<slug>` from Step 2 stays — unless the session was launched
+with a phase in its name, in which case `--no-widen` kept that, and a slightly stale unique
+address beats an accurate shared one.
 
 Read that phase's plan file and apply its steps in order. The code blocks are complete by
 construction; use them.
@@ -310,7 +332,8 @@ missing part of a plan.
 
 ```
 Main context (Steps 1–2)
-    → read the plan index only, then name the session impl-<slug>
+    → read the plan index only, then name the session impl-<slug>-p<N> (impl-<slug>
+      only when no --phase was passed; never widening a launch name)
     ↓
 Subagent (Step 3)
     → todos.md entries + adopted plan copies
