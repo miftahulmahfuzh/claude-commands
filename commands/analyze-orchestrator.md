@@ -75,10 +75,15 @@ Three consequences, each of them load-bearing:
 - it is an analysis document rather than a plan index → name `/analyze`
 - any phase's **Plan** column points at a file that does not exist
 
-**A non-empty Open Questions section is not a refusal, and not a question to forward.** Those
-items are contradictions `plan-reconciler` could not resolve, and a swarm multiplies each of them
-across every phase that touches it — which is exactly why this session resolves them **now,
-once**, rather than letting N children meet the same fork independently:
+**Read `## Decisions` and treat it as settled.** Each row is a fork `/analyze` resolved with the
+rung that resolved it; the children inherit them through the index, and reopening one here would
+overrule reconciliation, which saw all N phases at once.
+
+**A non-empty Open Questions section is not a refusal, and not a question to forward.** After a
+current `/analyze` run those items are forks where every branch is irreversible; an older plan set
+may have ordinary contradictions parked there. Either way a swarm multiplies each of them across
+every phase that touches it, which is exactly why this session resolves them **now, once**,
+rather than letting N children meet the same fork independently:
 
 1. Decide each item with the precedence ladder `/implement` states — **stated invariant → exit
    criteria → the plan's code blocks → the index's Why and Requirements table → task text →

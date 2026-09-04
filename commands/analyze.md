@@ -101,6 +101,47 @@ Neither touches source code.
 
 ---
 
+## Autonomy: the planner decides, and never asks
+
+`/analyze` is where an unattended night is won or lost. It ends by launching an orchestrator that
+spawns a session per phase (Step 11), so **a question here is the most expensive question in the
+whole workflow** — worse than a coordinator's, because a contradiction this command leaves behind
+is not asked once, it is asked by every phase that touches it.
+
+> **Never end a turn with a question this command needs answered to continue.**
+
+No `AskUserQuestion`, no "which of these did you mean?", no ending on a menu of interpretations.
+The user's prose is the specification and Step 0 preserves it verbatim; where it is genuinely
+ambiguous, **infer, state the inference, and plan against it.** The Usage section already commits
+to this shape — the target is inferred if absent, the type is inferred if absent, `/analyze`
+followed by nothing but prose is a valid invocation — and this section is the same rule applied to
+everything downstream of that.
+
+MEASURED on `nina-character-tuning`: reconciliation left one contradiction unresolved — a phase
+plan whose invariant said the shipped ladder must render byte for byte while its own prose set a
+ceiling that changed three sentences. `plan-reconciler` recorded it and moved on, per the old
+Step 8. Eight hours later the phase-2 session was still holding an `AskUserQuestion` about it, and
+phases 3 and 4 — both `depends_on: [1, 2]` — had built nothing. The fix belongs *here*: this
+command holds the analysis document and all N plans at once, which makes it the best-placed
+decider in the workflow and the last one with the whole picture.
+
+So the contract with everything downstream:
+
+- **Resolve contradictions at Step 8, into a `## Decisions` section** — the choice and the rung
+  that decided it. `/implement`, `/do` and `/analyze-orchestrator` all carry the same precedence
+  ladder now; leaving them a fork is asking N sessions to re-derive what one session already knew.
+- **`## Open Questions` is reserved for one thing:** a fork where *every* branch is irreversible.
+  That is the only item a plan set may legitimately stop on, and it is why Step 11 still refuses
+  to launch over a non-empty section.
+- **An empty Open Questions is the normal outcome**, not a lucky one.
+
+**Stopping is allowed; blocking is not.** This command's stop is Step 11's refusal: the plan is
+written, committed and reported, and the session ends — it does not sit on a prompt. What it never
+does is invent the missing part of an analysis; deciding a fork from the ladder and writing down
+which rung decided it is the opposite of inventing.
+
+---
+
 ## Process
 
 ### Step 0: Capture User Context
@@ -313,8 +354,24 @@ It checks, and **edits the plan files in place** to fix:
 
 Then it rewrites `<SLUG>_PLAN.md` from draft to final and appends a **Reconciliation Log**.
 
-If its edits changed any interface contract, run it **once** more to verify. Cap at 2 rounds; if
-contradictions survive, record them under **Open Questions** rather than inventing an answer.
+If its edits changed any interface contract, run it **once** more to verify. Cap at 2 rounds.
+
+**Then resolve what survived, here, rather than passing it downstream.** A contradiction that
+outlives two reconciliation rounds is a decision, and this session is the one holding the analysis
+document and all N plans at once. Decide each with the precedence ladder every executor now
+carries — **stated invariant → phase exit criteria → the plan's code blocks → the index's Why and
+Requirements table → the user's raw input from Step 0 → surrounding convention** — and then:
+
+1. **Edit the plan files** so the losing side is gone, not merely outranked. A phase plan that
+   still contains both halves is a phase session that meets the fork again at 3am.
+2. **Record it under `## Decisions`** in the index: the fork, the choice, and the rung. One line.
+3. **Leave `## Open Questions` for the residue only** — a fork where every branch is irreversible
+   (destroying data, rewriting published history, an unrepeatable migration). Nothing else
+   qualifies, and an item parked there costs the whole set its unattended launch at Step 11.
+
+This is not inventing an answer. Inventing is choosing with no stated reason; this is choosing on
+the highest rung that speaks and writing down which one it was, so a human can overturn it in the
+morning for the price of one commit.
 
 ### Step 9: Finalize the Plan Index
 
@@ -325,6 +382,12 @@ For N = 1, promote the draft yourself: fill the phase row from the planner's ret
 Before terminating, verify: every phase has a plan file, every plan file's code blocks are
 complete, every impact point in the analysis is owned by some phase, and **every requirement ID
 from Step 0 is satisfied by at least one phase**. Nothing downstream will fill a gap you leave.
+
+**And verify the two decision sections.** `## Open Questions` must be empty, or every item in it
+must be a fork where *every* branch is irreversible — anything else belongs in `## Decisions` with
+its rung, resolved per Step 8. This is the check that decides whether the night runs: a single
+parked item that could have been decided here refuses the launch at Step 11 and takes the whole
+set down with it.
 
 ### Step 10: Terminate
 
@@ -349,10 +412,12 @@ python3 ~/.claude/skills/swarm/swarm.py launch \
 **Refuse to launch, and say why in the termination block, when either of these holds.** Both are
 cases where an unattended run would spend the night doing nothing useful, or something wrong:
 
-- **Open Questions is non-empty.** The orchestrator refuses these anyway, so launching would
-  produce a session that wakes up, refuses and idles. Worse, the questions are exactly the
-  contradictions that N parallel sessions would each resolve differently — an unattended swarm is
-  the worst possible place for an unresolved contradiction.
+- **Open Questions is non-empty** — which after Step 8 means one thing: a fork where every branch
+  is irreversible. Launching over it would spend the night doing the wrong work N times in
+  parallel, since the contradiction is exactly what N sessions would each resolve differently.
+  Everything decidable was already decided and recorded under `## Decisions`, so this refusal is
+  now rare by construction rather than the routine exit it used to be. **Do not ask whether to
+  launch anyway** — print the refusal, name the fork, and end the session.
 - **A phase plan file is missing**, or the index still says `Status: planned` with empty phases.
 
 Neither refusal is about permissions any more, because the mode now has a default. What that
@@ -362,6 +427,11 @@ decision by the owner of this repo, recorded here deliberately, not an inference
 that makes it reasonable is the worktree and branch `/analyze` cut, so an unattended run's blast
 radius is a feature branch rather than the working tree. Narrow it per-run with
 `--permission-mode`, or turn the whole step off with `--no-orchestrate`.
+
+**The launch itself is never put to the user.** Orchestration is the default, `--no-orchestrate`
+is the only way out, and asking "shall I start it?" at 22:30 reintroduces exactly the dead night
+the default exists to prevent — the answer arrives at 07:00 and the plan is worth what it was
+worth then.
 
 The launch is the last thing this command does. Do not wait for the orchestrator, do not poll it,
 and do not report its progress — it renames itself, drives its own phases, and owns the set from
@@ -558,10 +628,22 @@ Leave both `—` — writing a card ref here yourself invents one.>
 
 <For a single-phase plan: "single phase — nothing to reconcile">
 
+## Decisions
+
+| Fork | Chosen | Rung |
+|---|---|---|
+| invariant 2 vs the `off` ceiling in the anger ladder | ceiling 4 — the shipped ladder renders byte for byte | 1: plan invariant |
+
+<Every contradiction Step 8 settled, with the rung that settled it. This section is what
+the executors read instead of asking; an empty one on a multi-phase set usually means
+Step 8 was skipped rather than that nothing conflicted.>
+
 ## Open Questions
 
-<Contradictions reconciliation could not resolve. Empty is the good outcome —
-/implement stops and asks about anything left here.>
+<Reserved for forks where EVERY branch is irreversible — destroying data, rewriting
+published history, an unrepeatable migration. Everything else was decided at Step 8 and
+belongs under Decisions. Empty is the normal outcome; a non-empty section refuses the
+orchestrator launch at Step 11 and is the one thing that costs this plan its night.>
 
 ## Rollback
 
@@ -643,7 +725,15 @@ Phases:
   1. <title>  [R2]  -> .workflows/plan/<slug>/phase-1.md
   2. <title>  [R2]  -> .workflows/plan/<slug>/phase-2.md
 
-<If Open Questions is non-empty, list them here — /implement will stop and ask.>
+<If Decisions is non-empty, list it here — this is the morning's review queue, and
+overturning any line costs one commit:>
+
+Decided without asking:
+  <fork>  ->  <choice>   rung <n>: <what decided it>
+
+<If Open Questions is non-empty, list them too. After Step 8 that means an irreversible
+fork, so say so plainly and say that the launch was refused because of it — nothing
+downstream will ask about these, and nothing downstream will run.>
 
 Next — phase 1 of <N>, in a new session:
 

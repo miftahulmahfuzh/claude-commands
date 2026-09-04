@@ -99,13 +99,20 @@ The plan index names the worktree and branch it was written against. Compare wit
 
 Extract: slug, the **Why** section, the **Requirements** table, the invariants, the phase table
 (number, title, satisfies, package, depends-on, difficulty, plan file, TaskID, card), and
-**Open Questions**.
+**Decisions**, and **Open Questions**.
+
+**`## Decisions` is inherited, not re-litigated.** Each row is a fork `/analyze` already settled
+with the rung that settled it. Read them, apply them, and do not reopen one because the losing
+side reads better in the phase plan — that is the reconciliation talking, and it saw all N phases
+at once.
 
 **If Open Questions is non-empty, resolve every item yourself before implementing** — with the
 precedence ladder in **Deciding Without Asking**, one printed line per item, before the first
-edit. `/analyze`'s reconciliation left those items for a *decider*, and this session is the only
-decider that is awake. Implementing over them silently would be guessing; deciding them with a
-stated rung and recording the choice is not, and it is what this command does.
+edit. After a current `/analyze` run that section holds only forks where every branch is
+irreversible, which is the **Undecidable** stop rather than a question; an older plan set may have
+ordinary contradictions parked there, and those get decided. Either way this session is the only
+decider awake: implementing over an item silently would be guessing, while deciding it on a stated
+rung and recording the choice is not.
 
 Read only the index here. Phase plans are read in Step 4, one at a time, so the main context
 never holds plans for phases it is not implementing.

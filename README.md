@@ -101,9 +101,12 @@ For N > 1 the phases are planned **in parallel** — one `phase-planner` each �
 reconciled. Parallel planners can't see each other's plans, so each declares an **Interface
 Contract** (what it deletes, renames, creates, and requires from earlier phases), and
 `plan-reconciler` uses those to find deleted-then-used symbols, unmet assumptions, duplicate
-work, file collisions, and gaps — then **edits the plan files** to fix them. What it can't
-resolve without guessing goes to **Open Questions**, and `/implement` stops and asks about
-anything left there.
+work, file collisions, and gaps — then **edits the plan files** to fix them. A behavioral fork
+between two plans is **decided** on the highest rung that speaks (invariant → exit criteria → code
+blocks → the index's Why and Requirements → the user's raw input) and recorded under
+**Decisions** with that rung, so the executors inherit the answer instead of asking for it.
+**Open Questions** is left for the residue: an unowned requirement id, or a fork where every
+branch is irreversible.
 
 Every phase must build and pass tests on its own, so the branch is reviewable at any point.
 
@@ -166,12 +169,27 @@ does not wait for it. The long form means the same thing:
 
 It refuses to launch — and says so instead — when **Open Questions is non-empty** (an unattended
 swarm is the worst place for an unresolved contradiction, since N sessions would each answer it
-differently) or when a **phase plan file is missing**.
+differently) or when a **phase plan file is missing**. Since reconciliation now decides ordinary
+forks rather than parking them, the first refusal is rare by construction: what survives to Open
+Questions is a fork where every branch is irreversible, which is worth a night of nothing.
 
 The default mode is `bypassPermissions`, which gives the orchestrator and its phase sessions a
 mode the `/analyze` session may not itself hold. That is a deliberate standing decision rather
 than an inference, and what makes it reasonable is the isolation: `/analyze` cuts a worktree and
 a branch, so an unattended run's blast radius is a feature branch, not your working tree.
+
+**No session in that chain asks you anything.** `/analyze`, `/analyze-orchestrator`, `/implement`
+and `/do` each carry the same precedence ladder — **stated invariant → exit criteria → the plan's
+code blocks → the index's Why and Requirements → the task text or your raw input → surrounding
+convention** — and decide on the first rung that speaks, then write down which rung it was. The
+arithmetic is one-sided: a wrong call costs one follow-up commit, while a question asked into an
+empty room costs every hour until you wake up. MEASURED: one phase session held an
+`AskUserQuestion` for eight hours over a contradiction its plan's own invariant settled, and the
+two phases depending on it built nothing all night.
+
+Every decision surfaces in a `Decided without asking` block in the terminal, in `todos.md`, and in
+the commit body — so the morning's job is reviewing calls that were made, not answering questions
+that blocked. Stopping is allowed; blocking is not.
 
 An unattended run stops at the merge. Every phase landing on the branch overnight is the value;
 merging the set is a thirty-second decision in the morning and not worth doing unsupervised.
@@ -575,8 +593,9 @@ that finishes a phase hands you the following phase's `/do`. The last phase hand
 instead. The command is always alone on its own line so it can be selected and pasted — nothing
 follows it there, because a trailing `#` on a slash-command line is read as arguments.
 
-Read the plan index's **Open Questions** before starting — reconciliation puts anything it
-couldn't resolve without guessing there. Merge the branch once as a whole.
+Read the plan index's **Decisions** before starting — those are the forks reconciliation settled
+for you, each with the rung that settled it, and they are the morning's review queue. **Open
+Questions** holds only what could not be decided at all. Merge the branch once as a whole.
 
 ### Go debugging with `/dbg`
 
