@@ -40,7 +40,7 @@ Most commands operate on a target package directory that contains a `.workflows/
 
 - `/analyze` → read-only investigation **plus a complete plan, every run**: `<session-id>_code_analyzer.md` (descriptive) + `<SLUG>_PLAN.md` (index) + `.workflows/plan/<slug>/phase-{N}.md` for N ∈ 1..20, in a worktree it cuts. N=1 is not a different mode — same artifacts, one phase. It also numbers the user's asks `R1..Rn` and maps every phase onto the `R`s it serves — the plan index's **Requirements** table, which is what lets `create-task` shape the board without re-deriving the decomposition.
 - `/implement -f <SLUG>_PLAN.md` → **executes**. Creates one task per phase, copies each phase plan to `{pkg}/.workflows/plan/{TaskID}.md` unchanged, applies one phase, hands to `completion-handler`. It writes no plans; handed an analysis document it refuses and names `/analyze`.
-- `/do <TaskID>` → executes an **existing** task. Executes its plan file directly in the main context if there is one (the adopted path); builds a routing brief from the task text for EASY/NORMAL without one; **refuses a HARD task with no plan file** and names `/analyze`.
+- `/do <TaskID>` → executes an **existing** task. Executes its plan file directly in the main context if there is one (the adopted path); builds a routing brief from the task text for EASY/NORMAL without one; **escalates a HARD task with no plan file by running `/analyze` itself** (Step 1c, before any subagent), which plans and — orchestration being its default — runs the set. `--no-escalate` prints the command and stops instead.
 - When code has drifted from what a plan quotes: small drift → follow intent and note it; large drift → stop and re-run `/analyze`. Neither executor improvises a replacement plan.
 - `/update-readme`, `/update-todos`, `/reorganize-todos`, `/postmortem`, `/analyze-package` → maintenance commands on `.workflows/` contents.
 - `/up-version` → semver bump + CHANGELOG generation for *this* repo (or any repo with tags).
@@ -120,7 +120,7 @@ Owns *all* git side effects for command-driven work. `/do` and `/implement` no l
 `P{0-3}-{SCOPE}-{ID}` (e.g. `P0-DB-A236`, `P1-CB-B789`). Priority `P0` is highest. Scope is a short package abbreviation. IDs must be unique across all `todos.md` files in a repo.
 
 ### Difficulty classification
-Tasks are tagged EASY / NORMAL / HARD. EASY and NORMAL can run from the task description alone; **HARD requires a plan file** — `/do` refuses a HARD task without one and points at `/analyze`. Branch isolation comes from the worktree `/analyze` cuts, not from `/do`.
+Tasks are tagged EASY / NORMAL / HARD. EASY and NORMAL can run from the task description alone; **HARD requires a plan file** — `/do` escalates a HARD task without one by invoking `/analyze` itself instead of printing the command (`--no-escalate` restores the print-and-stop). A `**Difficulty**:` line that mentions HARD at all resolves to HARD, and `task-locator` returns that line verbatim as `difficulty_line` so nobody has to ask it twice. Branch isolation comes from the worktree `/analyze` cuts, not from `/do`.
 
 ### Adding a new command
 1. Create `commands/<name>.md`. The first line should be `# <Name> Command` (matches existing style).

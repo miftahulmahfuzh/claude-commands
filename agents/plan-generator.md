@@ -57,11 +57,16 @@ status: error
 reason: no_plan_for_hard_task
 message: |
   HARD task {TaskID} has no plan file. /do does not write implementation plans.
-  Run /analyze on this task's scope, then /implement -f <SLUG>_PLAN.md.
+  Escalate: run /analyze on this task's scope (do.md Step 1c).
 ```
 
 A HARD task is precisely the case where a real plan matters. Producing a from-scratch brief for
 one is how a half-planned change gets started.
+
+**This is a backstop, and it should never fire.** `/do` Step 1c escalates a HARD task with no
+plan to `/analyze` before dispatching this subagent, so being handed one means the fork was
+skipped. The error is addressed to the main context, which takes it to that step — it is not a
+message for the user, and it names no command for anyone to paste.
 
 ### 4. Dependencies — not yours
 

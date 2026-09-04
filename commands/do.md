@@ -5,7 +5,7 @@ subagents; **the main context does code implementation only**.
 
 Like `/implement`, `/do` **does not write implementation plans**. It adopts the plan `/analyze`
 wrote, or works from the task description for small tasks. Anything big enough to need a plan
-gets one from `/analyze`.
+**gets one by running `/analyze` itself** — not by printing the command and stopping.
 
 **A task that carries a plan file takes the adopted path** (Step 1b): the main context reads that
 plan and applies it, and neither `context-loader` nor `plan-generator` runs. Only a task with no
@@ -14,6 +14,9 @@ plan goes through the brief pipeline.
 ## Arguments
 - Required: `{TaskID}` (e.g. `P0-DB-A236`, `P1-CB-B789`)
 - Optional: `--note="{additional instructions}"`
+- Optional: `--no-escalate` — on a HARD task with no plan, print the `/analyze` command and stop
+  instead of running it. Escalation is the default (Step 1c); this is the way out of it, and the
+  only way out.
 
 ## TaskID Format
 
@@ -55,10 +58,10 @@ stop anything**: it cannot fail by design (no socket, no tmux, a session started
 This does not breach the main-context rule below: it reads no `.workflows` file, no
 documentation, and runs no git. It is one command that names the terminal.
 
-### Phase 1: Preparation (Subagent 1, then one of two routes)
+### Phase 1: Preparation (Subagent 1, then one of three routes)
 
 All preparation happens in isolated subagent contexts. **Which route is taken is decided by the
-locator's output, not by the difficulty tag** — see Step 1b.
+locator's output** — the plan file first, then the difficulty — see Step 1b.
 
 #### Step 1: Locate Task — `task-locator` (haiku)
 
@@ -72,7 +75,8 @@ status: success
 package_path: "{path}"
 task_metadata:
   priority: "P0-P4"
-  difficulty: "EASY|NORMAL|HARD"
+  difficulty: "EASY|NORMAL|HARD"       # HARD if the line says HARD anywhere
+  difficulty_line: "{the **Difficulty**: line, verbatim}"
   type: "Bug|Feature|Refactor|Docs"
   title: "{title}"
   context: "{context}"
@@ -85,10 +89,11 @@ task_metadata:
 
 One check, on the locator's output, and it chooses the whole rest of Phase 1:
 
-| `plan_file` | Route | What runs |
-|---|---|---|
-| non-empty | **adopted path** | nothing else in Phase 1 — straight to Phase 2 with the path |
-| empty | **brief path** | Step 2 and Step 3, below |
+| `plan_file` | `difficulty` | Route | What runs |
+|---|---|---|---|
+| non-empty | any | **adopted path** | nothing else in Phase 1 — straight to Phase 2 with the path |
+| empty | EASY, NORMAL | **brief path** | Step 2 and Step 3, below |
+| empty | HARD | **escalation** | Step 1c — `/analyze`, and no subagent in between |
 
 **The adopted path is the point of this command's existence on a plan set.** `/analyze` wrote
 that file with complete code and `plan-reconciler` reconciled it against the other phases;
@@ -102,9 +107,56 @@ same behavior, reached from a TaskID instead of from a plan index.
 them — on either route. The check lives in the locator because it is already reading every
 `todos.md`; refusing here costs one haiku call instead of two opus ones.
 
-**No difficulty tag changes this fork.** A HARD task cannot reach the adopted path without a
-plan, because the path is defined by the plan existing — so the HARD refusal in Step 3 still
-guards exactly the case it always did.
+**Difficulty never overrides a plan that exists.** A HARD task cannot reach the adopted path
+without a plan, because the path is defined by the plan existing; and a HARD task that *has* one
+is an ordinary adopted-path run, not an escalation. Difficulty only decides which of the two
+plan-less routes is taken.
+
+#### Step 1c: Escalate a HARD Task With No Plan (Main Context)
+
+A HARD task with no plan is the case that needs a plan. `/do` does not write one — so it **runs
+the command that does**, here, before any other subagent is dispatched:
+
+```
+⤴ P1-TP-A023 is HARD and has no plan file. Escalating to /analyze.
+  Difficulty read as: {task_metadata.difficulty_line}
+  /do writes no plans, so it is running the command that does. Nothing else about this
+  task has been touched.
+```
+
+Then invoke the `/analyze` slash command, with the locator's fields as its arguments:
+
+```
+/analyze {package_path} {bug|feature|update|refactor, from task_metadata.type}
+
+Escalated from /do {TaskID} — HARD, no plan file.
+
+{task_metadata.title}
+
+{task_metadata.context, verbatim}
+
+This card is the deliverable. Plan against it, and treat {TaskID} in
+{package_path}/.workflows/todos.md as the origin card the plan set supersedes.
+```
+
+**Let it run per its own spec, and do not ask the user first.** `/analyze` is the full unattended
+workflow: it cuts a worktree, writes the plan set, and — orchestration being its default —
+launches the run itself. So the escalation is not a handoff back to a human with a command to
+paste, it is the work continuing. The one exception is `--no-escalate`, which prints the command
+and stops.
+
+**Nothing of `/do`'s own pipeline runs after this.** No `context-loader`, no `plan-generator`, no
+`completion-handler`, no `pusher`: the analyze run owns the task from here, and the phases it
+creates are executed by `/implement`, each carrying its own plan. Escalating *before* the two
+opus subagents is the whole point — dispatching them to reach a refusal spends two opus calls to
+learn what the locator's `difficulty` and `plan_file` already said.
+
+**An ambiguous difficulty line escalates.** A card whose `**Difficulty**:` reads
+`NORMAL to fix, HARD to decide` is a card saying the deciding is the hard part, which is planning
+work — so any `**Difficulty**:` line containing HARD takes this route, and the banner quotes the
+literal line so the user can see what it read. Planning something that turns out easy costs a
+worktree; brief-pathing something that turns out hard costs a wrong change in the main context
+with no analysis behind it.
 
 #### Step 2: Load Context — `context-loader` (opus) — brief path only
 
@@ -126,11 +178,14 @@ and this subagent writes no plan files.
 
 1. **EASY or NORMAL** → build the brief from the task description and the context packet.
 2. **HARD** → **stop.** Return an error naming `/analyze`. A HARD task without a plan is exactly
-   the case that needs one, and this is not the command that writes it.
+   the case that needs one, and this is not the command that writes it. This is now a backstop:
+   Step 1c escalates such a task before this subagent is dispatched, so reaching it means the
+   fork was skipped — the main context takes the returned error to Step 1c rather than to the
+   user.
 
-There is no third case. A task that *has* a plan never reaches this subagent — Step 1b routed it
-away — and `plan-generator` refuses one that arrives anyway rather than summarizing it, so the
-lossy route cannot come back through a later edit to the fork.
+Neither case is a dead end for the user. A task that *has* a plan never reaches this subagent —
+Step 1b routed it away — and `plan-generator` refuses one that arrives anyway rather than
+summarizing it, so the lossy route cannot come back through a later edit to the fork.
 
 `plan-generator` creates no branches. Branch isolation belongs to `/analyze`, which cuts a
 worktree when it plans.
@@ -349,6 +404,21 @@ Extract the package path from the match: `./chatbot/bowl/.workflows/todos.md` �
 📝 Completing... (completion-handler)
 ```
 
+**Progress — escalation** (HARD, no plan file). One haiku call, then the command that plans:
+```
+🏷️  Session renamed: do-P1-TP-A023
+🔍 Locating task... (task-locator)
+📁 Found: P1-TP-A023 in tools/toolpicker/.workflows/todos.md — no plan file
+
+⤴ P1-TP-A023 is HARD and has no plan file. Escalating to /analyze.
+  Difficulty read as: **Difficulty**: NORMAL to fix, HARD to decide
+  /do writes no plans, so it is running the command that does. Nothing else about
+  this task has been touched.
+
+▶ /analyze tools/toolpicker bug
+```
+Nothing after that line belongs to `/do`; what the user watches from there is `/analyze`.
+
 **Progress — adopted path** (the task carries a plan). Two fewer opus dispatches, and the line
 says so out loud, because a silently shorter run reads like a step was skipped by accident:
 ```
@@ -420,9 +490,11 @@ as arguments to the slash command. `/implement` and `/analyze` print the same sh
 ✗ Task P1-DB-A236 missing Difficulty field
   Run: /update-todos {package_path}
 
-✗ HARD task P1-BC-A123 has no plan file.
+✗ HARD task P1-BC-A123 has no plan file.        (--no-escalate only)
   /do does not write implementation plans. Run /analyze first,
-  then /implement -f <SLUG>_PLAN.md.
+  then /implement -f <SLUG>_PLAN.md — the plan index, never the
+  <session-id>_code_analyzer.md, which /implement refuses.
+  Without --no-escalate this is not an error: Step 1c runs /analyze itself.
 
 ✗ P1-TC-A002 depends on P1-TC-A001 (phase 1), which is not complete.
 ```

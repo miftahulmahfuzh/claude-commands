@@ -220,6 +220,8 @@ phase half-applied when the lid closed restarts from its plan — survivable exa
 /do P2-CL-A001                                    # EASY — brief from the task text
 /do P1-DB-A236 --note="also handle the bulk path"
 /do P1-TC-A002                                    # a plan-set phase — executes its plan directly
+/do P1-TP-A023                                    # HARD, no plan — runs /analyze itself
+/do P1-TP-A023 --no-escalate                      # ...or just prints that command and stops
 ```
 
 Subagents around one main-context step, and **the route depends on whether the task has a plan**.
@@ -232,9 +234,17 @@ Subagents around one main-context step, and **the route depends on whether the t
   `plan-generator` would compress them into prose the executor then works from instead of the
   code. `/implement` has always read the phase plan directly; this is the same behavior reached
   from a TaskID.
-- **Brief path** — no plan file. `context-loader` condenses the docs, `plan-generator` emits a
-  routing brief, and **the main context writes the code**. A **HARD task with no plan file is
-  refused**, pointing at `/analyze`: that's exactly the case where a real plan matters.
+- **Brief path** — no plan file, EASY or NORMAL. `context-loader` condenses the docs,
+  `plan-generator` emits a routing brief, and **the main context writes the code**.
+- **Escalation** — no plan file, HARD. `/do` **runs `/analyze` itself** and stops its own
+  pipeline; no subagent is dispatched to reach that conclusion, because the locator's
+  `difficulty` and `plan_file` already state it. `/analyze` is the full unattended workflow —
+  worktree, plan set, and the orchestrated run, which is its default — so the escalation
+  continues the work rather than handing a command back to a human. That is the case where a
+  real plan matters, and printing its name and stopping was one paste away from the plan
+  nobody asked for again: `--no-escalate` is there for when the paste is what you want. A
+  `**Difficulty**:` line that says HARD anywhere — `NORMAL to fix, HARD to decide` — escalates,
+  and the banner quotes the line verbatim so the reading is visible.
 
 Either way `completion-handler` updates `todos.md` before chaining `readme-updater` and `pusher`.
 
@@ -740,7 +750,8 @@ your-project/
 
 TaskIDs are `P{0-3}-{SCOPE}-{ID}` (e.g. `P0-DB-A236`), unique across every `todos.md` in the
 repo. Tasks are tagged EASY / NORMAL / HARD; EASY and NORMAL can run from the task description
-alone, HARD requires a plan file.
+alone, HARD requires a plan file — and `/do` gets one by running `/analyze` rather than by asking
+for it.
 
 ---
 

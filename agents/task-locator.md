@@ -22,6 +22,12 @@ You find tasks by TaskID across a repository. Return data only — do not modify
 5. Read the matched file and extract the task block (from `### {task_id}` until the next `### ` or section break). Parse:
    - `priority` — from TaskID prefix (P0–P4)
    - `difficulty` — from `**Difficulty**:` line; missing → error pointing to `/update-todos`
+   - `difficulty_line` — that line **verbatim**, resolved value and all. Cards are written by
+     hand and say things like `NORMAL to fix, HARD to decide`; resolving that to one word throws
+     away the half that explains it. Report both: the resolved value routes the task, the literal
+     line is what `/do` quotes back to the user when it escalates. Resolve to HARD whenever the
+     line contains HARD at all — a card that calls any part of itself hard is a card asking for a
+     plan — and never make the caller ask a second time for the text you already read.
    - `type` — from `**Type**:` line (Bug | Feature | Refactor | Docs)
    - `title` — heading text after the TaskID
    - `context` — first ~3 lines of body text
@@ -47,7 +53,8 @@ status: success
 package_path: "{path}"
 task_metadata:
   priority: "P0|P1|P2|P3|P4"
-  difficulty: "EASY|NORMAL|HARD"
+  difficulty: "EASY|NORMAL|HARD"       # HARD if the line says HARD anywhere
+  difficulty_line: "{the **Difficulty**: line, verbatim}"
   type: "Bug|Feature|Refactor|Docs"
   title: "{title}"
   context: "{context}"
