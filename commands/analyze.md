@@ -10,6 +10,7 @@ large. It is the only command that writes implementation plans.
 
 ```bash
 /analyze [target] [bug|feature|update|refactor] [--phases N] [--no-worktree]
+         [--no-orchestrate] [--permission-mode MODE]
 <free-form description of what you want, in your own words>
 ```
 
@@ -25,6 +26,22 @@ and the type from what the user wrote.
   - `refactor` — restructuring, purging, consolidating, renaming
 - `--phases N` — force exactly N phases instead of letting Step 6 decide
 - `--no-worktree` — plan against the current branch instead of cutting a worktree
+- `--no-orchestrate` — **stop after writing the plan**, and print the command instead of running
+  it. Orchestration is the default (Step 11): planning and then not starting is the exception,
+  not the rule, because a finished plan nobody has launched is a night of dead time.
+- `--permission-mode MODE` — the mode the orchestrator and its phase sessions run on.
+  **Defaults to `bypassPermissions`**, because the default exists to run unattended and a mode
+  that stops to ask is a mode that stalls until morning. Pass `acceptEdits`, `auto` or `manual`
+  to narrow it.
+
+**`/analyze` alone is the full unattended workflow.** These are the same command:
+
+```bash
+/analyze
+<what you want changed>
+
+/analyze --orchestrate --permission-mode bypassPermissions      # what the first one means
+```
 
 **Example — terse, classic form:**
 ```bash
@@ -313,6 +330,43 @@ from Step 0 is satisfied by at least one phase**. Nothing downstream will fill a
 
 Output only the block in **Termination** below.
 
+### Step 11: Hand Off — By Default
+
+**Launch the orchestrator. This is the default and needs no flag.** A plan that finishes at 22:30
+should start being implemented at 22:30, not whenever someone next looks at the terminal — the
+gap between the two is the whole reason this step exists.
+
+`--no-orchestrate` is the way out, and the only way out. Stop at Step 10 then, and print the
+command for the user to run when they choose.
+
+```bash
+python3 ~/.claude/skills/swarm/swarm.py launch \
+    --name "orch-<slug>" --cwd "<worktree>" \
+    --permission-mode <--permission-mode, or bypassPermissions by default> \
+    --prompt "/analyze-orchestrator -f <SLUG>_PLAN.md --permission-mode <same mode>"
+```
+
+**Refuse to launch, and say why in the termination block, when either of these holds.** Both are
+cases where an unattended run would spend the night doing nothing useful, or something wrong:
+
+- **Open Questions is non-empty.** The orchestrator refuses these anyway, so launching would
+  produce a session that wakes up, refuses and idles. Worse, the questions are exactly the
+  contradictions that N parallel sessions would each resolve differently — an unattended swarm is
+  the worst possible place for an unresolved contradiction.
+- **A phase plan file is missing**, or the index still says `Status: planned` with empty phases.
+
+Neither refusal is about permissions any more, because the mode now has a default. What that
+default means is worth being straight about: **`bypassPermissions` gives the orchestrator and
+every phase session it spawns a mode this session may not itself hold.** That is a standing
+decision by the owner of this repo, recorded here deliberately, not an inference — the isolation
+that makes it reasonable is the worktree and branch `/analyze` cut, so an unattended run's blast
+radius is a feature branch rather than the working tree. Narrow it per-run with
+`--permission-mode`, or turn the whole step off with `--no-orchestrate`.
+
+The launch is the last thing this command does. Do not wait for the orchestrator, do not poll it,
+and do not report its progress — it renames itself, drives its own phases, and owns the set from
+that point. This session's job is finished.
+
 ---
 
 ## Analysis Document Template
@@ -596,10 +650,18 @@ Next — phase 1 of <N>, in a new session:
   cd <worktree>
   /implement -f <SLUG>_PLAN.md --phase 1
 
-<Only when N > 1 and at least two phases share no dependency — otherwise a swarm is one
-session with extra machinery. Run the whole set concurrently instead:>
+<Always offer this, whatever N is. Parallelism decides whether a swarm beats /implement;
+it does not decide whether the set should run unattended. A strictly sequential four-phase
+set is the case that gains MOST — otherwise it is four commands pasted into four sessions,
+each waiting on a human to notice the last one finished. Even N = 1 gains a session that
+starts now rather than whenever someone next looks.>
 
   /analyze-orchestrator -f <SLUG>_PLAN.md
+
+<This has already happened unless --no-orchestrate was passed — so say which window it
+opened, rather than printing a command the user does not need to run:>
+
+  Orchestrator running in tmux <window> as orch-<slug>  (mode: <mode>)
 ```
 
 `--phase 1` is explicit on purpose: the plan set has just been written, so phase 1 is what starts

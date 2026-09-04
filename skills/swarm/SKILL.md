@@ -81,6 +81,23 @@ identical to git, and confusing them would send the orchestrator to re-run a pha
 shipped. Absence of evidence keeps the ledger's word; only positive contrary evidence overrides
 it.
 
+## Launching a session that nobody typed a command into
+
+`launch` opens one named session in a new tmux window, with no ledger required — the same
+mechanics as `spawn`, minus the phase. It exists so a session can hand off without a human in the
+middle: `/analyze --orchestrate` uses it to start the orchestrator the moment the plan exists,
+rather than leaving a pasteable command on screen until somebody wakes up.
+
+```bash
+python3 ~/.claude/skills/swarm/swarm.py launch \
+    --name orch-<slug> --cwd <worktree> --permission-mode <this session's mode> \
+    --prompt "/analyze-orchestrator -f <SLUG>_PLAN.md --permission-mode <same>"
+```
+
+The mode is passed twice on purpose: once to launch the session on it, once *inside* the prompt
+so the orchestrator knows what to hand its own children. A session cannot read its own permission
+mode, so an argument is the only way it travels.
+
 ## The orchestrator loop
 
 ```bash
