@@ -61,6 +61,18 @@ These commands enforce **main-context-is-code-only**. All file reading, doc upda
 
 When modifying these flows, preserve the isolation: don't add doc-reading or git operations to the main-context step, and don't have subagents implement code.
 
+**Both executors are unattended: they never ask.** `/do` and `/implement` each carry an
+**Autonomy** section and a **Deciding Without Asking** precedence ladder (invariant → exit
+criteria → code blocks → Why/Requirements → task text/note → surrounding convention), because a
+question asked into an empty room costs the whole night — MEASURED: a phase-2 session held an
+`AskUserQuestion` for eight hours and stalled a six-phase set whose answer was rung 1 of that
+ladder. Stopping is allowed, blocking is not: the only stop is an undecidable fork where every
+branch is irreversible, and it exits with a report to the swarm rather than a prompt. Decisions
+are recorded, not just made — `completion_report.decisions` flows into `todos.md`
+(`completion-handler`), the commit body (`pusher`), and the swarm ledger `--note`. If you add a
+`[y/N]`, an `AskUserQuestion`, or an interactive shell command to either flow, you have
+reintroduced the stall.
+
 ### Swarm planning pattern (`/analyze`)
 `/analyze` decomposes the work into phases, then dispatches **all `phase-planner` agents in one
 message** so they plan concurrently. With N > 1 it follows them with a single

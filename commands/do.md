@@ -11,6 +11,54 @@ wrote, or works from the task description for small tasks. Anything big enough t
 plan and applies it, and neither `context-loader` nor `plan-generator` runs. Only a task with no
 plan goes through the brief pipeline.
 
+## Autonomy: this command never waits for a human
+
+A TaskID is handed to `/do` to be **finished**, not to be discussed. From the id to a pushed
+commit the session decides everything itself: what an ambiguous line on the card meant, which of
+two contradicting sentences in an adopted plan wins, what to do when a test fails in a way the
+plan never anticipated. It is written to run at 1am inside a swarm with nobody awake, because
+that is when it runs.
+
+The rule that makes that true:
+
+> **Never end a turn with a question this command needs answered to continue.**
+
+Not "ask sparingly" — never. The arithmetic is one-sided:
+
+| | What it costs |
+|---|---|
+| A decision that turns out wrong | one follow-up commit, or one `/analyze` re-plan — both of which this workflow already handles by design |
+| A question asked into an empty room | every hour until someone wakes up, and no code at all |
+
+MEASURED on `nina-character-tuning`: the phase-2 session found its plan's invariant 2 and its
+ladder prose contradicting each other, asked with `AskUserQuestion`, and held the prompt for
+**eight hours**. Phases 3 and 4 both depend on 2, so a six-phase set built nothing overnight —
+and the answer that finally arrived was `invariant 2 wins`, which is rung 1 of the ladder below
+and was derivable from the plan in under a minute.
+
+So, concretely:
+
+- **Do not use `AskUserQuestion`**, and do not end a message with "which should I do?",
+  "shall I proceed?", `Continue anyway? [y/N]`, or a list of options for someone to pick from.
+- **Do not ask permission for what this command already says to do** — locating the task,
+  escalating a HARD task to `/analyze` (Step 1c says so out loud), applying the plan, running
+  verification, dispatching `completion-handler`, `readme-updater` and `pusher`. Running `/do`
+  *is* the authorisation for all of it.
+- **Keep the shell unattended too.** No interactive git (`GIT_EDITOR=true`, `--no-edit`, never
+  `-i`), no pager (`--no-pager`), and pass the yes-flag to anything that would otherwise prompt.
+  A command blocked on stdin is the same outage with no question attached.
+- **Decide with the ladder in [Deciding Without Asking](#deciding-without-asking), then write the
+  decision down** in `completion_report.decisions`. A recorded decision is reviewable over
+  breakfast and costs one commit to overturn; a waiting prompt is reviewable never.
+
+The user can interrupt at any moment, and that is their steering: always available, always
+obeyed. What is removed is this command's *requirement* for it.
+
+**Stopping is allowed; blocking is not.** A stop ends the session cleanly — the task left in a
+truthful state, the reason printed in a Next block, the swarm told (Step 7), the work on disk
+surviving. A block is a live session holding an unanswered question and building nothing. Every
+terminating branch in this file is a stop; there are no blocks.
+
 ## Arguments
 - Required: `{TaskID}` (e.g. `P0-DB-A236`, `P1-CB-B789`)
 - Optional: `--note="{additional instructions}"`
@@ -227,6 +275,9 @@ validation:
    caveat.
 4. Return the completion report.
 
+Anything the plan leaves ambiguous is settled here, by the ladder in **Deciding Without
+Asking**, and never by a question — this is the phase where the eight-hour stall happened.
+
 A `--note` is applied on top of the plan and **never overrides it** — the same rule
 `/implement` states for its own `-note`. If the note and the plan disagree, that is drift in the
 request rather than in the tree: follow the plan and say so in the completion report.
@@ -248,6 +299,7 @@ completion_report:
   plan_source: "adopted:{path}" | "brief-only"
   modified_files: ["{file}"]
   drift_notes: ["{if any}"]
+  decisions: ["{fork} → {choice} ({the rung that decided it})"]
   error_message: "{if failure}"
 ```
 
@@ -364,13 +416,102 @@ A task carrying a `**Plan Set**:` field is one phase of a plan `/analyze` wrote.
 
 ## Blocked Tasks
 
-Status `blocked`: display what blocks it, ask `Continue anyway? [y/N]`, proceed if confirmed.
+Status `blocked` is **not** a question to put to the user. It is a claim to check against the one
+piece of evidence the locator already returned, `depends_on_incomplete`:
+
+- **Non-empty** → stop and name the blocker. The dependency is real; the plan quotes code as it
+  will look after that TaskID lands, and applying it first produces conflicts that read like
+  drift.
+- **Empty** → the status is stale bookkeeping from before the prerequisites landed. **Proceed**,
+  and say so in one line: `Status reads blocked; depends_on all complete — proceeding.`
+  `completion-handler` corrects the status as part of completing the task.
+
+A `blocked` status with no incomplete dependency and nobody awake is exactly the shape of stall
+this command refuses: the answer is derivable, so derive it.
 
 ## Drift
 
 If the real code no longer matches what an adopted plan quotes, the rule is `/implement`'s:
 small drift → follow the plan's intent and note it; large drift → stop and say
 `Re-run /analyze to re-plan against the current tree.`
+
+Neither branch is a question. "Small or large?" is itself a decision this session makes: a moved
+line, a renamed local, an added field the plan does not touch → small. A function that is gone, a
+changed signature, a restructured file → large. When the two readings are genuinely balanced,
+**treat it as large and stop** — re-planning costs one `/analyze`, while applying a plan to a tree
+it no longer describes costs a wrong change with the plan's authority behind it.
+
+---
+
+## Deciding Without Asking
+
+Every case below used to be a question. All of them are now decisions this session makes,
+states, and records:
+
+- the adopted plan's intent is ambiguous at a specific step
+- **two parts of the plan contradict each other**
+- the task's **Context** and its plan disagree
+- `--note` and the plan disagree
+- applying a step would touch code outside the task's stated scope
+- the test command fails for a reason nothing in the plan anticipated
+- the task reads `blocked` but nothing incomplete blocks it
+
+### The precedence ladder
+
+Read down; **the first rung that speaks to the question decides it.** This is the order in which
+the plan's parts were written and reconciled, so a higher rung survived more scrutiny. It is the
+same ladder `/implement` states — a phase planned by `/analyze` and executed here must be decided
+identically whichever command picks it up.
+
+1. **A stated invariant**, in the adopted plan or its plan index. Invariants are what
+   `plan-reconciler` held constant across every phase; prose is what one `phase-planner` wrote
+   alone, blind to the others. When an invariant and a paragraph disagree, **the invariant wins
+   and the prose is the stale half.**
+2. **The plan's exit criteria**, or the brief's `success_criteria` — the published definition of
+   done.
+3. **The plan's code blocks.** Complete by construction and reconciled; the prose around them is
+   commentary on them.
+4. **The plan index's Why and Requirements table**, for a plan-set phase — the `R` this phase
+   **Satisfies** outranks an incidental sentence about how.
+5. **The task text** in `todos.md` (as the locator returned it), then `--note`, which never
+   overrides the plan.
+6. **The surrounding code's existing convention** — last rung, and the usual one on the brief
+   path, where there is no plan above it.
+
+### Tie-break rules, when the ladder runs out
+
+- **Take the reversible option.** Prefer what a follow-up commit can undo over what rewrites a
+  migration, drops a column, or rewrites published history.
+- **Take the narrower blast radius.** A change inside the task's stated scope beats an equivalent
+  change outside it, even when the outside one is tidier.
+- **Never widen scope to settle an ambiguity** — that is drift, and the Drift rule above applies.
+- **A failing test is never settled by relaxing the check.** Fix the code, or stop. Never delete
+  a test, loosen an assertion, or drop a guard to make a task report success.
+- **Between "do less" and "do more", do exactly what the success criteria demand.**
+
+### Record it, or it did not happen
+
+Recording is what makes deciding cheap, and it costs no waiting:
+
+1. **Print it when you make it**, one line:
+   `⚖ Decided: {the fork} → {choice}. Rung {n}: {the invariant/criterion that decided it}.`
+2. **Carry it in `completion_report.decisions`**, so `completion-handler` writes it into
+   `todos.md` and `pusher` puts it in the commit body — the artefacts that outlive this window.
+3. **Leave it where the choice is not self-evident** — one comment in the code naming the rung
+   that forced it, so the next reader does not re-litigate it.
+4. **If it is a swarm phase, put it in the ledger `--note`** (Step 7), where the coordinator and
+   every later phase can see it.
+
+### The one thing that still stops — and it is a stop, not a question
+
+If a fork is genuinely undecidable *and* every branch is irreversible — destroying data,
+rewriting published history, an unrepeatable migration — do not ask and do not wait. Land and
+push whatever already verified, report `failed` to the swarm with the fork in one line (Step 7),
+and print the **Undecidable** block from the Messages section. A session that exits with a report
+lets its coordinator strand the dependents deliberately or re-plan; a session holding a prompt
+strands them silently and indefinitely.
+
+Reach for it only when the ladder has genuinely nothing to say. Rung 1 usually does.
 
 ---
 
@@ -497,6 +638,29 @@ as arguments to the slash command. `/implement` and `/analyze` print the same sh
   Without --no-escalate this is not an error: Step 1c runs /analyze itself.
 
 ✗ P1-TC-A002 depends on P1-TC-A001 (phase 1), which is not complete.
+```
+
+**Undecidable** (rare — every branch irreversible, see *Deciding Without Asking*):
+```
+✗ P1-NIN-A001 stopped at an irreversible fork. Not asking; reporting.
+  The fork: {one line}
+  Ladder consulted: invariants, exit criteria, code blocks, Why — none of them decide it.
+  Every branch is irreversible: {why}
+  Landed and pushed: {commit(s), or "nothing"}
+  Swarm: reported failed to {coordinator}
+
+Next — decide it and re-plan against the current tree, in a new session:
+
+  cd {worktree}
+  /analyze {package_path} {type} — re-planning {TaskID}: {the fork}
+```
+The session is over when this prints. It is a stop, not a prompt: nothing waits for input, and
+the swarm has already been told.
+
+**A decision the ladder produced is printed where it is made, and again on success:**
+```
+⚖ Decided: anger ceiling at band `off` — 0 vs 4 → 4. Rung 1: plan invariant 2
+  ("the shipped ladder renders byte for byte") outranks the ceiling prose.
 ```
 
 ---

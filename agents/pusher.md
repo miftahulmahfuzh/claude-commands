@@ -46,6 +46,9 @@ Automate git workflow with intelligent commit message generation based on code a
      - `docs(readme): update installation instructions`
    - Include multiple types if changes span categories
    - Limit subject line to 50 characters, body to 72 characters per line
+   - **If the caller passed `decisions` or `drift_notes`, put each on its own body line**
+     (`Decided: <fork> -> <choice> (<rung>)`, `Drift: <note>`). Those are the forks an executor
+     settled instead of asking a human, and `git log` is where a reviewer looks for them.
 
 5. **Stage and commit changes**
    - Execute `git add .` to stage all changes

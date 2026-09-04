@@ -4,6 +4,53 @@ Execute the plan `/analyze` wrote. **`/implement` does not plan** — it creates
 bookkeeping, applies the code, and hands off. Every implementation plan in this workflow has
 exactly one author, and it is `/analyze`.
 
+## Autonomy: this command never waits for a human
+
+A plan is handed to `/implement` to be **applied**, not to be discussed. From `-f` to a pushed
+commit the session decides everything itself: what an ambiguous step meant, which of two
+contradicting sentences in the plan wins, what to do when a verification fails in a way the
+rollback section never anticipated. It is written to run at 1am inside a swarm with nobody awake,
+because that is when it runs.
+
+The rule that makes that true:
+
+> **Never end a turn with a question this command needs answered to continue.**
+
+Not "ask sparingly" — never. The arithmetic is one-sided:
+
+| | What it costs |
+|---|---|
+| A decision that turns out wrong | one follow-up commit, or one `/analyze` re-plan — both of which this workflow already handles by design |
+| A question asked into an empty room | every hour until someone wakes up, and no code at all |
+
+MEASURED on `nina-character-tuning`: phase 2 found the plan's invariant 2 and its ladder prose
+contradicting each other, asked with `AskUserQuestion`, and held the prompt for **eight hours**.
+Phases 3 and 4 both depend on 2, so a six-phase set built nothing overnight — and the answer that
+finally arrived was `invariant 2 wins`, which is the first rung of the ladder below and was
+derivable from the plan in under a minute.
+
+So, concretely:
+
+- **Do not use `AskUserQuestion`**, and do not end a message with "which should I do?",
+  "shall I proceed?", `Continue anyway? [y/N]`, or a list of options for someone to pick from.
+- **Do not ask permission for what this command already says to do** — creating the tasks,
+  applying the phase, running verification, dispatching `completion-handler`, `readme-updater`
+  and `pusher`. Running `/implement` *is* the authorisation for all of it.
+- **Keep the shell unattended too.** No interactive git (`GIT_EDITOR=true`, `--no-edit`, never
+  `-i`), no pager (`--no-pager`), and pass the yes-flag to anything that would otherwise prompt.
+  A command blocked on stdin is the same outage with no question attached.
+- **Decide with the ladder in [Deciding Without Asking](#deciding-without-asking), then write the
+  decision down.** A recorded decision is reviewable over breakfast and costs one commit to
+  overturn; a waiting prompt is reviewable never.
+
+The user can interrupt at any moment, and that is their steering: always available, always
+obeyed. What is removed is this command's *requirement* for it.
+
+**Stopping is allowed; blocking is not.** A stop ends the session cleanly — the task left in a
+truthful state, the reason printed in a Next block, the swarm told (Step 4b), the work on disk
+surviving. A block is a live session holding an unanswered question and building nothing. Every
+terminating branch in this file is a stop; there are no blocks.
+
 ## Usage
 
 ```bash
@@ -54,9 +101,11 @@ Extract: slug, the **Why** section, the **Requirements** table, the invariants, 
 (number, title, satisfies, package, depends-on, difficulty, plan file, TaskID, card), and
 **Open Questions**.
 
-**If Open Questions is non-empty, resolve it before implementing.** Ask with
-`AskUserQuestion` — one question per item, each with your own recommendation. `/analyze`'s
-reconciliation deliberately left these for a human; implementing over them guesses.
+**If Open Questions is non-empty, resolve every item yourself before implementing** — with the
+precedence ladder in **Deciding Without Asking**, one printed line per item, before the first
+edit. `/analyze`'s reconciliation left those items for a *decider*, and this session is the only
+decider that is awake. Implementing over them silently would be guessing; deciding them with a
+stated rung and recording the choice is not, and it is what this command does.
 
 Read only the index here. Phase plans are read in Step 4, one at a time, so the main context
 never holds plans for phases it is not implementing.
@@ -187,6 +236,7 @@ completion_report:
   status: "success"
   modified_files: ["{file}"]
   drift_notes: ["{if any}"]
+  decisions: ["{question} → {choice} ({the rung that decided it})"]
 plan_set:
   file: "{SLUG}_PLAN.md"
   phase: N
@@ -217,6 +267,10 @@ Otherwise `find` returns the `slug`, the `phase`, the `coordinator` to address a
 python3 ~/.claude/skills/swarm/swarm.py report --slug <slug> --phase <N> \
     --status done --commit <sha from pusher> --task <TaskID> --note "<one line>"
 ```
+
+**If the ladder produced any decision, the `--note` is where it goes** — a later phase planned
+against the sentence you overruled, and the ledger is the only place it will look. One clause is
+enough: `anger ceiling off 0→4 per invariant 2`.
 
 Check that name is still in `ListAgents` first. Session names are mutable and reused —
 one listed as `agentic-golang-30` renamed itself to `analyze-carry-similarity-branch` a
@@ -313,18 +367,94 @@ Next — re-plan against the current tree, in a new session:
 `/analyze` takes free-form prose, so the drift note travels with the command instead of being
 something the user has to remember to retype.
 
+**Undecidable** (rare — every branch irreversible, see *Deciding Without Asking*):
+```
+✗ Phase {N} stopped at an irreversible fork. Not asking; reporting.
+  The fork: {one line}
+  Ladder consulted: invariants, exit criteria, code blocks, Why — none of them decide it.
+  Every branch is irreversible: {why}
+  Landed and pushed: {commit(s), or "nothing"}
+  Swarm: reported failed to {coordinator}
+
+Next — decide it and re-plan against the current tree, in a new session:
+
+  cd {worktree}
+  /analyze {plan set title} — re-planning {SLUG}_PLAN.md phase {N}: {the fork}
+```
+This is the only branch that ends without either a commit or a drift note, and it is not a
+question: the session is over when it prints, and the swarm has been told.
+
 ---
 
-## Handling Confusion
+## Deciding Without Asking
 
-Stop and ask with `AskUserQuestion`, giving your own recommendation with rationale, when:
-- The plan index has unresolved **Open Questions**
-- The plan's intent is ambiguous at a specific step
-- Applying a step would break code outside the phase's stated scope
-- Verification fails for a reason the plan's rollback section does not cover
+Every case below used to be a question. All of them are now decisions this session makes,
+states, and records:
 
-**When in doubt, ask — never guess and proceed.** What you must not do is quietly invent the
-missing part of a plan.
+- the plan index has unresolved **Open Questions**
+- the plan's intent is ambiguous at a specific step
+- **two parts of the plan contradict each other** — the eight-hour case above
+- applying a step would touch code outside the phase's stated scope
+- verification fails for a reason the plan's rollback section does not cover
+- the `-note` and the plan disagree
+
+### The precedence ladder
+
+Read down; **the first rung that speaks to the question decides it.** This is not a tie-breaker
+invented here — it is the order in which the plan's parts were written and reconciled, so a
+higher rung is the one that survived more scrutiny.
+
+1. **A stated invariant**, in the plan index or the phase plan. Invariants are what
+   `plan-reconciler` held constant across every phase; prose is what one `phase-planner` wrote
+   alone, blind to the others. When an invariant and a paragraph disagree, **the invariant wins
+   and the prose is the stale half.**
+2. **The phase's exit criteria** — the published definition of this phase being done.
+3. **The phase plan's code blocks.** Complete by construction and reconciled; the prose around
+   them is commentary on them.
+4. **The plan index's Why and Requirements table** — the deliverable the set exists to produce.
+   An `R` the phase **Satisfies** outranks an incidental sentence about how.
+5. **The task text** in `todos.md`, then `-note`, which never overrides the plan.
+6. **The surrounding code's existing convention** — last rung, and only for questions the plan
+   genuinely does not reach.
+
+### Tie-break rules, when the ladder runs out
+
+- **Take the reversible option.** Prefer what a later phase or a one-line follow-up can undo over
+  what rewrites a migration, drops a column, or rewrites published history.
+- **Take the narrower blast radius.** A change inside the phase's **Owns** beats an equivalent
+  change outside it, even when the outside one is tidier.
+- **Never widen scope to settle an ambiguity.** If the only way to satisfy a step is to edit what
+  another phase owns, that is drift, not a decision — Step 4's drift rule applies instead, and it
+  is not a question either.
+- **A failing verification is never settled by relaxing the check.** Fix the code, or stop. Never
+  delete a test, loosen an assertion, or drop a guard to make a phase report success.
+- **Between "do less" and "do more", do exactly what the exit criteria demand** — no extra
+  refactor bought with the same commit.
+
+### Record it, or it did not happen
+
+Recording is what makes deciding cheap, and it costs no waiting:
+
+1. **Print it when you make it**, one line:
+   `⚖ Decided: {the fork} → {choice}. Rung {n}: {the invariant/criterion that decided it}.`
+2. **Carry it in the completion report's `decisions:` list**, so `completion-handler` writes it
+   into `todos.md` and `pusher` puts it in the commit body — the artefacts that outlive this
+   window.
+3. **Leave it where the choice is not self-evident** — one comment in the code or a line in the
+   doc, naming the rung that forced it, so the next reader does not re-litigate it.
+4. **If it is a swarm phase, put it in the ledger note** (Step 4b), where the coordinator and
+   every later phase can see it.
+
+### The one thing that still stops — and it is a stop, not a question
+
+If a fork is genuinely undecidable *and* every branch is irreversible — destroying data,
+rewriting published history, an unrepeatable migration — do not ask and do not wait. Land and
+push whatever already verified, report `failed` to the swarm with the fork in one line (Step 4b),
+and print the **Undecidable** block. A session that exits with a report lets its coordinator
+strand the dependents deliberately or re-plan; a session holding a prompt strands them silently
+and indefinitely, which is the failure this whole section exists to prevent.
+
+Reach for it only when the ladder above has genuinely nothing to say. Rung 1 usually does.
 
 ---
 

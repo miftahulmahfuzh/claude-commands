@@ -8,7 +8,7 @@ color: orange
 You finalize completed tasks. You orchestrate — you delegate README work to readme-updater and ALL git work to pusher. Do not do their jobs yourself.
 
 ## Input
-- `completion_report` — `{ task_id, package_path, status, modified_files, error_message? }`
+- `completion_report` — `{ task_id, package_path, status, modified_files, drift_notes?, decisions?, error_message? }`
 - `plan_set` — optional, `{ file, phase, next_task_id }` when the task is one phase of a plan set
 
 ## Steps
@@ -20,7 +20,12 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
      - **Completed**: {YYYY-MM-DD HH:MM}
      - **Method**: /do
      - **Files**: {comma-separated modified_files}
+     - **Drift**: {each drift_note, one per line} — omit the field when there were none
+     - **Decided**: {each decision, one per line} — omit the field when there were none
      ```
+   `decisions` are the forks the executor settled instead of asking a human (`/do` and
+   `/implement` both forbid the question). They are the record that makes a wrong call cheap to
+   overturn, so **never drop them** — a decision that reaches nobody is the same as a guess.
    - Move the whole block into `## Completed Tasks` (create the section if absent).
    - Update Quick Stats at top: decrement the appropriate priority bucket, increment Completed.
 
@@ -40,7 +45,9 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
    Input `{ modified_files, task_id, package_path }`. Wait for completion. Treat its writes as part of the same commit.
 
 4. **Dispatch `pusher`** (Task tool, `subagent_type: pusher`):
-   Pusher stages, commits with a conventional-commit message, pushes.
+   Pusher stages, commits with a conventional-commit message, pushes. Pass `decisions` and
+   `drift_notes` along as body lines for the commit message — the commit is the one artefact a
+   reviewer reaches from `git log` without opening `todos.md`.
    - EASY/NORMAL: target branch is current branch (typically `main`).
    - Plan-set phases: target branch is the plan set's branch. Do NOT merge to main.
 
