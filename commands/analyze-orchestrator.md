@@ -114,7 +114,9 @@ Loop until `runnable_now` is empty:
    Each opens a detached tmux window running `/implement -f <PLAN.md> --phase N` in a session
    already named `impl-<slug>-p<N>`. Detached on purpose: it must never steal the window the user
    is reading.
-3. **Subscribe to each**, in one message, with `SendMessage` carrying `notify_when_idle: true`
+3. **Re-read `ListAgents` before addressing anyone.** A name captured a minute ago may now
+   belong to a different session — names are mutable and reused. Then **subscribe to each**,
+   in one message, with `SendMessage` carrying `notify_when_idle: true`
    and no body. This is the only way to notice a phase that dies without reporting — silence
    from a working session and silence from a crashed one are otherwise identical. Never poll
    `ListAgents` in a loop, and never send "are you done?".

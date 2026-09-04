@@ -196,6 +196,12 @@ python3 ~/.claude/skills/swarm/swarm.py report --slug <slug> --phase <N> \
     --status done --commit <sha from pusher> --task <TaskID> --note "<one line>"
 ```
 
+Check that name is still in `ListAgents` first. Session names are mutable and reused —
+one listed as `agentic-golang-30` renamed itself to `analyze-carry-similarity-branch` a
+minute later — so a name read earlier can deliver this report to an unrelated session. If
+the coordinator is gone, the ledger write above already recorded the outcome: say so and
+stop.
+
 then `SendMessage` the coordinator — `DONE`, the TaskID, the commit, and one line on what
 actually changed. Report `failed` the same way, with the reason: a coordinator that is told a
 phase failed can strand its dependents deliberately, while one left guessing stalls the whole set.

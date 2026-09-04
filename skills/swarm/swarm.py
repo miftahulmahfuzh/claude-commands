@@ -500,6 +500,16 @@ def cmd_init(args):
             "worktree": meta.get("worktree") or None,
             "coordinator": args.coordinator or data.get("coordinator")
                            or meta.get("coordinator"),
+            # A NAME IS NOT AN IDENTITY. Session names are mutable and reused: MEASURED
+            # here, a session listed as `agentic-golang-30` renamed itself to
+            # `analyze-carry-similarity-branch` a minute later when /analyze ran in it,
+            # and a message addressed to the old name still arrived -- at a session now
+            # doing unrelated work. If `init` runs in the coordinator, its session id is
+            # recorded too, so a child can tell "my coordinator" from "whoever holds
+            # that name now" before sending a report to a stranger.
+            "coordinator_session_id": (args.coordinator_session_id
+                                       or data.get("coordinator_session_id")
+                                       or os.environ.get("CLAUDE_CODE_SESSION_ID")),
             "repo": repo,
             "created": data.get("created") or now(),
             "updated": now(),
@@ -695,6 +705,13 @@ def cmd_find(args):
                 print(json.dumps({"swarm": True, "slug": ledger["slug"],
                                   "phase": phase["n"],
                                   "coordinator": ledger.get("coordinator"),
+                                  "coordinator_session_id":
+                                      ledger.get("coordinator_session_id"),
+                                  "addressing_note":
+                                      "confirm this name is still in ListAgents before "
+                                      "sending; names are mutable and reused, and a "
+                                      "stale one delivers your report to a stranger. "
+                                      "If it is gone, tell the user -- do not guess.",
                                   "ledger": str(ledger_file),
                                   "peers": [child_name("impl", ledger["slug"], p["n"])
                                             for p in ledger.get("phases", [])
@@ -901,7 +918,8 @@ def selftest():
        in ("left alone (--no-trust)", "no ~/.claude.json to read"), True)
 
     eq("a missing plan is a soft no", cmd_init(argparse.Namespace(
-        plan="/nonexistent/NOPE_PLAN.md", slug=None, coordinator=None)), 0)
+        plan="/nonexistent/NOPE_PLAN.md", slug=None, coordinator=None,
+        coordinator_session_id=None)), 0)
 
     if failures:
         for line in failures:
@@ -919,6 +937,8 @@ def main(argv=None):
     p.add_argument("--plan", required=True)
     p.add_argument("--slug")
     p.add_argument("--coordinator")
+    p.add_argument("--coordinator-session-id",
+                   help="defaults to this session's, when init runs in the coordinator")
 
     for name, help_text in (("waves", "what can run now"), ("status", "the table")):
         p = sub.add_parser(name, help=help_text)

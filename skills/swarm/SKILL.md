@@ -34,6 +34,22 @@ never invented:
 `swarm.py` computes these with `child_name()`, truncating the slug rather than the phase number —
 two phases must never collide on one address.
 
+**A name is not an identity.** Names are mutable and reused, and the window between reading
+`ListAgents` and calling `SendMessage` is enough to invalidate one. MEASURED here: a session
+listed as `agentic-golang-30` renamed itself to `analyze-carry-similarity-branch` about a minute
+later, when `/analyze` ran in it — and a message addressed to the old name still arrived, at a
+session by then doing unrelated work. Nothing was broadcast; the target simply moved.
+
+Three consequences the swarm depends on:
+
+- **Set the child's name at launch.** `claude -n impl-<slug>-p<N>` means the coordinator never
+  reads a name it did not choose, and no other session will adopt that shape.
+- **Re-read `ListAgents` immediately before sending.** Never send to a name captured earlier in
+  the session; a cached name is a guess about the present.
+- **The ledger records `coordinator_session_id` alongside the name.** Before reporting, confirm
+  the name still resolves; if it is gone, tell the user rather than sending a phase report to
+  whichever session now happens to hold that name.
+
 ## The ledger, in two halves
 
 ```
@@ -151,7 +167,10 @@ python3 ~/.claude/skills/swarm/swarm.py report --slug <slug> --phase 2 \
     --status done --commit <sha> --task P2-TP-A012 --note "tests green"
 ```
 
-then `SendMessage` to the `coordinator` that `find` returned.
+then `SendMessage` to the `coordinator` that `find` returned — after confirming that name is
+still in `ListAgents`. `find` returns `coordinator_session_id` for exactly this check. If the
+coordinator is gone, the file half of the report is already durable: say so to the user and stop,
+rather than delivering a phase report to a stranger.
 
 `find` is discovery over flags on purpose: a session the user launched by hand carries no
 `--swarm` argument, and a report that silently went nowhere is worse than no report. Every
