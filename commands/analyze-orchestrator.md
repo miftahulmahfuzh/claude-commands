@@ -22,7 +22,7 @@ It **writes no plans**. `/analyze` is the only command that writes plans — see
 
 ---
 
-## Three iron rules
+## Four iron rules
 
 **1. The plan set is committed and pushed before a single phase is spawned.** A set that lives
 only in a worktree dies with that worktree — which has already happened here once, and cost a
@@ -42,18 +42,63 @@ on the current code whenever a bug, a discrepancy or a re-run needs one, which i
 stale one you would have kept. The scrollback is captured to a file first, so nothing is lost —
 see Step 4.7.
 
+**4. Nobody in this swarm waits for a human — least of all this session.** A coordinator's
+question is the most expensive question in the system: a phase that asks stalls one phase, while a
+coordinator that asks stalls every phase in the wave, every wave behind it, and every window it
+would have reaped. Multiply by fan-out. This session **decides and records**; it does not survey
+options, ask which one, or end a turn on a question it needs answered to keep driving.
+
+MEASURED on `nina-character-tuning`: phase 2 found its plan's invariant contradicting its own
+prose, asked with `AskUserQuestion`, and held the prompt for **eight hours**. Phases 3 and 4 both
+depended on 2, so a six-phase set built nothing overnight and this coordinator sat idle beside it
+reporting "a genuine serial stretch, not idle time I can fill" — which was true of the DAG and
+false of the reason. The answer was the plan's own invariant, on the first rung of the ladder
+`/do` and `/implement` now carry.
+
+Three consequences, each of them load-bearing:
+
+- **Resolve the set's contradictions once, here, before spawning anything** (Step 1). A
+  contradiction left in the plan is asked again by every phase that touches it; resolved in the
+  ledger, it is inherited by all of them.
+- **Answer a child that asks** (Step 4.4b) instead of relaying its question to the user. This
+  session holds the plan index, the Requirements table and every sibling's report — it is the
+  best-informed decider in the swarm, and the only one awake.
+- **A stop is allowed; a block is not.** The set's one legitimate wait is the **merge** (Step 5),
+  which is terminal and comes after every phase has landed and pushed. Everything before it gets
+  decided.
+
 ---
 
 ## Step 1: Locate the Set
 
 **Fresh (`-f`).** Read the plan index. Refuse and stop if:
 - it is an analysis document rather than a plan index → name `/analyze`
-- its **Open Questions** section is non-empty → those are contradictions reconciliation could not
-  resolve, and a swarm will multiply them across N sessions at once. Ask the user.
 - any phase's **Plan** column points at a file that does not exist
 
+**A non-empty Open Questions section is not a refusal, and not a question to forward.** Those
+items are contradictions `plan-reconciler` could not resolve, and a swarm multiplies each of them
+across every phase that touches it — which is exactly why this session resolves them **now,
+once**, rather than letting N children meet the same fork independently:
+
+1. Decide each item with the precedence ladder `/implement` states — **stated invariant → exit
+   criteria → the plan's code blocks → the index's Why and Requirements table → task text →
+   surrounding convention.** First rung that speaks decides it.
+2. Print each decision: `⚖ Open question {i} → {choice}. Rung {n}: {what decided it}.`
+3. **Write the resolutions into the plan index**, replacing the Open Questions item with the
+   decision and the rung — the children read the index, so this is how the answer reaches them —
+   and carry the same line into the ledger note at `init`. Step 2 pushes both, so a resume on
+   another machine inherits the decisions instead of re-deriving them.
+
+An unresolvable item — every branch irreversible, nothing on the ladder speaking — is the one that
+stops, per iron rule 4: report it and end the session before spawning, because a swarm launched
+over a real fork does the wrong work N times in parallel.
+
 **Resume (`--resume`).** Read `<repo>/.workflows/orchestration/*/ledger.json`. With no slug, if
-exactly one set is unfinished, take it; if several are, list them and ask. Resume never reads the
+exactly one set is unfinished, take it. **If several are, pick one and say which** — the set whose
+branch is currently checked out, else the most recently updated ledger — list the others under
+`Also unfinished:` with the `--resume <slug>` line that would switch to them. Listing three sets
+and waiting is a stall with a 1-in-3 chance of being needed; picking the checked-out one is right
+almost always and costs one re-run when it is not. Resume never reads the
 worktree first — the worktree may be gone, may belong to another machine, or may never have
 existed on this one.
 
@@ -103,8 +148,11 @@ laptop that got closed mid-phase left it saying `running` forever. So the real s
 from what cannot lie — whether the commit is an ancestor of the branch, and what `todos.md` says
 about the TaskID — and any disagreement is resolved in favour of the derivation.
 
-**Report every disagreement to the user before acting on it.** A ledger that said `running` and
-derives to `pending` means a phase was abandoned half-done; the user may know why.
+**Report every disagreement, then act on it in the same turn.** A ledger that said `running` and
+derives to `pending` means a phase was abandoned half-done, and the user may well know why — but
+the report is a line in the output, not a question, and the derivation is what you act on either
+way. `verify` already resolves disagreement in favour of what git can prove; printing the
+disagreement lets a human correct it later without holding the set until they do.
 
 Then name this session, so the phases have somewhere to report:
 
@@ -132,6 +180,16 @@ Loop until `runnable_now` is empty:
    from a working session and silence from a crashed one are otherwise identical. Never poll
    `ListAgents` in a loop, and never send "are you done?".
 4. **Collect reports** as they arrive (`<cross-session-message from="impl-<slug>-p2">`).
+4b. **Answer a child that asks — never relay it.** `/do` and `/implement` forbid the question, so
+   a child asking one is a session on an older prompt, a genuine plan contradiction, or a fork
+   its own ladder could not reach. All three are yours: you hold the plan index, the Requirements
+   table, the resolved Open Questions and every sibling's report, which makes this the
+   best-informed decider in the swarm and the only one awake. Decide on the same ladder
+   (**invariant → exit criteria → code blocks → Why/Requirements → task text → convention**),
+   reply with the choice *and the rung*, and record it in the ledger note so the phases after it
+   inherit the answer. Forwarding it to the user converts one stalled phase into a stalled set.
+   The only exception is iron rule 4's stop: a fork where every branch is irreversible, which is
+   reported, not asked.
 5. **Verify, then believe.** `swarm.py verify --slug <slug> --apply`. A phase that reports `done`
    whose commit is not on the branch has not landed, whatever it said.
 6. **Push the ledger** via `pusher`. Every round. This is iron rule 2.
@@ -151,9 +209,16 @@ Loop until `runnable_now` is empty:
    with `--include-failed` once the user has seen it, or when landing the set.
 8. Recompute and go to 1.
 
-**Stragglers.** An idle notice with no report means the phase stopped without finishing. Ask that
-session directly what happened before deciding; if it is unreachable, mark the phase `failed`
-with a note and let `stalled` show what it took down with it.
+**Stragglers.** An idle notice with no report means the phase stopped without finishing. Send that
+session one message asking what happened — a peer is not a human, and `SendMessage` to a live
+session is cheap — but **do not hold the round on its reply.** Carry on with the rest of the wave;
+if no answer has arrived by the next `verify`, decide from what git can prove: a commit on the
+branch means it landed and forgot to report, and no commit means it failed. Mark it, note it, and
+let `stalled` show what it took down with it.
+
+**A failure never pauses the branches of the DAG it does not touch.** Report the failed phase and
+its `stalled` dependents, then keep spawning everything still in `runnable_now`. Halting the whole
+set on one failure turns a partial night into an empty one.
 
 **Spawn every child on this session's own permission mode.** When `--permission-mode` was passed
 to *this* command — which is what `/analyze` does when it launches you — that is the mode: hand it
@@ -181,10 +246,13 @@ When every phase is `done`:
 
 1. Verify once more, from the branch rather than from the ledger.
 2. Hand the merge to the user unless they have already said to merge — merging a whole plan set
-   is not a step to infer. **This is the right place for an unattended run to stop.** Every phase
-   landing on the branch overnight is the eight hours of value; the merge is a thirty-second
-   decision in the morning, and doing it unsupervised trades a large risk for a tiny saving.
-   Finish everything up to it, then report and wait.
+   is not a step to infer. **This is the one place an unattended run stops, and it is a stop, not
+   a block:** every phase landing on the branch overnight is the eight hours of value, the merge
+   is a thirty-second decision in the morning, and doing it unsupervised trades a large risk for a
+   tiny saving. So finish everything up to it — every phase landed, verified, pushed, every window
+   reaped — then report and end the session. Do not sit on a prompt waiting for the answer, and
+   **never reach this step early**: a merge decision surfaced while phases are still runnable is
+   iron rule 4's failure wearing Step 5's clothes.
 3. `WARN` every peer whose cwd is inside the worktree **before** removing it. Their working
    directory is about to stop existing, and one of them may still be mid-write.
 4. Close what is left:
@@ -253,6 +321,10 @@ Landed:
 Open:
   2  <title>   spawned as impl-<slug>-p2  (tmux @71)
 
+Decided without asking:
+  OQ1  <the fork>  ->  <choice>   rung 1: plan invariant 2
+  p2   <the fork>  ->  <choice>   rung 2: phase exit criterion 3
+
 Windows:  1 open, 2 closed -- scrollback in .workflows/orchestration/<slug>/logs/
 
 Ledger:  .workflows/orchestration/<slug>/ledger.json  (pushed @ <sha>)
@@ -263,6 +335,12 @@ Resume this anywhere:
 
   /analyze-orchestrator --resume <slug>
 ```
+
+**The `Decided without asking` section is the morning's review queue**, and it is omitted only
+when it is empty. Every entry is a fork this session or one of its phases settled from the plan
+instead of holding a prompt — sourced from the resolved Open Questions, the ledger notes and the
+phases' `decisions`. Overturning one costs a commit; not knowing it happened costs trust in the
+whole run, so an unattended swarm that decided nothing worth listing is either trivial or lying.
 
 The resume line sits alone so it can be pasted, and nothing follows it on that line — a trailing
 `#` is read as arguments to a slash command, not as a comment. Same shape as `/analyze`, `/do`

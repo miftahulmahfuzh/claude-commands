@@ -107,9 +107,21 @@ reports. It **writes no plans** — same invariant as `/implement` and `/do`.
 Sessions address each other by name (`ListAgents` → `SendMessage`), which works because every
 long-running command already renames itself via `skills/task/session.py`; `swarm.py spawn` goes
 further and sets the child's name at launch with `claude -n`, so the coordinator never races the
-child's own rename. Two rules keep the mesh from becoming a chat room: **a message states a fact
-and never delegates work**, and a session must **never ask a peer to do what its own permissions
-denied** — that is permission laundering.
+child's own rename. Three rules keep the mesh from becoming a chat room: **a message states a fact
+and never delegates work**; a session must **never ask a peer to do what its own permissions
+denied** — that is permission laundering; and **no message asks a peer for a decision or blocks on
+a reply** — a peer waiting on a peer is the same stall with the human swapped for a session that
+is also idle.
+
+The no-ask invariant scales with fan-out, so `/analyze-orchestrator` carries it as **iron rule 4**
+(there were three): a phase that asks stalls its dependents, a coordinator that asks stalls the
+whole set. It resolves the plan index's **Open Questions itself before spawning anything** — once,
+into the index and the ledger, so N children inherit the answer instead of meeting the same fork
+independently — and it **answers a child that asks rather than relaying the question**, being the
+only session holding the index, the Requirements table and every sibling's report. Decisions
+surface in the termination block's `Decided without asking` section, which is the morning's review
+queue. The one legitimate wait is the **merge** (Step 5): terminal, and only after every phase has
+landed and pushed.
 
 The ledger is split by lifetime, and the split is the whole reason cross-machine resume works:
 `.workflows/orchestration/<slug>/ledger.json` is **committed** (phases, depends_on, status,

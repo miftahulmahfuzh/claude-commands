@@ -19,6 +19,47 @@ Two channels, and keeping them apart is what makes the whole thing work:
 
 Never use one for the other's job. A message is not a record; a commit is not a notification.
 
+## Nobody in a swarm waits for a human
+
+A swarm exists to turn a night into N phases of progress. A question suspends that, and the cost
+scales with the fan-out:
+
+| Who asks | What stalls |
+|---|---|
+| one phase session | that phase — plus every phase that depends on it, transitively |
+| the coordinator | the whole set: the wave it was spawning, every wave behind it, every window it would have reaped |
+
+MEASURED on `nina-character-tuning`: phase 2 found its plan's invariant contradicting its own
+prose, asked with `AskUserQuestion`, and held that prompt for **eight hours**. Phases 3 and 4 both
+declared `depends_on: [1, 2]`, so a six-phase set produced nothing overnight while the coordinator
+idled beside it — correctly reporting a serial stretch in the DAG, and wrongly concluding the
+serialization was the DAG's fault. The answer was the plan's own invariant.
+
+So the rule, for every session in the mesh:
+
+> **Never end a turn with a question the swarm needs answered to continue.**
+
+Which role decides what:
+
+- **A phase session decides its own forks** — ambiguity in its plan, a self-contradiction, a
+  failing check the plan did not anticipate. `/do` and `/implement` each carry the precedence
+  ladder (**stated invariant → exit criteria → the plan's code blocks → the index's Why and
+  Requirements → task text/note → surrounding convention**) and forbid `AskUserQuestion`
+  outright. It reports the decision in the ledger `--note`, never as a question.
+- **The coordinator decides the set's forks** — the plan index's Open Questions before spawning
+  anything, which phase to resume when several sets are unfinished, what a straggler's silence
+  means. And it **answers a child that asks anyway** rather than relaying the question: it holds
+  the plan index, the Requirements table and every sibling's report, making it the best-informed
+  decider present and the only one awake.
+- **Nobody asks the user mid-set.** The one legitimate wait is the **merge**, which is terminal
+  and comes after every phase has landed and been pushed.
+
+**Stopping is allowed; blocking is not.** A stop ends a session cleanly — the ledger truthful, the
+reason printed, the coordinator told, the work on disk surviving. A block is a live session
+holding an unanswered question and building nothing. The stops in this workflow are few and all
+terminal: a fork where every branch is irreversible, missing tooling, a permission a session does
+not have. Everything else gets decided and written down.
+
 ## The addressing rule
 
 `claude -n <name>` sets a session's peer address **at launch**, before the process boots — so a
@@ -130,7 +171,10 @@ Then, until nothing is runnable and nothing is live:
 7. **Re-compute.** `waves` again; a finished phase may have unblocked others. Go to 1.
 
 Stop when `runnable_now` is empty. `stalled` lists phases that can never run because a dependency
-failed — report those to the user rather than spawning them.
+failed — report those to the user rather than spawning them, and **keep driving whatever is still
+runnable**. A failure in one branch of the DAG never pauses the branches it does not touch, and it
+is never a reason to ask whether to continue: halting a set on one failed phase turns a partial
+night into an empty one.
 
 ### Spawn children on the coordinator's own permission mode
 
@@ -220,10 +264,23 @@ chatty by restricting it to four message kinds — everything else goes to the c
 | `NEED` | before assuming a dependency landed | the contract item, and which phase owns it |
 | `WARN` | about to delete a worktree or branch | the path, and what the recipient should do |
 
-Two hard rules. **A message states a fact; it never delegates work** — "I deleted `SortRows`" is
-a mesh message, "please delete `SortRows` for me" is not. And **`WARN` before destroying shared
+Three hard rules. **A message states a fact; it never delegates work** — "I deleted `SortRows`"
+is a mesh message, "please delete `SortRows` for me" is not. **`WARN` before destroying shared
 ground**: a session removing a worktree tells every peer whose cwd lives inside it, because their
 working directory is about to stop existing.
+
+And **no message asks a peer for a decision, and none blocks on a reply.** Every kind in that
+table is a fact in one direction: `NEED` states what this phase requires and which phase owns it
+— it is not a request to be answered before work continues. If a session cannot proceed without a
+peer's answer, that is a missing `depends_on` edge in the plan, not a conversation: decide from
+the ladder above, note it, and report the edge to the coordinator so it lands in the ledger. A
+peer waiting on a peer is the same eight-hour stall with the human swapped out for a session that
+is also idle.
+
+A **question that arrives anyway** — from a child on an older prompt, or a fork its own ladder
+could not reach — is answered by the coordinator, with the choice *and* the rung that decided it,
+and recorded in the ledger note so later phases inherit it. It is never forwarded to the user:
+that converts one stalled phase into a stalled set.
 
 ## Reporting, from a phase session
 
@@ -237,6 +294,12 @@ python3 ~/.claude/skills/swarm/swarm.py find --plan .workflows/plan/<slug>/phase
 python3 ~/.claude/skills/swarm/swarm.py report --slug <slug> --phase 2 \
     --status done --commit <sha> --task P2-TP-A012 --note "tests green"
 ```
+
+**The `--note` is where a decision goes.** A phase that settled a fork instead of asking about it
+must say so here in a clause — `anger ceiling off 0→4 per invariant 2` — because the next phase
+was planned against the sentence that got overruled, and the ledger is the only place it will
+look. A report is also never a question: `failed` with the reason is a report the coordinator can
+act on, while "which should I do?" is a phase that has not reported at all.
 
 then `SendMessage` to the `coordinator` that `find` returned — after confirming that name is
 still in `ListAgents`. `find` returns `coordinator_session_id` for exactly this check. If the
