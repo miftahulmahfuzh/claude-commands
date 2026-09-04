@@ -27,6 +27,7 @@ deletes inside `~/.claude/commands/` and is safe to re-run.
 |---|---|
 | `/analyze` | Traces the code, then writes the implementation plan — the only command that plans |
 | `/implement` | Executes a plan: creates the tasks, applies the code |
+| `/analyze-orchestrator` | Runs a whole plan set as a swarm — a session per phase, resumable on any machine |
 | `/do` | Executes one existing task by TaskID |
 | `/dbg` | Drives Delve to get runtime truth instead of inferring from logs |
 | `/analyze-package` | Generates a package's code-quality analysis |
@@ -50,9 +51,10 @@ session after their errand, as soon as they know it:
 | `/analyze` | `analyze-<slug>` | step 4, with the worktree — and also without one |
 | `/implement` | `impl-<slug>-p<N>` | step 2 from the index, sharpened once the phase is picked |
 | `/do <TaskID>` | `do-<TaskID>` | immediately; the id is the argument |
+| `/analyze-orchestrator` | `orch-<slug>` | step 3, once the ledger is verified |
 | `/token-maxxing` | `tokenmax-<idea>` | step 7, with the day's branch |
 
-All five call `skills/task/session.py`, which sends the same `/rename` control message over the
+All six call `skills/task/session.py`, which sends the same `/rename` control message over the
 session's own messaging socket — so the tab title, the `/resume` row and the name peers address
 change together, instead of a file write the running process would ignore. It renames the **tmux
 window** too, which under tmux is the only one of those actually on screen, since the status line
@@ -136,6 +138,39 @@ one session. Phases stay blocked until their dependencies complete.
 analysis describes the code, and filling the gap here is what this command deliberately doesn't
 do. Same rule when the code has drifted from what a plan quotes: small drift is followed and
 noted, large drift stops with `Re-run /analyze`.
+
+### `/analyze-orchestrator`
+
+```bash
+/analyze-orchestrator -f <SLUG>_PLAN.md      # drive a fresh plan set
+/analyze-orchestrator --resume <slug>        # pick it up again — any machine, any time
+/analyze-orchestrator --status <slug>        # report, change nothing
+```
+
+`/implement` walks a plan set one phase per session. This runs the same set as a **swarm**: it
+reads the index's **Depends on** column as a DAG, opens a session per phase for every phase in a
+wave, watches them, verifies what they claim, and lands the result. Phases that share no
+dependency edge run at the same time, in their own tmux windows.
+
+It **writes no plans** either — same invariant as `/implement` and `/do`.
+
+Two rules it will not bend:
+
+1. **The plan set is committed and pushed before a single phase is spawned.** A set that lives
+   only in a worktree dies with that worktree — which has happened here, and cost a
+   reconciliation nobody could read back.
+2. **The ledger is pushed after every phase, not at the end.** Resume recovers only what reached
+   the remote, so this bounds the loss to one phase.
+
+**Resume is a re-derivation, not a replay.** The committed ledger is a hint; the real status
+comes from what cannot lie — whether the commit is an ancestor of the branch, and what
+`todos.md` says about the TaskID. One asymmetry is deliberate: a `done` phase is *never*
+downgraded on missing evidence, because "not on the branch" and "not fetched here" look identical
+to git, and confusing them re-runs work that already shipped.
+
+What it cannot recover, stated plainly: **uncommitted or unpushed work on the other machine.** A
+phase half-applied when the lid closed restarts from its plan — survivable exactly because
+`/analyze` builds phases that stand alone.
 
 ### `/do`
 
@@ -320,6 +355,27 @@ requests** field as a board column. GitLab needs a PAT with `api` scope in
 `~/.config/task-skill/gitlab`, then `labels --ensure` and `board --ensure` per project.
 `doctor` reports what's missing on either backend.
 
+### `swarm`
+
+The mechanics behind `/analyze-orchestrator`: wave scheduling from a plan set's `Depends on`
+column, spawning a named session per phase, and the two-half ledger that makes a set resumable on
+another machine.
+
+Sessions address each other by name — `ListAgents` lists the peers, `SendMessage` writes to one —
+so a phase session reports to its coordinator when it lands, and warns any peer whose working
+directory is inside a worktree it is about to delete. Messaging is the local nervous system and
+dies with the machine; the committed ledger is the skeleton and does not. `swarm.py verify`
+re-derives every phase's real status from the branch and `todos.md` rather than trusting what the
+ledger claims, and never downgrades a landed phase on absent evidence — on a clone that has not
+fetched yet, that mistake would re-run work that already shipped.
+
+```bash
+python3 ~/.claude/skills/swarm/swarm.py track            # once per repo
+python3 ~/.claude/skills/swarm/swarm.py waves  --slug <slug>
+python3 ~/.claude/skills/swarm/swarm.py verify --slug <slug> --apply
+python3 ~/.claude/skills/swarm/swarm.py selftest
+```
+
 ### `create-task`
 The front door to the same board. `/create-task "…"` opens the issue, adds it to the board, and
 sets the Open stage — three operations, because `gh issue create` alone produces an issue no
@@ -392,6 +448,39 @@ cd ~/.worktrees/<repo>/fix-citation-aggregation
 Session 1's exploration tokens are thrown away; session 2 pays only for implementation, since
 the plan already says exactly what to change. Pass `--no-worktree` to plan against the branch
 you're on.
+
+### A plan set as a swarm
+
+```bash
+# Session 1 — plan, as usual
+/analyze <what you want changed, and why>
+# → 4 phases; the index says 1 and 3 depend on nothing, 2 needs 1, 4 needs 2 and 3
+
+# Same session, or any other — drive the whole set
+/analyze-orchestrator -f <SLUG>_PLAN.md
+# → wave 0: phases 1 and 3 spawn together, each in its own tmux window
+#   wave 1: phase 2, once 1 has landed
+#   wave 2: phase 4
+```
+
+Each child is launched with `claude -n impl-<slug>-p<N>`, so its peer address exists before the
+process boots and the coordinator never races the child's own rename. When a phase lands it
+writes the ledger and messages the coordinator; the coordinator verifies the commit is really on
+the branch before believing it, then pushes the ledger and recomputes the wave.
+
+Close the laptop mid-run and pick it up on another one:
+
+```bash
+git pull
+/analyze-orchestrator --resume <slug>
+```
+
+Two details make that work, and both are worth knowing before the first run. **Spawn children on
+the coordinator's own permission mode** (`--permission-mode`) — a child on a different mode has
+its reports held for you to approve, and a stalled swarm looks exactly like a slow one. And the
+**folder-trust prompt** would otherwise block every spawned session before it boots, since each
+worktree is a path Claude Code has not seen; `swarm.py spawn` propagates the repo's existing
+trust to its worktree, and refuses rather than inventing trust if the repo itself is untrusted.
 
 ### Large refactor or purge
 
@@ -519,18 +608,21 @@ picking up a phase whose parent is not the first one.
 
 ---
 
-## `/implement` vs `/do`
+## `/implement` vs `/do` vs `/analyze-orchestrator`
 
-Neither writes plans. `/analyze` does, and both of these execute what it wrote.
+None of the three writes plans. `/analyze` does, and all of these execute what it wrote.
 
-| | `/implement` | `/do` |
-|---|---|---|
-| Input | `<SLUG>_PLAN.md` | TaskID from `todos.md` |
-| Creates the tasks | yes — one per phase | no, it already exists |
-| Where the plan comes from | the plan set, copied unchanged | the task's plan file, or a brief from its text |
-| Use when | starting the work `/analyze` planned | picking up a task that's already tracked |
+| | `/implement` | `/do` | `/analyze-orchestrator` |
+|---|---|---|---|
+| Input | `<SLUG>_PLAN.md` | TaskID from `todos.md` | `<SLUG>_PLAN.md`, or a slug to resume |
+| Sessions | one, one phase | one, one task | one per phase, concurrent by DAG |
+| Creates the tasks | yes — one per phase | no, it already exists | delegates to the phase sessions |
+| Where the plan comes from | the plan set, copied unchanged | the task's plan file, or a brief from its text | the plan set, committed first |
+| Survives the machine | no | no | yes — resumable from the remote |
+| Use when | starting the work `/analyze` planned | picking up a task that's already tracked | the set is big enough that serial hurts |
 
-`/do` is also the way to run phase 2 onward of a plan set, one per session.
+`/do` is also the way to run phase 2 onward of a plan set, one per session — the hand-driven
+version of what the orchestrator does for you.
 
 ---
 
@@ -562,6 +654,7 @@ claude-commands/
 │   ├── issue-ticket-reader/  # + issue_fetch.py, credentials.example
 │   ├── create-task/
 │   ├── task/                 # + DESIGN.md, taskcore/task_gh/task_gl/todos/session.py
+│   ├── swarm/                # + swarm.py — the orchestrator's mechanics
 │   ├── sync-todos-into-gitlab-board/  # + sync_todos.py
 │   ├── reap-orphaned-blobs/
 │   └── update-ats-cv/        # + SCHEMA.md, cv_render/cv_extract/cv_preview.py, fonts
