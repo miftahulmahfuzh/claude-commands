@@ -8,6 +8,8 @@ where the DAG allows — and **resume that same set on any machine, at any time.
 /analyze-orchestrator --resume <slug>            # pick up a set already under way
 /analyze-orchestrator --resume                   # pick up the only unfinished set here
 /analyze-orchestrator --status <slug>            # report, change nothing
+
+/analyze-orchestrator -f <PLAN> --permission-mode bypassPermissions   # unattended
 ```
 
 `/implement` walks a plan set one phase at a time in one session. This command runs the same set
@@ -130,7 +132,10 @@ Loop until `runnable_now` is empty:
 session directly what happened before deciding; if it is unreachable, mark the phase `failed`
 with a note and let `stalled` show what it took down with it.
 
-**Spawn every child on this session's own permission mode.** Pass `--permission-mode` explicitly.
+**Spawn every child on this session's own permission mode.** Pass `--permission-mode` explicitly —
+and when `--permission-mode` was passed to *this* command (which is what `/analyze --orchestrate`
+does when it launches you), that is the mode: hand it to every `spawn`. A session cannot read its
+own mode, so this argument is the only way it is known.
 A child on a different mode has its reports *held for the user to approve* — the coordinator
 never sees them, and a stalled swarm is indistinguishable from a slow one. `spawn` warns when the
 flag is missing, because nothing else about the failure is visible.
@@ -151,7 +156,10 @@ When every phase is `done`:
 
 1. Verify once more, from the branch rather than from the ledger.
 2. Hand the merge to the user unless they have already said to merge — merging a whole plan set
-   is not a step to infer.
+   is not a step to infer. **This is the right place for an unattended run to stop.** Every phase
+   landing on the branch overnight is the eight hours of value; the merge is a thirty-second
+   decision in the morning, and doing it unsupervised trades a large risk for a tiny saving.
+   Finish everything up to it, then report and wait.
 3. `WARN` every peer whose cwd is inside the worktree **before** removing it. Their working
    directory is about to stop existing, and one of them may still be mid-write.
 4. Prune: keep `PLAN.md`, `analysis.md` and `ledger.json`; drop the phase bodies. That is what

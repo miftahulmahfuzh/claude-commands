@@ -10,6 +10,7 @@ large. It is the only command that writes implementation plans.
 
 ```bash
 /analyze [target] [bug|feature|update|refactor] [--phases N] [--no-worktree]
+         [--orchestrate [--permission-mode MODE]]
 <free-form description of what you want, in your own words>
 ```
 
@@ -25,6 +26,13 @@ and the type from what the user wrote.
   - `refactor` — restructuring, purging, consolidating, renaming
 - `--phases N` — force exactly N phases instead of letting Step 6 decide
 - `--no-worktree` — plan against the current branch instead of cutting a worktree
+- `--orchestrate` — when the plan is finished, **launch the orchestrator yourself** in a new tmux
+  window instead of printing a command for the user to paste (Step 11). The point is unattended
+  progress: a plan that lands at 22:30 starts implementing at 22:30, not whenever someone next
+  looks at the terminal.
+- `--permission-mode MODE` — the mode to launch that orchestrator on. Only meaningful with
+  `--orchestrate`, and it is the difference between running all night and stopping at the first
+  prompt.
 
 **Example — terse, classic form:**
 ```bash
@@ -313,6 +321,38 @@ from Step 0 is satisfied by at least one phase**. Nothing downstream will fill a
 
 Output only the block in **Termination** below.
 
+### Step 11: Hand Off — Automatically, with `--orchestrate`
+
+Without the flag, stop at Step 10; the user pastes the command when they are ready.
+
+With `--orchestrate`, launch the orchestrator here, so the plan starts being implemented the
+moment it exists:
+
+```bash
+python3 ~/.claude/skills/swarm/swarm.py launch \
+    --name "orch-<slug>" --cwd "<worktree>" \
+    --permission-mode <the mode this session was given> \
+    --prompt "/analyze-orchestrator -f <SLUG>_PLAN.md --permission-mode <same mode>"
+```
+
+**Refuse to launch, and say why in the termination block, when any of these hold.** Each is a
+case where an unattended run would spend the night doing nothing useful, or something wrong:
+
+- **Open Questions is non-empty.** The orchestrator refuses these anyway, so launching would
+  produce a session that wakes up, refuses, and idles. Worse, the questions are exactly the
+  contradictions that N parallel sessions would each resolve differently.
+- **No `--permission-mode` was given.** A session on a prompting mode stops at its first
+  permission request and waits — all night, silently. Do not guess a mode: a mode the user did
+  not choose is a mode they did not consent to, and it would be broader than this session's own.
+- **A phase plan file is missing**, or the index still says `Status: planned` with empty phases.
+
+**Never pass a mode broader than this session runs under.** `--orchestrate` is a convenience for
+starting a session sooner, never a way to grant one privileges the user withheld here.
+
+The launch is the last thing this command does. Do not wait for the orchestrator, do not poll it,
+and do not report its progress — it renames itself, drives its own phases, and owns the set from
+that point. This session's job is finished.
+
 ---
 
 ## Analysis Document Template
@@ -596,10 +636,17 @@ Next — phase 1 of <N>, in a new session:
   cd <worktree>
   /implement -f <SLUG>_PLAN.md --phase 1
 
-<Only when N > 1 and at least two phases share no dependency — otherwise a swarm is one
-session with extra machinery. Run the whole set concurrently instead:>
+<Always offer this, whatever N is. Parallelism decides whether a swarm beats /implement;
+it does not decide whether the set should run unattended. A strictly sequential four-phase
+set is the case that gains MOST — otherwise it is four commands pasted into four sessions,
+each waiting on a human to notice the last one finished. Even N = 1 gains a session that
+starts now rather than whenever someone next looks.>
 
   /analyze-orchestrator -f <SLUG>_PLAN.md
+
+<When --orchestrate was passed, this already happened — say which window it opened instead:>
+
+  Orchestrator running in tmux <window> as orch-<slug>  (mode: <mode>)
 ```
 
 `--phase 1` is explicit on purpose: the plan set has just been written, so phase 1 is what starts

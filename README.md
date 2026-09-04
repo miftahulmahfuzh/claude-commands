@@ -25,7 +25,7 @@ deletes inside `~/.claude/commands/` and is safe to re-run.
 
 | Command | What it does |
 |---|---|
-| `/analyze` | Traces the code, then writes the implementation plan — the only command that plans |
+| `/analyze` | Traces the code, then writes the implementation plan — the only command that plans; `--orchestrate` starts the work too |
 | `/implement` | Executes a plan: creates the tasks, applies the code |
 | `/analyze-orchestrator` | Runs a whole plan set as a swarm — a session per phase, resumable on any machine |
 | `/do` | Executes one existing task by TaskID |
@@ -68,10 +68,13 @@ command that plans; `/implement` and `/do` execute what it wrote. It never edits
 
 ```bash
 /analyze [target] [bug|feature|update|refactor] [--phases N] [--no-worktree]
+         [--orchestrate [--permission-mode MODE]]
 <free-form description>
 ```
 
 Everything is optional; `/analyze` followed by prose works, and the target and type are inferred.
+`--orchestrate` makes it launch the orchestrator itself when the plan is done, so the work starts
+without waiting for anyone to paste a command — see [Unattended](#unattended-analyze---orchestrate).
 
 Every run produces the same three things, in a worktree it cuts off `origin/main`:
 
@@ -138,6 +141,24 @@ one session. Phases stay blocked until their dependencies complete.
 analysis describes the code, and filling the gap here is what this command deliberately doesn't
 do. Same rule when the code has drifted from what a plan quotes: small drift is followed and
 noted, large drift stops with `Re-run /analyze`.
+
+### Unattended: `/analyze --orchestrate`
+
+```bash
+/analyze --orchestrate --permission-mode bypassPermissions
+<what you want changed, and why>
+```
+
+The plan lands at 22:30 and the orchestrator starts at 22:30, in its own tmux window, without
+anyone pasting a command. `/analyze` launches it as its last act and does not wait for it.
+
+It refuses to launch — and says so instead — when **Open Questions is non-empty** (N sessions
+would each answer them differently), when **no `--permission-mode` was given** (a session on a
+prompting mode stops at the first prompt and waits all night), or when a phase plan is missing.
+It never passes a mode broader than the `/analyze` session itself was given.
+
+An unattended run stops at the merge. Every phase landing on the branch overnight is the value;
+merging the set is a thirty-second decision in the morning and not worth doing unsupervised.
 
 ### `/analyze-orchestrator`
 
@@ -463,6 +484,16 @@ you're on.
 #   wave 2: phase 4
 ```
 
+Or collapse both steps into one command and go to bed:
+
+```bash
+/analyze --orchestrate --permission-mode bypassPermissions
+<what you want changed, and why>
+# 22:30  plan lands, orchestrator launches itself in its own window
+# 22:31  wave 0 spawns
+# 07:00  every phase on the branch, waiting on your merge
+```
+
 Each child is launched with `claude -n impl-<slug>-p<N>`, so its peer address exists before the
 process boots and the coordinator never races the child's own rename. When a phase lands it
 writes the ledger and messages the coordinator; the coordinator verifies the commit is really on
@@ -619,7 +650,7 @@ None of the three writes plans. `/analyze` does, and all of these execute what i
 | Creates the tasks | yes — one per phase | no, it already exists | delegates to the phase sessions |
 | Where the plan comes from | the plan set, copied unchanged | the task's plan file, or a brief from its text | the plan set, committed first |
 | Survives the machine | no | no | yes — resumable from the remote |
-| Use when | starting the work `/analyze` planned | picking up a task that's already tracked | the set is big enough that serial hurts |
+| Use when | starting the work `/analyze` planned | picking up a task that's already tracked | you want the set to run without you |
 
 `/do` is also the way to run phase 2 onward of a plan set, one per session — the hand-driven
 version of what the orchestrator does for you.

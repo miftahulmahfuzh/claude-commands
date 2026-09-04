@@ -36,6 +36,7 @@ exits 0 rather than raising. Only a malformed invocation is an error.
     swarm.py status --slug SLUG
     swarm.py find   --plan PATH | --task TASKID
     swarm.py track  [--dry-run]
+    swarm.py launch --name NAME --prompt TEXT [--cwd DIR] [--permission-mode MODE]
     swarm.py selftest
 """
 
@@ -816,6 +817,46 @@ def cmd_track(args):
     return 0
 
 
+def cmd_launch(args):
+    """Open one named Claude Code session in a new tmux window. No ledger required.
+
+    `spawn` needs a ledger and a phase; this does not. It exists so a session can hand
+    its work to a fresh session without a human retyping a command -- /analyze finishing
+    at 22:30 and starting the orchestrator itself, rather than the plan sitting untouched
+    until someone wakes up and pastes one line.
+    """
+    cwd = str(Path(args.cwd or os.getcwd()).resolve())
+    if not Path(cwd).is_dir():
+        return soft(f"cwd {cwd} does not exist")
+    repo = args.repo or main_worktree(cwd) or cwd
+    name = slugify(args.name)
+    argv = spawn_argv(name, cwd, args.prompt, args.permission_mode, args.model)
+    trust = ensure_trusted(cwd, repo, enabled=not args.no_trust)
+
+    if args.dry_run:
+        print(json.dumps({"swarm": True, "dry_run": True, "name": name, "cwd": cwd,
+                          "trust": trust, "prompt": args.prompt, "argv": argv}, indent=2))
+        return 0
+    if trust.get("action") == "refused":
+        return soft("would hang on the folder trust prompt", trust=trust,
+                    hint=f"open it once by hand: cd {cwd} && claude")
+    if not os.environ.get("TMUX"):
+        return soft("not inside tmux -- cannot open a window",
+                    hint=f"run this by hand: cd {cwd} && claude -n {name} "
+                         f"{shlex.quote(args.prompt)}")
+    handle = tmux(*argv[1:])
+    if handle is None:
+        return soft("tmux new-window failed", argv=argv)
+    window, _, pane = handle.partition(" ")
+    out = {"swarm": True, "launched": name, "window": window, "pane": pane.strip(),
+           "cwd": cwd, "trust": trust, "prompt": args.prompt}
+    if not args.permission_mode:
+        out["warning"] = ("no --permission-mode given: an unattended session on a mode "
+                          "that prompts will stop at the first prompt and wait all night")
+    print(json.dumps(out, indent=2))
+    return 0
+
+
 # ------------------------------------------------------------------------- selftest
 
 INDEX = """# Plan: Demo
@@ -899,6 +940,10 @@ def selftest():
     eq("permission mode is passed through", "--permission-mode acceptEdits" in argv[-1],
        True)
 
+    eq("launch needs no ledger", cmd_launch(argparse.Namespace(
+        name="orch-x", prompt="/analyze-orchestrator -f P.md", cwd="/nonexistent-dir",
+        repo=None, permission_mode=None, model=None, no_trust=True, dry_run=True)), 0)
+
     # The cross-machine hazard, in one assertion: a ledger that says `done` must
     # survive a clone that cannot see the commit yet.
     unknown = {"phases": [{"n": 1, "status": "done", "commit": "deadbeef" * 5,
@@ -973,6 +1018,16 @@ def main(argv=None):
     p.add_argument("--plan")
     p.add_argument("--task")
 
+    p = sub.add_parser("launch", help="open one named session in a new tmux window")
+    p.add_argument("--name", required=True)
+    p.add_argument("--prompt", required=True)
+    p.add_argument("--cwd")
+    p.add_argument("--repo")
+    p.add_argument("--permission-mode")
+    p.add_argument("--model")
+    p.add_argument("--no-trust", action="store_true")
+    p.add_argument("--dry-run", action="store_true")
+
     p = sub.add_parser("track", help="make .workflows/orchestration/ survive .gitignore")
     p.add_argument("--dry-run", action="store_true")
 
@@ -981,7 +1036,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     return {"init": cmd_init, "waves": cmd_waves, "spawn": cmd_spawn,
             "report": cmd_report, "verify": cmd_verify, "status": cmd_status,
-            "find": cmd_find, "track": cmd_track,
+            "find": cmd_find, "track": cmd_track, "launch": cmd_launch,
             "selftest": lambda _: selftest()}[args.cmd](args)
 
 
