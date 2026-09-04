@@ -187,13 +187,18 @@ dependency edge run at the same time, in their own tmux windows.
 
 It **writes no plans** either — same invariant as `/implement` and `/do`.
 
-Two rules it will not bend:
+Three rules it will not bend:
 
 1. **The plan set is committed and pushed before a single phase is spawned.** A set that lives
    only in a worktree dies with that worktree — which has happened here, and cost a
    reconciliation nobody could read back.
 2. **The ledger is pushed after every phase, not at the end.** Resume recovers only what reached
    the remote, so this bounds the loss to one phase.
+3. **A finished phase's window is closed, permanently.** claude idles rather than exiting when a
+   phase is done, so nothing closes those windows unless the orchestrator does — and two waves
+   in, the running sessions are off the end of a tab bar full of finished ones. The pane's
+   scrollback is captured to a file first, and any phase can be reopened with a fresh session,
+   so this loses nothing.
 
 **Resume is a re-derivation, not a replay.** The committed ledger is a hint; the real status
 comes from what cannot lie — whether the commit is an ancestor of the branch, and what
@@ -394,6 +399,12 @@ The mechanics behind `/analyze-orchestrator`: wave scheduling from a plan set's 
 column, spawning a named session per phase, and the two-half ledger that makes a set resumable on
 another machine.
 
+It also keeps tmux readable. `swarm.py reap` captures a finished phase's whole scrollback to
+`.workflows/orchestration/<slug>/logs/phase-N.log` and then closes its window for good — refusing
+on its own to touch a phase still working, a `done` whose commit is not yet on the branch, a
+window id that now belongs to somebody else, or the caller's own window. A failed phase keeps its
+window until asked for by name, because that output is what someone is about to read.
+
 Sessions address each other by name — `ListAgents` lists the peers, `SendMessage` writes to one —
 so a phase session reports to its coordinator when it lands, and warns any peer whose working
 directory is inside a worktree it is about to delete. Messaging is the local nervous system and
@@ -406,6 +417,7 @@ fetched yet, that mistake would re-run work that already shipped.
 python3 ~/.claude/skills/swarm/swarm.py track            # once per repo
 python3 ~/.claude/skills/swarm/swarm.py waves  --slug <slug>
 python3 ~/.claude/skills/swarm/swarm.py verify --slug <slug> --apply
+python3 ~/.claude/skills/swarm/swarm.py reap   --slug <slug>       # close finished windows
 python3 ~/.claude/skills/swarm/swarm.py selftest
 ```
 

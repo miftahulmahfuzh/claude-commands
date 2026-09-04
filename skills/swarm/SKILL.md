@@ -56,7 +56,8 @@ Three consequences the swarm depends on:
 <main repo>/.workflows/orchestration/<slug>/
 ├── ledger.json      DURABLE  — committed. Phases, depends_on, status, landed commit, TaskIDs.
 ├── .runtime.json    LOCAL    — gitignored. tmux window/pane ids, session names, this machine.
-└── .gitignore       one line: .runtime.json
+├── logs/phase-N.log LOCAL    — gitignored. The scrollback of a window `reap` closed.
+└── .gitignore       .runtime.json and logs/
 ```
 
 It lives in the **main worktree**, never in the plan set's own worktree — that worktree is
@@ -118,7 +119,9 @@ Then, until nothing is runnable and nothing is live:
    landed but whose commit is not on the branch has not landed.
 5. **Commit and push the ledger.** Every round, not at the end — this is what bounds a
    cross-machine resume to losing at most one phase.
-6. **Re-compute.** `waves` again; a finished phase may have unblocked others. Go to 1.
+6. **Reap the windows the wave finished with.** `reap --slug <slug>`, after `verify` and
+   never before it — an unverified `done` is a claim, and its window is the evidence.
+7. **Re-compute.** `waves` again; a finished phase may have unblocked others. Go to 1.
 
 Stop when `runnable_now` is empty. `stalled` lists phases that can never run because a dependency
 failed — report those to the user rather than spawning them.
@@ -140,6 +143,51 @@ it is omitted because the failure is otherwise silent.
 a mode *broader* than its own session runs under. A peer doing what your session was denied is
 permission laundering: it routes around a decision the user made. If a phase needs permissions
 you do not have, stop and say so.
+
+## Closing the windows
+
+A phase that finished does not close its own window. claude does not exit when it runs out
+of work — it sits at an idle prompt — so a wave of eight leaves eight idle sessions behind,
+and the next wave's windows arrive at the far end of a tab bar the user stopped reading two
+waves ago. Untidiness here is not cosmetic: the windows *are* how a human watches a swarm.
+
+So the coordinator closes them, and closes them **permanently**:
+
+```bash
+python3 ~/.claude/skills/swarm/swarm.py reap --slug <slug>            # every finished phase
+python3 ~/.claude/skills/swarm/swarm.py reap --slug <slug> --phase 3  # just one
+```
+
+Permanent is the cheaper half of the trade. Reopening a phase costs one `spawn --force`,
+which is what a bug report or a discrepancy wants anyway — a fresh session on the current
+code, not a stale one that has been idling since the phase landed.
+
+**The scrollback survives the window.** `reap` runs `capture-pane` over the whole history
+into `logs/phase-N.log` before killing anything. That is why `spawn` keeps the pane alive
+after claude exits, and it is why closing the window loses nothing: the output ends up
+somewhere better than a scrollback buffer — a file that is still there tomorrow, and
+greppable across the whole set at once.
+
+**Reaping is the coordinator's job, never the phase's own.** A session cannot close the
+window it is reporting from, and a phase that killed itself the moment it said `done` would
+take its own `git push` with it.
+
+### What reap refuses to do
+
+Four refusals, each a real way to destroy work rather than tidy it:
+
+| Refusal | Why |
+|---|---|
+| a phase in `pending`/`spawned`/`running` | it reported nothing; its session may still be mid-write. `--force` overrides |
+| a phase claiming `done` whose commit is not on the branch | the claim is unverified — `verify` first, then reap |
+| a window whose name no longer matches what we spawned | tmux window ids are reused across server restarts; `@7` may be a stranger's work now. **`--force` does not override this one** |
+| this session's own window | self-explanatory, and worth a guard anyway |
+
+A `failed` phase keeps its window by default, because the failure is the thing someone is
+about to read. `--include-failed` closes it — the log is captured either way.
+
+Reap never fails a phase that is simply elsewhere: a window opened on another machine is
+left for that machine, and a window already closed by hand is just forgotten.
 
 ## The folder trust prompt
 
@@ -201,6 +249,7 @@ ordinary `/do` outside any swarm is unaffected.
 | `init --plan PATH [--coordinator NAME]` | build the ledger from a plan index; re-running keeps recorded outcomes |
 | `waves --slug S` | the DAG in rounds, plus `runnable_now` and `stalled` |
 | `spawn --slug S --phase N` | launch one phase in its own named session; `--dry-run` prints the argv |
+| `reap --slug S [--phase N]` | capture the scrollback, then close the windows of finished phases |
 | `report --slug S --phase N --status ...` | record an outcome (then send the message) |
 | `verify --slug S [--apply]` | re-derive status from git and todos.md |
 | `status --slug S` | durable + runtime, merged, for a human |

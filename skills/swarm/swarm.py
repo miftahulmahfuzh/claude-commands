@@ -24,6 +24,15 @@ saying `running` forever, so `verify` re-derives every phase's real status from 
 things that cannot lie -- the commits on the branch and the task's state in todos.md --
 and reports where the ledger disagrees. The orchestrator trusts the derivation.
 
+THE WINDOW IS NOT THE RECORD. A phase that finished leaves an idle claude sitting in
+its tmux window forever, and a set of twenty leaves a tab bar nobody can read -- so the
+next wave's windows arrive somewhere the user has stopped looking. `reap` closes the
+finished ones permanently. That is safe only because it is not destructive: the pane's
+scrollback -- the whole reason the window was held open after claude exited -- is
+written to logs/phase-N.log first, and any phase can be reopened with `spawn --force`
+when a bug or a discrepancy needs a session again. Reaping is the coordinator's job and
+never the phase's own: a session cannot close the window it is reporting from.
+
 NEVER FAILS THE CALLER. Most /do runs have no ledger at all, and a task must not break
 because a swarm file is absent. Every read prints `{"swarm": false, "reason": ...}` and
 exits 0 rather than raising. Only a malformed invocation is an error.
@@ -31,6 +40,7 @@ exits 0 rather than raising. Only a malformed invocation is an error.
     swarm.py init   --plan PATH [--coordinator NAME]
     swarm.py waves  --slug SLUG
     swarm.py spawn  --slug SLUG --phase N [--dry-run]
+    swarm.py reap   --slug SLUG [--phase N] [--include-failed] [--dry-run]
     swarm.py report --slug SLUG --phase N --status done --commit SHA
     swarm.py verify --slug SLUG
     swarm.py status --slug SLUG
@@ -59,6 +69,11 @@ ORCH_DIR = ".workflows/orchestration"
 # `blocked` is the orchestrator's word for "a dependency failed", never a phase's own.
 LIVE = ("pending", "spawned", "running")
 TERMINAL = ("done", "failed", "blocked")
+
+# What a pane is running when claude is no longer running in it. Anything not on this
+# list reads as busy, because the conservative direction when reaping is to keep a
+# window: a window kept is noise, a window killed mid-write is lost work.
+SHELLS = ("sh", "bash", "zsh", "fish", "dash", "ksh", "ksh93", "tcsh", "csh")
 
 
 def now():
@@ -471,6 +486,110 @@ def spawn_argv(name, cwd, prompt, permission_mode=None, model=None, keep_open=Tr
             "-P", "-F", "#{window_id} #{pane_id}", command]
 
 
+# -------------------------------------------------------------------- reaping tmux
+
+def logs_dir(repo, slug):
+    """Where a reaped window's scrollback goes. Local, like .runtime.json."""
+    return orch_dir(repo, slug) / "logs"
+
+
+def window_facts(window):
+    """What tmux says about a window id right now, or None if it is gone.
+
+    A WINDOW ID IS NOT AN IDENTITY EITHER, for the same reason a session name is not.
+    `@7` is unique for the life of one tmux server, but a server that was restarted
+    hands `@7` to somebody else's window -- and killing that is destroying a stranger's
+    work, not tidying up. So every reap re-reads the window's name and refuses when it
+    no longer matches the name we spawned it under.
+    """
+    out = tmux("display-message", "-p", "-t", window,
+               "#{window_id}\t#{window_name}\t#{pane_current_command}\t#{pane_id}")
+    if not out:
+        return None
+    cells = (out.splitlines()[0] + "\t\t\t").split("\t")
+    return {"window": cells[0], "name": cells[1], "command": cells[2], "pane": cells[3]}
+
+
+def current_window():
+    """This session's own window -- the one thing reap must never close."""
+    return tmux("display-message", "-p", "#{window_id}")
+
+
+def capture(pane, dest):
+    """Save a pane's whole scrollback before the window holding it goes away.
+
+    This is what makes closing a window a tidy-up rather than a deletion. `spawn` keeps
+    the pane alive after claude exits precisely so a failed phase's output survives;
+    reap moves that output somewhere it survives even better -- a file that is still
+    there tomorrow, and greppable across the whole set.
+    """
+    text = tmux("capture-pane", "-p", "-J", "-S", "-", "-E", "-", "-t", pane)
+    if text is None:
+        return None
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text + "\n")
+    return len(text.splitlines())
+
+
+def reap_verdict(phase, entry, repo, ledger, include_failed=False, force=False):
+    """May this phase's window be closed, and if not, what would have to change.
+
+    The gate is the ledger's status backed by git, NOT what the pane looks like. A
+    claude that has finished its phase does not exit -- it sits at an idle prompt --
+    so "the pane is running claude" says nothing about whether the work is over. What
+    does say so is a commit that is an ancestor of the branch.
+    """
+    if not entry:
+        return False, "no window recorded on this machine"
+    if entry.get("reaped_at"):
+        return False, f"already reaped at {entry['reaped_at']}"
+    machine = entry.get("machine")
+    if machine and machine != os.uname().nodename:
+        return False, f"spawned on {machine} -- that machine closes its own windows"
+    status = phase.get("status")
+    if force:
+        return True, "forced"
+    if status in LIVE:
+        return False, (f"status is {status} -- still working; only --force closes a "
+                       "window whose session may still be writing")
+    if status != "done" and not include_failed:
+        return False, (f"status is {status} -- kept on screen so the failure can be "
+                       "read; --include-failed closes it (the log is saved either way)")
+    sha, branch = phase.get("commit"), ledger.get("branch")
+    if status == "done" and sha and branch:
+        state, note = commit_state(repo, sha, branch)
+        if state != "done":
+            return False, f"reports done but {note} -- verify before closing its window"
+    return True, f"{status}, verified"
+
+
+def forget(repo, slug, n, entry, log=None, lines=None, how="closed"):
+    """Move a session from `sessions` to `reaped` in the runtime ledger.
+
+    Kept rather than deleted: "phase 3's window was closed at 02:14 and its scrollback
+    is in logs/phase-3.log" is the answer to the only question anyone asks about a
+    window that is no longer there.
+    """
+    record = dict(entry or {})
+    record.update({"phase": n, "reaped_at": now(), "how": how})
+    if log:
+        record["log"] = log
+    if lines is not None:
+        record["lines"] = lines
+    with locked(runtime_path(repo, slug)) as data:
+        data.setdefault("sessions", {}).pop(str(n), None)
+        data.setdefault("reaped", {})[str(n)] = record
+    return record
+
+
+def reapable(repo, ledger, runtime, **kwargs):
+    """The phases whose windows could be closed right now -- for `status` to show."""
+    sessions = runtime.get("sessions", {})
+    return [p["n"] for p in ledger.get("phases", [])
+            if reap_verdict(p, sessions.get(str(p["n"])), repo, ledger, **kwargs)[0]]
+
+
+
 # ------------------------------------------------------------------------- commands
 
 def cmd_init(args):
@@ -520,9 +639,14 @@ def cmd_init(args):
 
     runtime_path(repo, slug).write_text(json.dumps(
         {"slug": slug, "machine": os.uname().nodename, "sessions": {}}, indent=2) + "\n")
+    # Both of these are local by nature: one is tmux ids that mean nothing on another
+    # laptop, the other is megabytes of raw terminal output. Repaired rather than only
+    # created, so a set initialised before `reap` existed still ignores its logs.
     ignore = directory / ".gitignore"
-    if not ignore.exists():
-        ignore.write_text(".runtime.json\n")
+    have = ignore.read_text().splitlines() if ignore.exists() else []
+    missing = [line for line in (".runtime.json", "logs/") if line not in have]
+    if missing:
+        ignore.write_text("\n".join([l for l in have if l.strip()] + missing) + "\n")
     print(json.dumps({"swarm": True, "ledger": str(durable_path(repo, slug)),
                       "slug": slug, "phases": len(phases),
                       "waves": waves(out)}, indent=2))
@@ -601,6 +725,87 @@ def cmd_spawn(args):
     return 0
 
 
+def cmd_reap(args):
+    """Close the tmux windows of phases that are over, keeping their scrollback.
+
+    Tidiness is not cosmetic when the windows are how a human watches the swarm: a wave
+    of eight leaves eight idle sessions, and the next wave's windows arrive at the far
+    end of a tab bar nobody is reading any more. Closing a finished phase's window is
+    PERMANENT and meant to be -- a phase that needs looking at again gets a fresh
+    session from `spawn --force`, which is cheap, rather than a stale one kept alive on
+    the chance it might be, which is not.
+
+    Three refusals are worth knowing about, because each is a real way to destroy work:
+    a phase still running, a window whose id now belongs to someone else, and this
+    session's own window.
+    """
+    repo, slug = find_repo_and_slug(args.slug)
+    if not repo:
+        return soft("not inside a git repository")
+    ledger = load(durable_path(repo, slug))
+    if not ledger:
+        return soft(f"no ledger for {slug}", repo=repo)
+    if not os.environ.get("TMUX"):
+        return soft("not inside tmux -- no windows to reap from here", slug=slug)
+
+    runtime = load(runtime_path(repo, slug))
+    sessions = runtime.get("sessions", {})
+    wanted = args.phase or [p["n"] for p in ledger.get("phases", [])]
+    here = current_window()
+
+    reaped, kept = [], []
+    for n in wanted:
+        phase = phase_of(ledger, n)
+        if not phase:
+            kept.append({"phase": n, "reason": f"{slug} has no phase {n}"})
+            continue
+        entry = sessions.get(str(n)) or {}
+        ok, why = reap_verdict(phase, entry or None, repo, ledger,
+                               include_failed=args.include_failed, force=args.force)
+        if not ok:
+            kept.append({"phase": n, "window": entry.get("window"), "reason": why})
+            continue
+
+        window, name = entry.get("window"), entry.get("name")
+        facts = window_facts(window) if window else None
+        if facts is None:
+            # Already gone -- closed by hand, or the tmux server was restarted. There
+            # is nothing to kill; stop tracking it so `status` stops implying a window.
+            reaped.append(forget(repo, slug, n, entry, how="window was already gone"))
+            continue
+        if name and facts["name"] != name:
+            kept.append({"phase": n, "window": window,
+                         "reason": f"{window} is now {facts['name']!r}, not {name!r} -- "
+                                   "another window took that id; refusing to kill it"})
+            continue
+        if here and facts["window"] == here:
+            kept.append({"phase": n, "window": window,
+                         "reason": "that is this session's own window"})
+            continue
+
+        dest = logs_dir(repo, slug) / f"phase-{n}.log"
+        if args.dry_run:
+            kept.append({"phase": n, "window": window, "name": name, "reason": "dry run",
+                         "would": f"capture {facts['pane']} to {dest}, then kill {window}",
+                         "verdict": why, "pane_running": facts["command"]})
+            continue
+        lines = None if args.no_log else capture(entry.get("pane") or facts["pane"], dest)
+        if tmux("kill-window", "-t", window) is None and window_facts(window):
+            kept.append({"phase": n, "window": window, "reason": "kill-window failed",
+                         "log": str(dest) if lines is not None else None})
+            continue
+        reaped.append(forget(repo, slug, n, entry, lines=lines,
+                             log=str(dest) if lines is not None else None,
+                             how=f"closed ({why})"))
+
+    still_open = sorted(int(k) for k in load(runtime_path(repo, slug))
+                        .get("sessions", {}) if k.isdigit())
+    print(json.dumps({"swarm": True, "slug": slug, "dry_run": bool(args.dry_run),
+                      "reaped": reaped, "kept": kept, "windows_still_open": still_open,
+                      "logs": str(logs_dir(repo, slug))}, indent=2))
+    return 0
+
+
 def cmd_report(args):
     repo, slug = find_repo_and_slug(args.slug)
     if not repo:
@@ -663,22 +868,29 @@ def cmd_status(args):
     if not ledger:
         return soft(f"no ledger for {slug}", repo=repo)
     runtime = load(runtime_path(repo, slug))
-    sessions = runtime.get("sessions", {})
+    sessions, gone = runtime.get("sessions", {}), runtime.get("reaped", {})
     rows = []
     for phase in ledger.get("phases", []):
         live = sessions.get(str(phase["n"]), {})
+        past = gone.get(str(phase["n"]), {})
         rows.append({"n": phase["n"], "title": phase["title"],
                      "status": phase["status"], "depends_on": phase["depends_on"],
                      "task_id": phase.get("task_id"), "commit": phase.get("commit"),
-                     "session": live.get("name"), "window": live.get("window"),
-                     "machine": live.get("machine")})
+                     "session": live.get("name") or past.get("name"),
+                     "window": live.get("window") if live else None,
+                     "machine": (live or past).get("machine"),
+                     "reaped_at": past.get("reaped_at") or None,
+                     "log": past.get("log")})
     done = sum(1 for p in ledger.get("phases", []) if p["status"] == "done")
     print(json.dumps({"swarm": True, "slug": slug,
                       "coordinator": ledger.get("coordinator"),
                       "branch": ledger.get("branch"), "worktree": ledger.get("worktree"),
                       "progress": f"{done}/{len(ledger.get('phases', []))}",
                       "runnable_now": runnable(ledger), "stalled": stalled(ledger),
-                      "this_machine": runtime.get("machine"), "phases": rows}, indent=2))
+                      "this_machine": runtime.get("machine"),
+                      "windows_open": sorted(int(k) for k in sessions if k.isdigit()),
+                      "reapable_now": reapable(repo, ledger, runtime),
+                      "phases": rows}, indent=2))
     return 0
 
 
@@ -940,6 +1152,39 @@ def selftest():
     eq("permission mode is passed through", "--permission-mode acceptEdits" in argv[-1],
        True)
 
+    # Reaping. The gate is the ledger backed by git, never what the pane looks like:
+    # a claude that finished its phase sits at an idle prompt rather than exiting.
+    mine = {"name": "impl-x-p2", "window": "@7", "pane": "%9",
+            "machine": os.uname().nodename}
+    empty = {"branch": None, "phases": []}
+    eq("nothing recorded, nothing to close",
+       reap_verdict({"n": 2, "status": "done"}, None, "/nonexistent", empty)[0], False)
+    eq("a running phase keeps its window",
+       reap_verdict({"n": 2, "status": "running"}, mine, "/nonexistent", empty)[0], False)
+    eq("--force closes it anyway",
+       reap_verdict({"n": 2, "status": "running"}, mine, "/nonexistent", empty,
+                    force=True)[0], True)
+    eq("a done phase with nothing to check against is closed",
+       reap_verdict({"n": 2, "status": "done"}, mine, "/nonexistent", empty)[0], True)
+    eq("a failure stays on screen by default",
+       reap_verdict({"n": 2, "status": "failed"}, mine, "/nonexistent", empty)[0], False)
+    eq("until asked for by name",
+       reap_verdict({"n": 2, "status": "failed"}, mine, "/nonexistent", empty,
+                    include_failed=True)[0], True)
+    eq("another machine closes its own windows",
+       reap_verdict({"n": 2, "status": "done"}, dict(mine, machine="somewhere-else"),
+                    "/nonexistent", empty)[0], False)
+    eq("reaping twice is not an error, it is a no-op",
+       reap_verdict({"n": 2, "status": "done"}, dict(mine, reaped_at=now()),
+                    "/nonexistent", empty)[0], False)
+    # The one that protects shipped work: `done` is a claim until git agrees with it.
+    eq("a done phase whose commit is not on the branch keeps its window",
+       reap_verdict({"n": 2, "status": "done", "commit": "f" * 40}, mine,
+                    "/nonexistent-repo", {"branch": "feature/x"})[0], False)
+    eq("no swarm, no reaping -- and still not an error", cmd_reap(argparse.Namespace(
+        slug="no-such-slug-selftest", phase=None, all=False, include_failed=False,
+        force=False, no_log=False, dry_run=True)), 0)
+
     eq("launch needs no ledger", cmd_launch(argparse.Namespace(
         name="orch-x", prompt="/analyze-orchestrator -f P.md", cwd="/nonexistent-dir",
         repo=None, permission_mode=None, model=None, no_trust=True, dry_run=True)), 0)
@@ -1002,6 +1247,20 @@ def main(argv=None):
                    help="do not propagate the repo's trust to the worktree")
     p.add_argument("--dry-run", action="store_true")
 
+    p = sub.add_parser("reap", help="close the tmux windows of finished phases")
+    p.add_argument("--slug", required=True)
+    p.add_argument("--phase", type=int, action="append",
+                   help="repeatable; every phase in the set when omitted")
+    p.add_argument("--all", action="store_true",
+                   help="accepted for clarity -- reaping the whole set is the default")
+    p.add_argument("--include-failed", action="store_true",
+                   help="also close failed and blocked phases (their log is kept)")
+    p.add_argument("--force", action="store_true",
+                   help="close a window even while its session may still be working")
+    p.add_argument("--no-log", action="store_true",
+                   help="skip the scrollback capture -- the window's output is lost")
+    p.add_argument("--dry-run", action="store_true")
+
     p = sub.add_parser("report", help="record a phase's outcome")
     p.add_argument("--slug", required=True)
     p.add_argument("--phase", type=int, required=True)
@@ -1035,7 +1294,8 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
     return {"init": cmd_init, "waves": cmd_waves, "spawn": cmd_spawn,
-            "report": cmd_report, "verify": cmd_verify, "status": cmd_status,
+            "reap": cmd_reap, "report": cmd_report,
+            "verify": cmd_verify, "status": cmd_status,
             "find": cmd_find, "track": cmd_track, "launch": cmd_launch,
             "selftest": lambda _: selftest()}[args.cmd](args)
 

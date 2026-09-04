@@ -22,7 +22,7 @@ It **writes no plans**. `/analyze` is the only command that writes plans — see
 
 ---
 
-## Two iron rules
+## Three iron rules
 
 **1. The plan set is committed and pushed before a single phase is spawned.** A set that lives
 only in a worktree dies with that worktree — which has already happened here once, and cost a
@@ -32,6 +32,15 @@ precondition for starting.
 **2. The ledger is pushed after every phase, not at the end of the set.** Resume can only recover
 what reached the remote. Pushing per phase bounds the loss to one phase; pushing at the end means
 "resume anywhere" quietly means "lose up to N phases".
+
+**3. A finished phase's window is closed, permanently, by this session.** claude does not exit
+when it runs out of work — it idles — so nothing closes these windows unless the coordinator
+does. Two waves in, the tab bar is a wall of finished sessions and the running ones are off the
+end of it; the windows are how the user watches a swarm, and a swarm nobody can watch is a swarm
+running unsupervised. Closing them costs nothing to undo: `spawn --force` opens a fresh session
+on the current code whenever a bug, a discrepancy or a re-run needs one, which is better than the
+stale one you would have kept. The scrollback is captured to a file first, so nothing is lost —
+see Step 4.7.
 
 ---
 
@@ -126,7 +135,21 @@ Loop until `runnable_now` is empty:
 5. **Verify, then believe.** `swarm.py verify --slug <slug> --apply`. A phase that reports `done`
    whose commit is not on the branch has not landed, whatever it said.
 6. **Push the ledger** via `pusher`. Every round. This is iron rule 2.
-7. Recompute and go to 1.
+7. **Reap the finished windows.**
+   ```bash
+   python3 ~/.claude/skills/swarm/swarm.py reap --slug <slug>
+   ```
+   After the verify in step 5, never before it — an unverified `done` is a claim, and its
+   scrollback is the evidence. `reap` captures each pane's whole history to
+   `.workflows/orchestration/<slug>/logs/phase-N.log` and then closes the window, so the tab bar
+   holds only what is still running. It refuses on its own to touch a phase that is still
+   working, a `done` whose commit is not on the branch, a window whose id now belongs to some
+   other window, or this session's own window — so it is safe to run every round without
+   reading the list first.
+
+   A **failed** phase keeps its window: that failure is what someone is about to read. Close it
+   with `--include-failed` once the user has seen it, or when landing the set.
+8. Recompute and go to 1.
 
 **Stragglers.** An idle notice with no report means the phase stopped without finishing. Ask that
 session directly what happened before deciding; if it is unreachable, mark the phase `failed`
@@ -164,10 +187,19 @@ When every phase is `done`:
    Finish everything up to it, then report and wait.
 3. `WARN` every peer whose cwd is inside the worktree **before** removing it. Their working
    directory is about to stop existing, and one of them may still be mid-write.
-4. Prune: keep `PLAN.md`, `analysis.md` and `ledger.json`; drop the phase bodies. That is what
-   keeps the tracked footprint kilobytes rather than megabytes, and it is why tracking this
-   directory does not recreate the problem `.workflows/plan/` was ignored to solve.
-5. Final `pusher`.
+4. Close what is left:
+   ```bash
+   python3 ~/.claude/skills/swarm/swarm.py reap --slug <slug> --include-failed
+   ```
+   The set is over, so the failed phases' windows go too — their scrollback is in `logs/` and
+   will outlive the tmux server. Anything `reap` still refuses is a session that is genuinely
+   busy; name it to the user rather than forcing it.
+5. Prune: keep `PLAN.md`, `analysis.md` and `ledger.json`; drop the phase bodies. `logs/` and
+   `.runtime.json` are gitignored and stay on this machine — captured scrollback is exactly the
+   kind of thing that has no business in a repo. That is what keeps the tracked footprint
+   kilobytes rather than megabytes, and it is why tracking this directory does not recreate the
+   problem `.workflows/plan/` was ignored to solve.
+6. Final `pusher`.
 
 ---
 
@@ -215,11 +247,13 @@ Orchestrating <slug> — <N> phases, <W> waves
   wave 2   phase 4
 
 Landed:
-  1  <title>   P1-TP-A011  f4d75ca9
-  3  <title>   P1-TP-A014  9c1e0b22
+  1  <title>   P1-TP-A011  f4d75ca9   window closed, log kept
+  3  <title>   P1-TP-A014  9c1e0b22   window closed, log kept
 
 Open:
   2  <title>   spawned as impl-<slug>-p2  (tmux @71)
+
+Windows:  1 open, 2 closed -- scrollback in .workflows/orchestration/<slug>/logs/
 
 Ledger:  .workflows/orchestration/<slug>/ledger.json  (pushed @ <sha>)
 Branch:  feature/<slug>
