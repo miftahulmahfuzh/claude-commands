@@ -9,7 +9,7 @@ where the DAG allows — and **resume that same set on any machine, at any time.
 /analyze-orchestrator --resume                   # pick up the only unfinished set here
 /analyze-orchestrator --status <slug>            # report, change nothing
 
-/analyze-orchestrator -f <PLAN> --permission-mode bypassPermissions   # unattended
+/analyze-orchestrator -f <PLAN> --permission-mode acceptEdits         # narrow the children
 ```
 
 `/implement` walks a plan set one phase at a time in one session. This command runs the same set
@@ -132,10 +132,12 @@ Loop until `runnable_now` is empty:
 session directly what happened before deciding; if it is unreachable, mark the phase `failed`
 with a note and let `stalled` show what it took down with it.
 
-**Spawn every child on this session's own permission mode.** Pass `--permission-mode` explicitly —
-and when `--permission-mode` was passed to *this* command (which is what `/analyze --orchestrate`
-does when it launches you), that is the mode: hand it to every `spawn`. A session cannot read its
-own mode, so this argument is the only way it is known.
+**Spawn every child on this session's own permission mode.** When `--permission-mode` was passed
+to *this* command — which is what `/analyze` does when it launches you — that is the mode: hand it
+to every `spawn`. With nothing passed, use `bypassPermissions`, matching `/analyze`'s default,
+because an orchestrator exists to run unattended and a child that stops to ask stalls the wave it
+is in until someone notices. A session cannot read its own mode, so this argument is the only way
+it travels.
 A child on a different mode has its reports *held for the user to approve* — the coordinator
 never sees them, and a stalled swarm is indistinguishable from a slow one. `spawn` warns when the
 flag is missing, because nothing else about the failure is visible.
