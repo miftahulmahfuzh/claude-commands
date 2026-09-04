@@ -134,12 +134,19 @@ def parse_index(text):
     rows, header = [], None
     for line in text.splitlines():
         if not line.strip().startswith("|"):
-            header = None if header and not rows else header
+            # A table ended. Forget its header, or the NEXT table inherits it: a plan's
+            # Reconciliation Log is also `#`-headed with numeric rows, and was being read
+            # as six extra phases whose "title" was a conflict description and whose
+            # "plan" cell was empty -- six phantom windows an orchestrator would spawn.
+            header = None
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if header is None:
-            if cells and cells[0] == "#":
-                header = [c.lower() for c in cells]
+            # `#` alone is not enough to identify the phase table -- the Reconciliation
+            # Log starts with `#` too. Match on the columns only the phase table has.
+            lowered = [c.lower() for c in cells]
+            if lowered and lowered[0] == "#" and "title" in lowered and "plan" in lowered:
+                header = lowered
             continue
         if all(set(c) <= set("-: ") for c in cells):     # the |---|---| separator
             continue
@@ -320,7 +327,11 @@ def commit_state(repo, sha, branch):
     never pushed, or pushed to a branch this clone has not fetched. Calling that
     `pending` would send the orchestrator to re-run a phase that already shipped.
     """
-    if not git("cat-file", "-e", f"{sha}^{{commit}}", cwd=repo):
+    # `cat-file -e` prints NOTHING on success, and git() returns "" for that -- falsy.
+    # Testing truthiness reported every commit that DOES exist as unfetched, which made
+    # reap refuse to close the window of a phase that had verifiably landed. Compare
+    # against None, exactly as the `merge-base --is-ancestor` call below already does.
+    if git("cat-file", "-e", f"{sha}^{{commit}}", cwd=repo) is None:
         return "unknown", f"commit {sha[:8]} is not in this clone (unfetched?)"
     name, _ = resolve(repo, branch)
     if not name:
