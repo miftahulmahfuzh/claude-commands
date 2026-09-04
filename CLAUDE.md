@@ -87,6 +87,30 @@ that has not landed. GitHub only — GitLab has no sub-issues below Premium. A c
 (`Closes #N` sits on the *parent's* PR, and GitHub's sub-issue progress counts closed children),
 but the board's Status still leads when the two disagree.
 
+### Swarm orchestration (`commands/analyze-orchestrator.md`, `skills/swarm`)
+`/analyze-orchestrator` runs a whole plan set at once: it reads the plan index's **Depends on**
+column as a DAG, opens one session per phase for every phase in a wave, and collects their
+reports. It **writes no plans** — same invariant as `/implement` and `/do`.
+
+Sessions address each other by name (`ListAgents` → `SendMessage`), which works because every
+long-running command already renames itself via `skills/task/session.py`; `swarm.py spawn` goes
+further and sets the child's name at launch with `claude -n`, so the coordinator never races the
+child's own rename. Two rules keep the mesh from becoming a chat room: **a message states a fact
+and never delegates work**, and a session must **never ask a peer to do what its own permissions
+denied** — that is permission laundering.
+
+The ledger is split by lifetime, and the split is the whole reason cross-machine resume works:
+`.workflows/orchestration/<slug>/ledger.json` is **committed** (phases, depends_on, status,
+landed commit, TaskIDs), `.runtime.json` is **local and gitignored** (tmux ids, session names) —
+committing tmux ids would conflict on every write and mean nothing on another laptop. `swarm.py
+track` re-includes that one path without disturbing the deliberate `.workflows/plan/` ignore.
+
+`swarm.py verify` re-derives status from the branch and `todos.md` instead of trusting the
+ledger, and **never downgrades a `done` phase on absent evidence** — "not on the branch" and "not
+fetched here" look identical to git, and confusing them re-runs shipped work. If you change the
+phase table's columns in `commands/analyze.md`, check `parse_index` in `swarm.py`, which reads
+that table by header name.
+
 ### Pusher agent (`agents/pusher.md`)
 Owns *all* git side effects for command-driven work. `/do` and `/implement` no longer perform direct git operations — they delegate to `pusher`. If you add a new command that mutates files, end it by spawning `pusher` rather than running `git` inline. Users can also invoke it directly by saying "run pusher".
 

@@ -175,6 +175,42 @@ It flips the task to completed, ticks the phase in the index, unblocks the next 
 then chains `readme-updater` and `pusher`. The main context performs no documentation updates
 and no git operations.
 
+## Step 4b: Report to the Swarm (only if there is one)
+
+A phase run by an orchestrator has a session waiting on it. Report in **both** halves, in this
+order — the file is the record, the message is the notification, and doing only one leaves either
+a silent coordinator or a set nobody can resume:
+
+```bash
+python3 ~/.claude/skills/swarm/swarm.py find --plan <the phase plan just implemented>
+```
+
+`{"swarm": false, ...}` means this task belongs to no swarm — say nothing, do nothing, done. Every
+`swarm.py` read exits 0 when there is no ledger, so an ordinary task is never affected by any of
+this.
+
+Otherwise `find` returns the `slug`, the `phase`, the `coordinator` to address and the `peers`:
+
+```bash
+python3 ~/.claude/skills/swarm/swarm.py report --slug <slug> --phase <N> \
+    --status done --commit <sha from pusher> --task <TaskID> --note "<one line>"
+```
+
+then `SendMessage` the coordinator — `DONE`, the TaskID, the commit, and one line on what
+actually changed. Report `failed` the same way, with the reason: a coordinator that is told a
+phase failed can strand its dependents deliberately, while one left guessing stalls the whole set.
+
+**Mesh messages** go to peers directly, and only these: `READY` when an Interface Contract item
+a dependent is waiting on now exists, `NEED` before assuming a dependency landed, `WARN` before
+deleting a worktree or branch a peer is sitting in. A message states a fact and never delegates
+work — "I deleted `SortRows`" is a mesh message; "please delete `SortRows` for me" is not, and
+asking a peer to do what this session could not is permission laundering.
+
+This step runs **after** `pusher`, because the commit sha is part of the report and an unpushed
+commit is not something another machine can resume from.
+
+---
+
 ## Step 5: Stop or Continue
 
 **Default: stop after one phase.** Print the hand-off block and let the user start a fresh

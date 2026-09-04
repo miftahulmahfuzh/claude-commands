@@ -224,6 +224,40 @@ Runs **before** the pusher so README updates are committed with the code.
 
 Stages, writes a conventional-commit message, commits, pushes.
 
+#### Step 7: Report to the Swarm (Main Context, only if there is one)
+
+A phase run by an orchestrator has a session waiting on it. Report in **both** halves, in this
+order — the file is the record, the message is the notification, and doing only one leaves either
+a silent coordinator or a set nobody can resume:
+
+```bash
+python3 ~/.claude/skills/swarm/swarm.py find --plan <the plan file this task used>
+```
+
+`{"swarm": false, ...}` means this task belongs to no swarm — say nothing, do nothing, done. Every
+`swarm.py` read exits 0 when there is no ledger, so an ordinary task is never affected by any of
+this.
+
+Otherwise `find` returns the `slug`, the `phase`, the `coordinator` to address and the `peers`:
+
+```bash
+python3 ~/.claude/skills/swarm/swarm.py report --slug <slug> --phase <N> \
+    --status done --commit <sha from pusher> --task <TaskID> --note "<one line>"
+```
+
+then `SendMessage` the coordinator — `DONE`, the TaskID, the commit, and one line on what
+actually changed. Report `failed` the same way, with the reason: a coordinator that is told a
+phase failed can strand its dependents deliberately, while one left guessing stalls the whole set.
+
+**Mesh messages** go to peers directly, and only these: `READY` when an Interface Contract item
+a dependent is waiting on now exists, `NEED` before assuming a dependency landed, `WARN` before
+deleting a worktree or branch a peer is sitting in. A message states a fact and never delegates
+work — "I deleted `SortRows`" is a mesh message; "please delete `SortRows` for me" is not, and
+asking a peer to do what this session could not is permission laundering.
+
+This step runs **after** `pusher`, because the commit sha is part of the report and an unpushed
+commit is not something another machine can resume from.
+
 ---
 
 ## Context Isolation
@@ -238,6 +272,7 @@ Stages, writes a conventional-commit message, commits, pushes.
 | `completion-handler` | isolated | `todos.md`, plan index | `todos.md`, plan index |
 | `readme-updater` | isolated | `package_readme.md` | `package_readme.md` |
 | `pusher` | isolated | `git diff` | git only |
+| report | main | `swarm.py find` output only | the swarm ledger, one message |
 
 **The main context never loads** `todos.md`, `package_readme.md` or `analysis_report.md`. It
 reads **exactly one plan file — the adopted one — and no other `.workflows` file.**

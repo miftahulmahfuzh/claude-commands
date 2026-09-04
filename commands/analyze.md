@@ -240,6 +240,12 @@ checkable rather than felt:
 State it in one line before proceeding:
 `Plan: 4 phases — 23 files across 5 packages, deletion order matters. R1 -> 3,4 · R2 -> 1,2.`
 
+**`Depends on` is load-bearing beyond ordering.** `/analyze-orchestrator` reads that column as a
+DAG and runs every phase that shares no edge concurrently, in its own session. A dependency
+declared out of caution — "phase 3 probably wants phase 1 first" — costs real parallelism, and a
+dependency omitted for tidiness produces two sessions editing the same file at once. State the
+edges that are true, and only those.
+
 Then write a **draft** `<SLUG>_PLAN.md` at the worktree root with the phase table filled in and
 each phase's boundary stated. This draft is the contract the planners plan against.
 
@@ -440,8 +446,13 @@ Create `<SLUG>_PLAN.md` at the worktree root (`SLUG` in SCREAMING_SNAKE, e.g.
 **Branch:** `feature/<slug>` (base: `<base ref>` @ `<short sha>`)
 **Phases:** <N>
 **Status:** planned
+**Coordinator:** —
 
 ---
+
+<The Coordinator line is the peer address of the session driving this set, filled in by
+`/analyze-orchestrator` when it takes the set over. Leave it `—`: a name written here by hand
+addresses a session that does not exist, and the reports meant for it go nowhere.>
 
 ## Why
 
@@ -504,9 +515,14 @@ Leave both `—` — writing a card ref here yourself invents one.>
 
 ## Next
 
-Execute the phases, starting at phase 1:
+Execute the phases one at a time, starting at phase 1:
 
     /implement -f <SLUG>_PLAN.md --phase 1
+
+Or run the whole set as a swarm — a session per phase, concurrent wherever `Depends on` allows,
+resumable on any machine:
+
+    /analyze-orchestrator -f <SLUG>_PLAN.md
 
 Or put them on the board first (GitHub repos only):
 
@@ -579,6 +595,11 @@ Next — phase 1 of <N>, in a new session:
 
   cd <worktree>
   /implement -f <SLUG>_PLAN.md --phase 1
+
+<Only when N > 1 and at least two phases share no dependency — otherwise a swarm is one
+session with extra machinery. Run the whole set concurrently instead:>
+
+  /analyze-orchestrator -f <SLUG>_PLAN.md
 ```
 
 `--phase 1` is explicit on purpose: the plan set has just been written, so phase 1 is what starts

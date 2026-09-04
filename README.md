@@ -27,6 +27,7 @@ deletes inside `~/.claude/commands/` and is safe to re-run.
 |---|---|
 | `/analyze` | Traces the code, then writes the implementation plan — the only command that plans |
 | `/implement` | Executes a plan: creates the tasks, applies the code |
+| `/analyze-orchestrator` | Runs a whole plan set as a swarm — a session per phase, resumable on any machine |
 | `/do` | Executes one existing task by TaskID |
 | `/dbg` | Drives Delve to get runtime truth instead of inferring from logs |
 | `/analyze-package` | Generates a package's code-quality analysis |
@@ -50,9 +51,10 @@ session after their errand, as soon as they know it:
 | `/analyze` | `analyze-<slug>` | step 4, with the worktree — and also without one |
 | `/implement` | `impl-<slug>-p<N>` | step 2 from the index, sharpened once the phase is picked |
 | `/do <TaskID>` | `do-<TaskID>` | immediately; the id is the argument |
+| `/analyze-orchestrator` | `orch-<slug>` | step 3, once the ledger is verified |
 | `/token-maxxing` | `tokenmax-<idea>` | step 7, with the day's branch |
 
-All five call `skills/task/session.py`, which sends the same `/rename` control message over the
+All six call `skills/task/session.py`, which sends the same `/rename` control message over the
 session's own messaging socket — so the tab title, the `/resume` row and the name peers address
 change together, instead of a file write the running process would ignore. It renames the **tmux
 window** too, which under tmux is the only one of those actually on screen, since the status line
@@ -320,6 +322,27 @@ requests** field as a board column. GitLab needs a PAT with `api` scope in
 `~/.config/task-skill/gitlab`, then `labels --ensure` and `board --ensure` per project.
 `doctor` reports what's missing on either backend.
 
+### `swarm`
+
+The mechanics behind `/analyze-orchestrator`: wave scheduling from a plan set's `Depends on`
+column, spawning a named session per phase, and the two-half ledger that makes a set resumable on
+another machine.
+
+Sessions address each other by name — `ListAgents` lists the peers, `SendMessage` writes to one —
+so a phase session reports to its coordinator when it lands, and warns any peer whose working
+directory is inside a worktree it is about to delete. Messaging is the local nervous system and
+dies with the machine; the committed ledger is the skeleton and does not. `swarm.py verify`
+re-derives every phase's real status from the branch and `todos.md` rather than trusting what the
+ledger claims, and never downgrades a landed phase on absent evidence — on a clone that has not
+fetched yet, that mistake would re-run work that already shipped.
+
+```bash
+python3 ~/.claude/skills/swarm/swarm.py track            # once per repo
+python3 ~/.claude/skills/swarm/swarm.py waves  --slug <slug>
+python3 ~/.claude/skills/swarm/swarm.py verify --slug <slug> --apply
+python3 ~/.claude/skills/swarm/swarm.py selftest
+```
+
 ### `create-task`
 The front door to the same board. `/create-task "…"` opens the issue, adds it to the board, and
 sets the Open stage — three operations, because `gh issue create` alone produces an issue no
@@ -562,6 +585,7 @@ claude-commands/
 │   ├── issue-ticket-reader/  # + issue_fetch.py, credentials.example
 │   ├── create-task/
 │   ├── task/                 # + DESIGN.md, taskcore/task_gh/task_gl/todos/session.py
+│   ├── swarm/                # + swarm.py — the orchestrator's mechanics
 │   ├── sync-todos-into-gitlab-board/  # + sync_todos.py
 │   ├── reap-orphaned-blobs/
 │   └── update-ats-cv/        # + SCHEMA.md, cv_render/cv_extract/cv_preview.py, fonts
