@@ -212,6 +212,25 @@ Permanent is the cheaper half of the trade. Reopening a phase costs one `spawn -
 which is what a bug report or a discrepancy wants anyway — a fresh session on the current
 code, not a stale one that has been idling since the phase landed.
 
+### When `reap` refuses on a name mismatch
+
+`reap` closes a window only while its name still equals the name it was spawned under, and
+**`--force` does not override that check** — `--force` short-circuits the ledger-status gate, and
+the identity check runs after it, deliberately, because a restarted tmux server hands `@7` to
+somebody else's window. So a phase that renamed its own window away from its launch name is
+unreapable, and stays that way.
+
+Do **not** hand-kill it: `kill-window` loses the scrollback that `reap` exists to capture. Instead
+verify the pane really is that phase — its own commit sha in the scrollback, plus
+`pane_current_path` pointing at the set's worktree — then `tmux rename-window` back to the spawned
+name and let `reap` run normally. MEASURED 2026-09-05 on `tabbar-new-tab-composer-seam` phase 2,
+which had shortened its own slug on boot.
+
+The upstream fix is in `commands/implement.md`: a session launched with `claude -n` passes its
+launch name back verbatim rather than shortening it, because that name is the coordinator's
+recorded address *and* the string `reap` matches on. `--no-widen` does not catch this on its own —
+a shortened slug that keeps its `-p{N}` is not a widening.
+
 **The scrollback survives the window.** `reap` runs `capture-pane` over the whole history
 into `logs/phase-N.log` before killing anything. That is why `spawn` keeps the pane alive
 after claude exits, and it is why closing the window loses nothing: the output ends up

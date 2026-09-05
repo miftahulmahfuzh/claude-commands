@@ -150,8 +150,26 @@ half.
 
 **Never let it stop anything.** It cannot fail by design (no socket, no tmux, a session started
 some other way → `renamed: false` with a reason, exit 0), and a plan is not worth losing over the
-name of a window. Keep the slug to three or four words if the index's is long — the name is
-capped at 60 characters and a tmux window is narrow.
+name of a window.
+
+**Shorten the slug only if you named yourself.** Three or four words is right when this session
+picked its own name — the cap is 60 characters and a tmux window is narrow. But a session launched
+by `swarm.py spawn` was given its name by `claude -n` before it booted, and that name is **two
+records, not a preference**: the address the coordinator wrote into `.runtime.json`, and the tmux
+window name `reap` matches against before closing anything. Shortening it breaks both.
+
+MEASURED 2026-09-05: a phase launched as `impl-tabbar-new-tab-composer-seam-p2` renamed itself to
+`impl-tabbar-seam-p2` on boot, following this very instruction. `--no-widen` allowed it — the new
+name still carries `-p2`, so it is not the current name minus a suffix — but `reap` then refused
+that window permanently, because its identity check is "does the window's name still equal the
+name we spawned it under", and **`--force` does not override it**: `--force` short-circuits the
+ledger-status gate, while the name check runs afterwards, on purpose, since a tmux server that
+restarted hands `@7` to a stranger's window. The set's coordinator had to verify the pane's
+identity by hand and rename the window back before its scrollback could be captured.
+
+So: if the session already has a name when this step runs, **pass it back verbatim**. The rename
+is then a no-op that reports `renamed: false`, which is the correct outcome — the launch name was
+already right.
 
 ## Step 3: Create the Tasks (Subagent — required)
 
