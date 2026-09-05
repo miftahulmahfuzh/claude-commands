@@ -20,6 +20,13 @@ by a deploy of an unrelated commit, and one of them was actively misrouting a ru
 time. Edit the repo file, then `./sync.sh`. This applies hardest under time pressure, mid-run,
 which is exactly when patching the deployed copy is most tempting.
 
+**The first revert is the warning, and the moment to move the fix into the repo.** In that
+incident the fix was erased once mid-set, noticed, and *re-applied to the deployed copy* — treated
+as a one-off rather than as evidence that the tree is volatile by design. The second erasure came
+from an ordinary deploy of an unrelated commit, which is not bad luck but how a deployed-only fix
+behaves. Had it gone into the repo at the first revert, that deploy would have carried it instead
+of erasing it. A fix you have already had to re-apply once is a fix that belongs upstream now.
+
 To check the two trees agree — a difference is either an undeployed edit or a deployed edit about
 to be lost:
 
