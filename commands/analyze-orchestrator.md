@@ -247,9 +247,33 @@ trusted it refuses rather than inventing trust, and the user has to open it once
 
 ## Step 5: Land the Set
 
+**The merge belongs to this set's coordinator.** If you are landing a set you did not cut — the
+coordinator died, or the user authorised unattended merges while away — check `ListAgents` for the
+ledger's `coordinator` first and send it a **`CLAIM`** *before* you merge, not after. MEASURED
+2026-09-05: a peer merged a completed set and reported afterwards; the coordinator had the same
+merge built and gated locally and discarded it, which cost nothing — but the other ordering puts
+two merges of one set on `main`. `coordinator` and `coordinator_session_id` are in the ledger from
+before phase 1 spawned, so the owner is always findable. A `CLAIM` announces and proceeds; it does
+not ask, and it does not wait for a reply.
+
 When every phase is `done`:
 
 1. Verify once more, from the branch rather than from the ledger.
+
+1b. **Check the migration numbering before anything else.** A set cut from one base and merged
+   into a `main` that moved can carry a migration whose number another set already used — two
+   different `0004`s, one per branch. This does not present as a conflict on the `.sql` files,
+   because their names differ, and it is the more dangerous half of the failure: a migrator that
+   applies journal entries newer than the most recently applied row will **silently skip** a
+   migration whose timestamp predates one already applied. The deploy looks clean and the table
+   is simply never created. MEASURED on `nina-character-tuning`: the branch's `0004` was stamped
+   14:49 and `main`'s applied `0004` at 20:18, so `nina_tuning` would never have existed.
+
+   Resolve by keeping the base's migration and **regenerating** the set's from the merged schema —
+   never by renaming the file. A rename keeps the stale timestamp and the stale snapshot chain;
+   a regeneration re-derives both from what the schema now says, and the new entry is stamped
+   after everything already applied. Then apply it and verify the objects exist in the database
+   rather than trusting the migrator's exit code.
 2. Hand the merge to the user unless they have already said to merge — merging a whole plan set
    is not a step to infer. **This is the one place an unattended run stops, and it is a stop, not
    a block:** every phase landing on the branch overnight is the eight hours of value, the merge
@@ -258,6 +282,9 @@ When every phase is `done`:
    reaped — then report and end the session. Do not sit on a prompt waiting for the answer, and
    **never reach this step early**: a merge decision surfaced while phases are still runnable is
    iron rule 4's failure wearing Step 5's clothes.
+2b. **If a live coordinator handed you its set, tell it what landed.** It holds the record for the
+   set and will outlive your session's knowledge of it; a merge it hears about is a merge it can
+   verify, document and prune behind.
 3. `WARN` every peer whose cwd is inside the worktree **before** removing it. Their working
    directory is about to stop existing, and one of them may still be mid-write.
 4. Close what is left:

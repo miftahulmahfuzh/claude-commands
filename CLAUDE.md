@@ -132,6 +132,15 @@ surface in the termination block's `Decided without asking` section, which is th
 queue. The one legitimate wait is the **merge** (Step 5): terminal, and only after every phase has
 landed and pushed.
 
+**The merge belongs to the set's coordinator**, so a session landing a set it did not cut sends a
+`CLAIM` to the ledger's `coordinator` *before* merging — the fifth mesh kind, and the only one
+whose value is entirely in its ordering. MEASURED: a peer merged first and reported after, while
+that coordinator had the same merge built and gated locally; it discarded its copy, but the other
+ordering puts two merges of one set on `main`. Step 5 also gained a migration-numbering check,
+because two branches cut from different bases can each produce a `0004` — which is not a file
+conflict and is silently skipped by a migrator that only applies entries newer than the last
+applied row. Regenerate from the merged schema; never rename the file.
+
 The ledger is split by lifetime, and the split is the whole reason cross-machine resume works:
 `.workflows/orchestration/<slug>/ledger.json` is **committed** (phases, depends_on, status,
 landed commit, TaskIDs), `.runtime.json` is **local and gitignored** (tmux ids, session names) —

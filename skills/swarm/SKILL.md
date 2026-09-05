@@ -263,11 +263,26 @@ chatty by restricting it to four message kinds — everything else goes to the c
 | `READY` | an Interface Contract item now exists | the symbol or file a dependent was waiting on |
 | `NEED` | before assuming a dependency landed | the contract item, and which phase owns it |
 | `WARN` | about to delete a worktree or branch | the path, and what the recipient should do |
+| `CLAIM` | **before** taking a step a live peer owns | which step, which set, and that you are doing it now |
 
 Three hard rules. **A message states a fact; it never delegates work** — "I deleted `SortRows`"
 is a mesh message, "please delete `SortRows` for me" is not. **`WARN` before destroying shared
 ground**: a session removing a worktree tells every peer whose cwd lives inside it, because their
 working directory is about to stop existing.
+
+**`CLAIM` goes before the act, and its whole value is the ordering.** The step this exists for is
+the **merge**: a set's coordinator owns it (its Step 5), so any other session taking it — because
+the coordinator is gone, or because the user authorised unattended merges while away — must say so
+*first*. MEASURED 2026-09-05: a session merged a completed set and told the coordinator afterwards.
+The coordinator had a merge of the same content built and gated locally at that moment and
+discarded it as redundant, which cost nothing — but thirty seconds the other way and `main` would
+have carried two merges of one set to reconcile. The ledger records `coordinator` and
+`coordinator_session_id` from before phase 1 spawns for exactly this lookup, so "I could not find
+the owner" is a claim to check with `ListAgents`, not to assume.
+
+A `CLAIM` is still a fact and still does not block: it announces, it does not ask, and the sender
+proceeds. What it buys the recipient is the chance to drop its own copy of the work before both
+land.
 
 And **no message asks a peer for a decision, and none blocks on a reply.** Every kind in that
 table is a fact in one direction: `NEED` states what this phase requires and which phase owns it
