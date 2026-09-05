@@ -12,6 +12,24 @@ A collection of **Claude Code slash commands** (`commands/*.md`), **subagents** 
 
 To smoke-test a command after editing, run `./sync.sh` then invoke the command (e.g. `/do P0-XX-A123`) in a Claude Code session against a real `.workflows/` directory.
 
+**Never edit anything under `~/.claude/` directly.** `sync.sh` is a one-way copy from this repo, so
+a fix that lives only in the deployed tree is erased by the next unrelated deploy — silently, and
+by whoever happens to sync next. MEASURED 2026-09-05: two real `swarm.py` bug fixes made in
+`~/.claude/skills/swarm/swarm.py` while driving a live set were reverted **twice**, the second time
+by a deploy of an unrelated commit, and one of them was actively misrouting a running swarm at the
+time. Edit the repo file, then `./sync.sh`. This applies hardest under time pressure, mid-run,
+which is exactly when patching the deployed copy is most tempting.
+
+To check the two trees agree — a difference is either an undeployed edit or a deployed edit about
+to be lost:
+
+```bash
+for d in skills agents commands; do diff -rq --exclude=__pycache__ --exclude='.*' "$d" ~/.claude/"$d"; done
+```
+
+The excludes matter: the deployed tree accumulates `__pycache__` and local dotfiles that are not
+drift, and a check that cries wolf is a check nobody runs.
+
 ## Architecture
 
 ### Three artifact types

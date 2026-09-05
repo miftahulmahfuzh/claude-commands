@@ -321,6 +321,17 @@ still in `ListAgents`. `find` returns `coordinator_session_id` for exactly this 
 coordinator is gone, the file half of the report is already durable: say so to the user and stop,
 rather than delivering a phase report to a stranger.
 
+**Check `find`'s `slug` against the directory the plan file lives in before acting on it.** It is a
+lookup, not an authority, and a wrong answer is silent — a real slug, a real phase, a real
+coordinator, nothing about it looking wrong. MEASURED 2026-09-05: a bug made `find --plan` fall
+back to the plan file's basename, and because every set has a `phase-N.md` and ledgers are scanned
+in sorted order, the alphabetically-first set won every lookup. `tabbar-new-tab-composer-seam`'s
+phase 2 resolved to `admin-album-file-manager` — finished hours earlier, coordinator long gone — so
+a phase reporting on that answer would have written its outcome into a stranger's finished ledger
+and messaged a dead name, with **both halves reporting success**. The bug is fixed; the check
+stays, because the deployed copy of `swarm.py` can drift from the repo and this failure mode gives
+no other warning.
+
 `find` is discovery over flags on purpose: a session the user launched by hand carries no
 `--swarm` argument, and a report that silently went nowhere is worse than no report. Every
 `swarm.py` read prints `{"swarm": false, ...}` and exits 0 when there is no ledger, so an

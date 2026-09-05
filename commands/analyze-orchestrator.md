@@ -256,6 +256,17 @@ two merges of one set on `main`. `coordinator` and `coordinator_session_id` are 
 before phase 1 spawned, so the owner is always findable. A `CLAIM` announces and proceeds; it does
 not ask, and it does not wait for a reply.
 
+**Check the answer `swarm.py find` gives you against the ledger's own `slug` before you address
+anyone.** `find` is a lookup, not an authority, and a wrong answer from it is silent: it names a
+real slug, a real phase and a real coordinator, so nothing about the reply looks wrong. MEASURED
+2026-09-05: a matching bug made `find --plan` fall back to the plan file's BASENAME, and since
+every set has a `phase-N.md` and ledgers are scanned in sorted order, the alphabetically-first set
+won every lookup — `tabbar-new-tab-composer-seam/phase-2.md` resolved to
+`admin-album-file-manager`, a set finished hours earlier, naming a coordinator that no longer
+existed. A `CLAIM` sent on that answer goes to the wrong session about the wrong set, which is the
+exact failure `CLAIM` exists to prevent. One comparison — does the returned `slug` match the
+directory the plan file lives in? — costs nothing and catches it.
+
 When every phase is `done`:
 
 1. Verify once more, from the branch rather than from the ledger.
