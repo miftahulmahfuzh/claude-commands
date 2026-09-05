@@ -284,6 +284,25 @@ A `CLAIM` is still a fact and still does not block: it announces, it does not as
 proceeds. What it buys the recipient is the chance to drop its own copy of the work before both
 land.
 
+**A `CLAIM` on a merge also claims the worktree's index until the sender says it is done.** This is
+the half `CLAIM` did not originally cover, and it is not theoretical. MEASURED 2026-09-05: while a
+merge sat resolved-but-uncommitted in the main worktree, that set's coordinator began its own
+Step 5 prune in the same directory — `git rm --cached` on two phase bodies, plus its ledger and
+plan index staged — writing straight into the other session's merge index. It noticed, restored
+from `HEAD`, and un-staged its own files, and the merge committed clean; but nothing warned either
+side, and `git status` in a shared worktree does not say whose index it is.
+
+So: a coordinator whose set is being merged **parks every index-touching step** — prune, `git add`,
+`git rm --cached`, ledger commit — until the merger reports the sha, then runs them on top as its
+own commit. And the merger, before committing, **re-verifies the tree against what it staged**
+rather than trusting the restore: conflict markers, the paths it did not expect to change, and the
+files a peer said it put back. The session that contaminated an index is the weaker of the two
+witnesses to its repair.
+
+Worktrees are the isolation boundary for phase work, and they hold. The main checkout is the
+exception, because it is where ledgers live and where merges land — the one shared surface, and
+therefore the one that needs saying out loud.
+
 And **no message asks a peer for a decision, and none blocks on a reply.** Every kind in that
 table is a fact in one direction: `NEED` states what this phase requires and which phase owns it
 — it is not a request to be answered before work continues. If a session cannot proceed without a

@@ -256,6 +256,15 @@ two merges of one set on `main`. `coordinator` and `coordinator_session_id` are 
 before phase 1 spawned, so the owner is always findable. A `CLAIM` announces and proceeds; it does
 not ask, and it does not wait for a reply.
 
+**It also claims the main worktree's index until you report the sha.** A coordinator whose set is
+being merged parks its own prune, ledger commit and any `git add`/`git rm --cached` in that
+directory until then, and runs them on top afterwards as a separate commit. MEASURED 2026-09-05: a
+Step 5 prune ran into a resolved-but-uncommitted merge index in the shared main checkout and
+removed two phase bodies from it; it was caught and restored, and the merge committed clean, but
+`git status` in a shared worktree never says whose index it is. Re-verify the tree against what you
+staged before committing — including anything a peer reports it put back, since the session that
+contaminated an index is the weaker witness to its repair.
+
 **Check the answer `swarm.py find` gives you against the ledger's own `slug` before you address
 anyone.** `find` is a lookup, not an authority, and a wrong answer from it is silent: it names a
 real slug, a real phase and a real coordinator, so nothing about the reply looks wrong. MEASURED
