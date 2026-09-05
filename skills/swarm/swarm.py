@@ -522,7 +522,23 @@ def window_facts(window):
 
 
 def current_window():
-    """This session's own window -- the one thing reap must never close."""
+    """This session's own window -- the one thing reap must never close.
+
+    MUST be resolved against our own pane. Bare `display-message -p` answers for the
+    client's ACTIVE window, not the window the calling process lives in -- so a
+    coordinator whose own window is in the background learns some OTHER window's id.
+    MEASURED on nina-character-tuning: the orchestrator sat in @107 while a phase
+    window it had just spawned held focus, and reap declined to close that phase as
+    "this session's own window". It fails safe -- it refuses rather than kills -- but
+    the finished windows then never close, which is the entire job of iron rule 3, and
+    the tab bar fills with idle sessions exactly as the rule warns.
+
+    $TMUX_PANE is set by tmux in every pane and is the only self-reference that does
+    not depend on which window happens to have focus.
+    """
+    pane = os.environ.get("TMUX_PANE")
+    if pane:
+        return tmux("display-message", "-p", "-t", pane, "#{window_id}")
     return tmux("display-message", "-p", "#{window_id}")
 
 
@@ -905,6 +921,33 @@ def cmd_status(args):
     return 0
 
 
+def plan_matches(needle, recorded, slug):
+    """Does this plan path belong to THIS set's phase?
+
+    A bare basename is NOT enough, and trusting one misroutes an entire phase report.
+    MEASURED on nina-character-tuning: `find --plan .../nina-character-tuning/phase-5.md`
+    answered with slug `admin-album-file-manager`. Every set has a `phase-5.md`, the old
+    fallback compared basenames only, and ledgers are scanned in sorted order -- so the
+    alphabetically-first set won. A phase session trusting it would have recorded its
+    outcome in a FINISHED set's ledger and messaged a coordinator that had not existed
+    for hours, and the report would have looked like it succeeded.
+
+    That is the worst shape a bug can have here, because `find` exists precisely so a
+    session carrying no --swarm flag can discover its owner. Discovery that can silently
+    answer for the wrong set is worse than no discovery at all.
+
+    So the basename may only stand in when the directory holding it is the set's own
+    slug -- true both of `.workflows/plan/<slug>/phase-N.md` in a worktree and of
+    `.workflows/orchestration/<slug>/phase-N.md` in the tracked copy.
+    """
+    if not needle or not recorded:
+        return False
+    if needle.endswith(recorded):          # the recorded path, in full
+        return True
+    here = Path(needle)
+    return bool(slug) and here.name == Path(recorded).name and here.parent.name == slug
+
+
 def cmd_find(args):
     """Which swarm, if any, owns this plan file or TaskID -- discovery over flags.
 
@@ -922,9 +965,8 @@ def cmd_find(args):
         ledger = load(ledger_file)
         for phase in ledger.get("phases", []):
             hit = (args.task and phase.get("task_id") == args.task) or (
-                needle and phase.get("plan") and (
-                    needle.endswith(phase["plan"]) or phase["plan"].endswith(
-                        Path(needle).name)))
+                needle and plan_matches(needle, phase.get("plan"),
+                                        ledger.get("slug")))
             if hit:
                 print(json.dumps({"swarm": True, "slug": ledger["slug"],
                                   "phase": phase["n"],
