@@ -51,8 +51,10 @@ Which role decides what:
   means. And it **answers a child that asks anyway** rather than relaying the question: it holds
   the plan index, the Requirements table and every sibling's report, making it the best-informed
   decider present and the only one awake.
-- **Nobody asks the user mid-set.** The one legitimate wait is the **merge**, which is terminal
-  and comes after every phase has landed and been pushed.
+- **Nobody asks the user, and nothing waits for one — the merge included.** The coordinator's
+  Step 5 lands the set on its own: merge to `main`, apply and verify the production migrations,
+  push, delete the worktree and the branch. A set that ends on a branch nobody merged still needs
+  a human, which is the wait this workflow removed rather than relocated.
 
 **Stopping is allowed; blocking is not.** A stop ends a session cleanly — the ledger truthful, the
 reason printed, the coordinator told, the work on disk surviving. A block is a live session
@@ -291,8 +293,9 @@ working directory is about to stop existing.
 
 **`CLAIM` goes before the act, and its whole value is the ordering.** The step this exists for is
 the **merge**: a set's coordinator owns it (its Step 5), so any other session taking it — because
-the coordinator is gone, or because the user authorised unattended merges while away — must say so
-*first*. MEASURED 2026-09-05: a session merged a completed set and told the coordinator afterwards.
+the coordinator is gone, or because a peer resumed the set on another machine — must say so
+*first*. Every coordinator merges its own set unattended now, so this is a live collision rather
+than a courtesy. MEASURED 2026-09-05: a session merged a completed set and told the coordinator afterwards.
 The coordinator had a merge of the same content built and gated locally at that moment and
 discarded it as redundant, which cost nothing — but thirty seconds the other way and `main` would
 have carried two merges of one set to reconcile. The ledger records `coordinator` and

@@ -175,8 +175,18 @@ into the index and the ledger, so N children inherit the answer instead of meeti
 independently — and it **answers a child that asks rather than relaying the question**, being the
 only session holding the index, the Requirements table and every sibling's report. Decisions
 surface in the termination block's `Decided without asking` section, which is the morning's review
-queue. The one legitimate wait is the **merge** (Step 5): terminal, and only after every phase has
-landed and pushed.
+queue. **There is no legitimate wait left, the merge included** — Step 5 lands the set itself:
+merge to `main` in a throwaway worktree cut from `origin/main`, apply and *verify* the production
+migrations, push, then delete the plan set's worktree and its branch (local and remote). A night
+that ends with every phase committed to a branch nobody merged still needs a human before it is
+worth anything, which is the same dead night iron rule 4 exists to prevent, moved to where it is
+least visible. The order is load-bearing: **migrations apply before the push**, because production
+deploys from `main` and code arriving ahead of its schema is a runtime error — so a migration that
+will not apply stops the landing with `main` untouched and the branch intact. The branch deletion
+is guarded by `git merge-base --is-ancestor "$BR" origin/main`, which is what makes it safe to run
+unattended: a stop anywhere earlier leaves the branch standing by construction rather than by
+remembering to. And Step 5 leaves the worktree (`cd "$MAIN"`) before it deletes it — the
+coordinator's own cwd is the thing being removed.
 
 **The merge belongs to the set's coordinator**, so a session landing a set it did not cut sends a
 `CLAIM` to the ledger's `coordinator` *before* merging — the fifth mesh kind, and the only one

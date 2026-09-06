@@ -63,9 +63,12 @@ Three consequences, each of them load-bearing:
 - **Answer a child that asks** (Step 4.4b) instead of relaying its question to the user. This
   session holds the plan index, the Requirements table and every sibling's report — it is the
   best-informed decider in the swarm, and the only one awake.
-- **A stop is allowed; a block is not.** The set's one legitimate wait is the **merge** (Step 5),
-  which is terminal and comes after every phase has landed and pushed. Everything before it gets
-  decided.
+- **A stop is allowed; a block is not — and there is no legitimate wait left, not even the merge.**
+  Step 5 lands the set itself: it merges to `main`, applies the production migrations, pushes, and
+  deletes the worktree and the branch. A night that ends with every phase committed to a branch
+  nobody merged is a night that still needs a human before it is worth anything. A stop is a
+  failure with a reason — a conflict no rung resolves, a migration that will not apply, a push the
+  remote refuses — reported and ended, never a prompt someone has to come back to.
 
 ---
 
@@ -247,8 +250,10 @@ trusted it refuses rather than inventing trust, and the user has to open it once
 
 ## Step 5: Land the Set
 
-**The merge belongs to this set's coordinator.** If you are landing a set you did not cut — the
-coordinator died, or the user authorised unattended merges while away — check `ListAgents` for the
+**The merge belongs to this set's coordinator.** Every coordinator now merges its own set
+unattended, so a second session reaching Step 5 for a set it did not cut is the collision this
+rule exists for. If you are landing a set you did not cut — the coordinator died, or a peer
+resumed the set on another machine — check `ListAgents` for the
 ledger's `coordinator` first and send it a **`CLAIM`** *before* you merge, not after. MEASURED
 2026-09-05: a peer merged a completed set and reported afterwards; the coordinator had the same
 merge built and gated locally and discarded it, which cost nothing — but the other ordering puts
@@ -276,6 +281,20 @@ existed. A `CLAIM` sent on that answer goes to the wrong session about the wrong
 exact failure `CLAIM` exists to prevent. One comparison — does the returned `slug` match the
 directory the plan file lives in? — costs nothing and catches it.
 
+**The merge is not put to the user, and neither is anything after it.** This step runs to
+completion on its own: merge, migrate, push, delete the worktree, delete the branch. The old
+shape stopped here and reported — every phase landed on a branch, waiting on a thirty-second
+decision in the morning — which is the same dead night iron rule 4 exists to prevent, moved to the
+end of the run where it is least visible. The isolation that makes it safe is the same isolation
+that justified `bypassPermissions` upstream: `/analyze` cut the branch, every phase built green on
+it, and Step 5 verifies from git before it touches `main`. A merge that turns out wrong costs one
+`git revert`; a set that never merged costs the whole night it took to build.
+
+**Never reach this step early.** Landing while any phase is still `runnable_now` or `running`
+merges a partial set and then deletes the branch the rest of it needed — the failure iron rule 4
+describes, wearing Step 5's clothes. Every phase `done` and verified from git, or this step does
+not start.
+
 When every phase is `done`:
 
 1. Verify once more, from the branch rather than from the ledger.
@@ -294,32 +313,107 @@ When every phase is `done`:
    a regeneration re-derives both from what the schema now says, and the new entry is stamped
    after everything already applied. Then apply it and verify the objects exist in the database
    rather than trusting the migrator's exit code.
-2. Hand the merge to the user unless they have already said to merge — merging a whole plan set
-   is not a step to infer. **This is the one place an unattended run stops, and it is a stop, not
-   a block:** every phase landing on the branch overnight is the eight hours of value, the merge
-   is a thirty-second decision in the morning, and doing it unsupervised trades a large risk for a
-   tiny saving. So finish everything up to it — every phase landed, verified, pushed, every window
-   reaped — then report and end the session. Do not sit on a prompt waiting for the answer, and
-   **never reach this step early**: a merge decision surfaced while phases are still runnable is
-   iron rule 4's failure wearing Step 5's clothes.
-2b. **If a live coordinator handed you its set, tell it what landed.** It holds the record for the
-   set and will outlive your session's knowledge of it; a merge it hears about is a merge it can
-   verify, document and prune behind.
-3. `WARN` every peer whose cwd is inside the worktree **before** removing it. Their working
-   directory is about to stop existing, and one of them may still be mid-write.
-4. Close what is left:
+2. **Leave the worktree before you touch anything.** This session's cwd is the worktree
+   `/analyze` cut, and step 6 deletes it — a session standing in a directory that stops existing
+   cannot run the rest of its own landing sequence. Resolve the main checkout once, up front, and
+   address every later command at it explicitly:
    ```bash
-   python3 ~/.claude/skills/swarm/swarm.py reap --slug <slug> --include-failed
+   MAIN=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+   SLUG=<slug>; BR=feature/$SLUG
+   WT=$(git -C "$MAIN" worktree list --porcelain | awk -v b="refs/heads/$BR" \
+          '/^worktree /{w=$2} $0=="branch "b{print w}')
+   cd "$MAIN"
    ```
-   The set is over, so the failed phases' windows go too — their scrollback is in `logs/` and
-   will outlive the tmux server. Anything `reap` still refuses is a session that is genuinely
-   busy; name it to the user rather than forcing it.
-5. Prune: keep `PLAN.md`, `analysis.md` and `ledger.json`; drop the phase bodies. `logs/` and
+
+3. **Merge in a throwaway worktree of `origin/main`, never in the shared main checkout.** The
+   main checkout may be dirty, on another branch, or holding a peer's half-staged index — the
+   MEASURED contamination two paragraphs up happened in exactly that directory. A worktree cut
+   for the merge and deleted after it has no such neighbours:
+   ```bash
+   LAND=${TASK_WORKTREES:-$HOME/.worktrees}/$(basename "$MAIN")/land-$SLUG
+   git -C "$MAIN" fetch origin main --quiet
+   git -C "$MAIN" worktree add -B "land-$SLUG" "$LAND" origin/main
+   git -C "$LAND" merge --no-ff "$BR" -m "merge($SLUG): <N> phases — <title>"
+   ```
+   **Conflicts are decided, not asked.** A conflict here is between two phases of one set, or
+   between the set and what landed on `main` while it ran — and this session holds the plan index,
+   the invariants, the Requirements table and every phase's report. Resolve on the same ladder
+   (**invariant → exit criteria → the plan's code blocks → Why/Requirements → task text →
+   convention**), `git add`, `git commit --no-edit`, and record the rung. The only stop is a
+   conflict no rung reaches: `git -C "$LAND" merge --abort`, remove the land worktree, keep
+   `$BR` and its pushed commits intact, and report — the branch is exactly as safe as it was
+   before this step started.
+
+4. **Apply the production migrations before the push, and verify them against the database.**
+   Production deploys from `main`, so code that arrives ahead of its schema is a runtime error on
+   the first request. Applying first, from the merge commit, is the order that cannot produce one.
+
+   Find the migrator from the repo rather than guessing it: the phase plans' exit criteria name it
+   first (they were written against this tree), then `package.json` scripts matching `migrate`/`db:`,
+   `drizzle.config.*`, `alembic.ini`, `prisma/`, `supabase/migrations/`, a `Makefile` target, the
+   README's deploy section. Use the credentials the repo already carries — a `.env.production`, a
+   deploy env var, whatever the migrate script itself reads. **Never invent a connection string,
+   and never point a migrator at a database nothing in the repo names:** that is a stop, reported
+   with what you looked for.
+   ```bash
+   git -C "$LAND" log --oneline origin/main..HEAD -- '*migrations*' '*migrate*'
+   # then the repo's own command, run from $LAND with the production credentials
+   ```
+   - **Regenerate a colliding migration here, from the merged schema** (step 1b) — before applying,
+     never after, and never by renaming the file.
+   - **Verify the objects, not the exit code.** Query the database for the tables, columns,
+     indexes and enum values the migration claims to have created, and quote the answer in the
+     termination block. A migrator that skips an entry silently exits 0.
+   - **A destructive migration the plan prescribes is executed, not parked.** Dropping a column
+     the plan says to drop is planned work, not an undecidable fork — but take what dump the
+     tooling offers first (`pg_dump -t` of the affected tables into
+     `.workflows/orchestration/<slug>/logs/`), and list it in `Decided without asking`. What
+     *does* stop is a destructive step no phase plan asked for.
+   - **A migration that will not apply stops the landing, and nothing is pushed.** That is the
+     whole reason it runs before the push: `main` is untouched, `$BR` still holds the work, and
+     the morning's job is one migration rather than a broken production.
+
+5. **Push, then tell the peers.**
+   ```bash
+   git -C "$LAND" push origin HEAD:main
+   ```
+   If the remote rejects it because `main` moved while you merged, re-fetch, merge `origin/main`
+   into the land worktree, and push again — up to three rounds, then stop and report rather than
+   looping. If it is rejected by a branch-protection rule, open the pull request and merge it
+   with the tooling the repo already uses (`gh pr create --base main --head "$BR"` then
+   `gh pr merge --merge`), and only if that is unavailable stop with the branch pushed and the
+   reason named. Then record the merge sha in the ledger, and **if a live coordinator handed you
+   this set, tell it what landed** — it holds the record for the set and outlives your session's
+   knowledge of it.
+
+6. **`WARN` every peer whose cwd is inside the worktree, then delete the worktree and the
+   branch.** Their working directory is about to stop existing, and one of them may still be
+   mid-write. Close the remaining windows first — a session inside a worktree that vanished is
+   worse than a session closed:
+   ```bash
+   python3 ~/.claude/skills/swarm/swarm.py reap --slug "$SLUG" --include-failed
+   git -C "$MAIN" worktree remove --force "$LAND" && git -C "$MAIN" branch -D "land-$SLUG"
+   git -C "$MAIN" worktree remove "$WT"
+   git -C "$MAIN" merge-base --is-ancestor "$BR" origin/main \
+     && git -C "$MAIN" branch -D "$BR" \
+     && git -C "$MAIN" push origin --delete "$BR"
+   ```
+   The set is over, so the failed phases' windows go too — their scrollback is in `logs/` and will
+   outlive the tmux server. Anything `reap` still refuses is a session that is genuinely busy;
+   name it in the termination block rather than forcing it, and leave the worktree until it is
+   gone. **The `merge-base` guard is what makes the branch deletion safe to run unattended:** it
+   deletes only a branch `main` already contains, so a stop at step 3, 4 or 5 leaves the branch
+   standing by construction rather than by remembering to. `git worktree remove` refuses a dirty
+   worktree — if it does, something in there was never committed; capture `git -C "$WT" status
+   --porcelain` into `logs/` and force it, since the phases' work is on `main` and the residue is
+   not.
+
+7. Prune: keep `PLAN.md`, `analysis.md` and `ledger.json`; drop the phase bodies. `logs/` and
    `.runtime.json` are gitignored and stay on this machine — captured scrollback is exactly the
    kind of thing that has no business in a repo. That is what keeps the tracked footprint
    kilobytes rather than megabytes, and it is why tracking this directory does not recreate the
    problem `.workflows/plan/` was ignored to solve.
-6. Final `pusher`.
+8. Final `pusher`, in `$MAIN` — the ledger's terminal state, the pruned set, the merge sha.
 
 ---
 
@@ -373,9 +467,16 @@ Landed:
 Open:
   2  <title>   spawned as impl-<slug>-p2  (tmux @71)
 
+Merged:   feature/<slug> -> main   <merge sha>   pushed
+Migrated: 0007_add_nina_tuning   applied to production
+          verified: table nina_tuning, index nina_tuning_user_idx
+Cleaned:  worktree ~/.worktrees/<repo>/<slug> removed
+          branch feature/<slug> deleted local + origin
+
 Decided without asking:
   OQ1  <the fork>  ->  <choice>   rung 1: plan invariant 2
   p2   <the fork>  ->  <choice>   rung 2: phase exit criterion 3
+  merge <conflicted file>  ->  <side kept>   rung 3: phase-2 plan code block
 
 Windows:  1 open, 2 closed -- scrollback in .workflows/orchestration/<slug>/logs/
 
@@ -387,6 +488,13 @@ Resume this anywhere:
 
   /analyze-orchestrator --resume <slug>
 ```
+
+**The three landing lines are the report the user reads first**, because they are what happened to
+`main` while nobody was watching. State them as facts with shas and object names, never as "should
+be" — a `Migrated:` line that names no verified object is a migrator's exit code wearing a
+verification's clothes. When the landing stopped instead of finishing, say so in the same place
+with the reason and what is still standing: `Merged: STOPPED — conflict in <file>, no rung
+resolves it; feature/<slug> intact at <sha>, main untouched.`
 
 **The `Decided without asking` section is the morning's review queue**, and it is omitted only
 when it is empty. Every entry is a fork this session or one of its phases settled from the plan
