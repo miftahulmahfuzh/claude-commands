@@ -299,7 +299,8 @@ When every phase is `done`:
 
 1. Verify once more, from the branch rather than from the ledger.
 
-1b. **Check the migration numbering before anything else.** A set cut from one base and merged
+1b. **Know what the migration-numbering check is for before you read step 4.** A set cut from one
+   base and merged
    into a `main` that moved can carry a migration whose number another set already used — two
    different `0004`s, one per branch. This does not present as a conflict on the `.sql` files,
    because their names differ, and it is the more dangerous half of the failure: a migrator that
@@ -308,45 +309,54 @@ When every phase is `done`:
    is simply never created. MEASURED on `nina-character-tuning`: the branch's `0004` was stamped
    14:49 and `main`'s applied `0004` at 20:18, so `nina_tuning` would never have existed.
 
-   Resolve by keeping the base's migration and **regenerating** the set's from the merged schema —
-   never by renaming the file. A rename keeps the stale timestamp and the stale snapshot chain;
-   a regeneration re-derives both from what the schema now says, and the new entry is stamped
-   after everything already applied. Then apply it and verify the objects exist in the database
-   rather than trusting the migrator's exit code.
+   `land --step merge` finds these mechanically — it lists every migration the branch adds and
+   every one whose number the base already used — so the detection is not yours to remember. The
+   resolution is: keep the base's migration and **regenerate** the set's from the merged schema,
+   never rename the file. A rename keeps the stale timestamp and the stale snapshot chain; a
+   regeneration re-derives both from what the schema now says, and the new entry is stamped after
+   everything already applied. Step 4 does this, before applying anything.
 2. **Leave the worktree before you touch anything.** This session's cwd is the worktree
    `/analyze` cut, and step 6 deletes it — a session standing in a directory that stops existing
-   cannot run the rest of its own landing sequence. Resolve the main checkout once, up front, and
-   address every later command at it explicitly:
+   cannot run the rest of its own landing sequence. `land --step cleanup` refuses outright when it
+   is asked to delete the caller's cwd, so this is a guard rather than a hope, but the `cd` is
+   still yours to do:
    ```bash
+   S=~/.claude/skills/swarm/swarm.py
    MAIN=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
-   SLUG=<slug>; BR=feature/$SLUG
-   WT=$(git -C "$MAIN" worktree list --porcelain | awk -v b="refs/heads/$BR" \
-          '/^worktree /{w=$2} $0=="branch "b{print w}')
    cd "$MAIN"
+   python3 $S land --slug <slug> --step check
    ```
+   `check` re-derives every phase from git rather than reading the ledger, and lists what stands
+   in the way. A phase recorded `done` whose commit is not on the branch is a blocker, not a
+   detail — that is the same distrust step 1 applies, aimed at the one irreversible step.
 
-3. **Merge in a throwaway worktree of `origin/main`, never in the shared main checkout.** The
-   main checkout may be dirty, on another branch, or holding a peer's half-staged index — the
-   MEASURED contamination two paragraphs up happened in exactly that directory. A worktree cut
-   for the merge and deleted after it has no such neighbours:
+3. **Merge.** `land --step merge` cuts `land-<slug>` from `origin/main` and merges `--no-ff` into
+   it. The throwaway worktree is the point: the shared main checkout may be dirty, on another
+   branch, or holding a peer's half-staged index — the MEASURED contamination two paragraphs up
+   happened in exactly that directory — and a worktree deleted after the merge has no neighbours.
+   It merges into the *remote-tracking* ref deliberately, because the local `main` in a repo whose
+   work happens in worktrees is usually behind.
    ```bash
-   LAND=${TASK_WORKTREES:-$HOME/.worktrees}/$(basename "$MAIN")/land-$SLUG
-   git -C "$MAIN" fetch origin main --quiet
-   git -C "$MAIN" worktree add -B "land-$SLUG" "$LAND" origin/main
-   git -C "$LAND" merge --no-ff "$BR" -m "merge($SLUG): <N> phases — <title>"
+   python3 $S land --slug <slug> --step merge
    ```
-   **Conflicts are decided, not asked.** A conflict here is between two phases of one set, or
-   between the set and what landed on `main` while it ran — and this session holds the plan index,
-   the invariants, the Requirements table and every phase's report. Resolve on the same ladder
+   **Conflicts are decided, not asked.** `merge` leaves a conflict in place and lists the paths;
+   it does not resolve them, because a conflict here is between two phases of one set, or between
+   the set and what landed on `main` while it ran — and this session holds the plan index, the
+   invariants, the Requirements table and every phase's report. Resolve on the same ladder
    (**invariant → exit criteria → the plan's code blocks → Why/Requirements → task text →
    convention**), `git add`, `git commit --no-edit`, and record the rung. The only stop is a
-   conflict no rung reaches: `git -C "$LAND" merge --abort`, remove the land worktree, keep
-   `$BR` and its pushed commits intact, and report — the branch is exactly as safe as it was
-   before this step started.
+   conflict no rung reaches: `git merge --abort` in the land worktree, and report — the branch is
+   exactly as safe as it was before this step started.
 
 4. **Apply the production migrations before the push, and verify them against the database.**
    Production deploys from `main`, so code that arrives ahead of its schema is a runtime error on
-   the first request. Applying first, from the merge commit, is the order that cannot produce one.
+   the first request. Applying first, from the merge commit, is the order that cannot produce one
+   — and it is why `land` is four steps rather than one.
+
+   `merge` already reports what the branch adds under any `migrations/` or `migrate/` directory,
+   and which of those numbers `origin/main` has already used — the `0004`-versus-`0004` collision
+   step 1b describes. **Regenerate a colliding migration here, from the merged schema**, before
+   applying and never by renaming the file.
 
    Find the migrator from the repo rather than guessing it: the phase plans' exit criteria name it
    first (they were written against this tree), then `package.json` scripts matching `migrate`/`db:`,
@@ -355,12 +365,7 @@ When every phase is `done`:
    deploy env var, whatever the migrate script itself reads. **Never invent a connection string,
    and never point a migrator at a database nothing in the repo names:** that is a stop, reported
    with what you looked for.
-   ```bash
-   git -C "$LAND" log --oneline origin/main..HEAD -- '*migrations*' '*migrate*'
-   # then the repo's own command, run from $LAND with the production credentials
-   ```
-   - **Regenerate a colliding migration here, from the merged schema** (step 1b) — before applying,
-     never after, and never by renaming the file.
+
    - **Verify the objects, not the exit code.** Query the database for the tables, columns,
      indexes and enum values the migration claims to have created, and quote the answer in the
      termination block. A migrator that skips an entry silently exits 0.
@@ -370,43 +375,40 @@ When every phase is `done`:
      `.workflows/orchestration/<slug>/logs/`), and list it in `Decided without asking`. What
      *does* stop is a destructive step no phase plan asked for.
    - **A migration that will not apply stops the landing, and nothing is pushed.** That is the
-     whole reason it runs before the push: `main` is untouched, `$BR` still holds the work, and
-     the morning's job is one migration rather than a broken production.
+     whole reason it runs before the push: `main` is untouched, the branch still holds the work,
+     and the morning's job is one migration rather than a broken production.
 
 5. **Push, then tell the peers.**
    ```bash
-   git -C "$LAND" push origin HEAD:main
+   python3 $S land --slug <slug> --step push
    ```
-   If the remote rejects it because `main` moved while you merged, re-fetch, merge `origin/main`
-   into the land worktree, and push again — up to three rounds, then stop and report rather than
-   looping. If it is rejected by a branch-protection rule, open the pull request and merge it
-   with the tooling the repo already uses (`gh pr create --base main --head "$BR"` then
-   `gh pr merge --merge`), and only if that is unavailable stop with the branch pushed and the
-   reason named. Then record the merge sha in the ledger, and **if a live coordinator handed you
-   this set, tell it what landed** — it holds the record for the set and outlives your session's
-   knowledge of it.
+   A base that moved while you merged is re-merged and retried automatically, three rounds by
+   default. Anything else — a protection rule, a missing permission, a rejecting hook — is
+   reported once rather than hammered at; open the pull request and merge it with the tooling the
+   repo already uses (`gh pr create --base main --head "$BR"` then `gh pr merge --merge`), and
+   only if that is unavailable stop with the branch pushed and the reason named. `push` writes the
+   merge sha into the ledger's `landed`, and **if a live coordinator handed you this set, tell it
+   what landed** — it holds the record for the set and outlives your session's knowledge of it.
 
-6. **`WARN` every peer whose cwd is inside the worktree, then delete the worktree and the
+6. **`WARN` every peer whose cwd is inside the worktree, then delete the worktrees and the
    branch.** Their working directory is about to stop existing, and one of them may still be
    mid-write. Close the remaining windows first — a session inside a worktree that vanished is
    worse than a session closed:
    ```bash
-   python3 ~/.claude/skills/swarm/swarm.py reap --slug "$SLUG" --include-failed
-   git -C "$MAIN" worktree remove --force "$LAND" && git -C "$MAIN" branch -D "land-$SLUG"
-   git -C "$MAIN" worktree remove "$WT"
-   git -C "$MAIN" merge-base --is-ancestor "$BR" origin/main \
-     && git -C "$MAIN" branch -D "$BR" \
-     && git -C "$MAIN" push origin --delete "$BR"
+   python3 $S reap --slug <slug> --include-failed
+   python3 $S land --slug <slug> --step cleanup
    ```
+   `cleanup` removes the land worktree and its branch, removes the set's worktree, and deletes the
+   branch local and remote. **It refuses unless `git merge-base --is-ancestor` proves the branch
+   is already in the base** — which is what makes it safe to run unattended: a stop at step 3, 4
+   or 5 leaves the branch standing by construction rather than by remembering to. Pass
+   `--keep-remote` when an open pull request still needs `origin/<branch>`. A worktree with
+   uncommitted residue is force-removed and its `git status --porcelain` kept in `logs/`, since
+   the ancestor check already proved the phases' work is on `main`.
+
    The set is over, so the failed phases' windows go too — their scrollback is in `logs/` and will
-   outlive the tmux server. Anything `reap` still refuses is a session that is genuinely busy;
-   name it in the termination block rather than forcing it, and leave the worktree until it is
-   gone. **The `merge-base` guard is what makes the branch deletion safe to run unattended:** it
-   deletes only a branch `main` already contains, so a stop at step 3, 4 or 5 leaves the branch
-   standing by construction rather than by remembering to. `git worktree remove` refuses a dirty
-   worktree — if it does, something in there was never committed; capture `git -C "$WT" status
-   --porcelain` into `logs/` and force it, since the phases' work is on `main` and the residue is
-   not.
+   outlive the tmux server. Anything `reap` refuses is a session that is genuinely busy; name it
+   in the termination block rather than forcing it.
 
 7. Prune: keep `PLAN.md`, `analysis.md` and `ledger.json`; drop the phase bodies. `logs/` and
    `.runtime.json` are gitignored and stay on this machine — captured scrollback is exactly the

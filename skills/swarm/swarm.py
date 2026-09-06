@@ -6,7 +6,8 @@ DAG, so the phases that share no edge can run at the same time, in their own ses
 in their own tmux windows. This script is the mechanical half of doing that: it reads
 the plan index, computes which phases are runnable right now, launches a session per
 phase, and records what happened. The judgement half -- reading reports, deciding a
-phase failed, merging -- belongs to the orchestrator session, which is a model.
+phase failed, resolving a merge conflict, deciding a migration is safe to apply --
+belongs to the orchestrator session, which is a model.
 
 TWO LEDGERS, BECAUSE THEY HAVE DIFFERENT LIFETIMES. Half of what an orchestrator knows
 is about the work and outlives any machine: which phases exist, what they depend on,
@@ -33,6 +34,15 @@ written to logs/phase-N.log first, and any phase can be reopened with `spawn --f
 when a bug or a discrepancy needs a session again. Reaping is the coordinator's job and
 never the phase's own: a session cannot close the window it is reporting from.
 
+LANDING IS MECHANICAL EXCEPT WHERE IT IS NOT. `land` merges the set into a throwaway
+worktree cut from the base, pushes it, and deletes the worktrees and the branch -- but
+in four separate steps, because the two things needing a model sit BETWEEN them:
+resolving a merge conflict, and applying the production migrations before the push
+(production deploys from the base branch, so code arriving ahead of its schema is a
+runtime error on the first request). `cleanup` deletes nothing until `merge-base
+--is-ancestor` proves the branch is already in the base, so every earlier stop leaves
+the branch standing by construction rather than by remembering to.
+
 NEVER FAILS THE CALLER. Most /do runs have no ledger at all, and a task must not break
 because a swarm file is absent. Every read prints `{"swarm": false, "reason": ...}` and
 exits 0 rather than raising. Only a malformed invocation is an error.
@@ -44,6 +54,7 @@ exits 0 rather than raising. Only a malformed invocation is an error.
     swarm.py report --slug SLUG --phase N --status done --commit SHA
     swarm.py verify --slug SLUG
     swarm.py status --slug SLUG
+    swarm.py land   --slug SLUG --step check|merge|push|cleanup
     swarm.py find   --plan PATH | --task TASKID
     swarm.py track  [--dry-run]
     swarm.py launch --name NAME --prompt TEXT [--cwd DIR] [--permission-mode MODE]
@@ -100,6 +111,33 @@ def git(*args, cwd=None):
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout.strip() if out.returncode == 0 else None
+
+
+def git_run(*args, cwd=None, timeout=180):
+    """git() collapses every failure to None. Landing needs to tell them apart.
+
+    A merge that conflicts, a push rejected because `main` moved and a push rejected by
+    a protection rule are three different situations with three different next steps,
+    and the difference lives in the exit code and stderr. The longer default timeout is
+    for the two that talk to the network.
+    """
+    try:
+        out = subprocess.run(("git",) + args, cwd=cwd, capture_output=True,
+                             text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, "", f"{type(exc).__name__}: {exc}"
+    return out.returncode, out.stdout.strip(), out.stderr.strip()
+
+
+def inside(child, parent):
+    """Is `child` at or under `parent`? -- the guard against deleting your own cwd."""
+    if not child or not parent:
+        return False
+    try:
+        Path(child).resolve().relative_to(Path(parent).resolve())
+        return True
+    except (ValueError, OSError):
+        return False
 
 
 def main_worktree(start):
@@ -921,6 +959,321 @@ def cmd_status(args):
     return 0
 
 
+# ------------------------------------------------------------------------- landing
+
+# A path is a migration if any directory on it is named `migrations` or `migrate`.
+# Deliberately broad -- drizzle, alembic, supabase, rails and prisma all satisfy it --
+# because a false positive costs one line in a report and a miss costs a table that
+# never exists in production.
+MIGRATION_DIR = re.compile(r"(?:^|/)(?:migrations?|migrate)/", re.I)
+MIGRATION_NUM = re.compile(r"^(\d{2,})[_-]")
+
+
+def base_ref(repo):
+    """The ref this set merges into -- the remote-tracking copy where there is one.
+
+    Merging into a local `main` that is behind the remote produces a merge that cannot
+    be fast-forwarded and a push that is rejected, so the remote copy is the base and
+    the local branch is never checked out at all.
+    """
+    head = git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD", cwd=repo)
+    name = head.split("/", 1)[-1] if head else None
+    for candidate in ([name] if name else []) + ["main", "master"]:
+        # origin/ FIRST, deliberately -- `resolve` prefers the local ref and the local
+        # `main` in a repo whose worktrees do all the work is usually behind. Merging
+        # into a stale base builds a merge nobody asked for and a push that is rejected.
+        for ref in (f"origin/{candidate}", candidate):
+            if git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", cwd=repo):
+                return ref
+    return None
+
+
+def land_worktree(repo, slug):
+    root = os.environ.get("TASK_WORKTREES") or str(Path.home() / ".worktrees")
+    return Path(root) / Path(repo).name / f"land-{slug}"
+
+
+def landable(repo, ledger):
+    """What stands between this set and `main`, derived from git, not from the ledger.
+
+    `verify` stamps each phase with what the commits and todos.md actually say, and
+    that is the gate -- a ledger reading `done` for a phase whose commit is not on the
+    branch is exactly the claim Step 5 exists to distrust.
+    """
+    verify(repo, ledger)                       # stamps `derived` on every phase
+    blockers = []
+    phases = ledger.get("phases", [])
+    if not phases:
+        blockers.append("the ledger has no phases")
+    for phase in phases:
+        if phase.get("derived") != "done":
+            blockers.append(
+                f"phase {phase['n']} derives as {phase.get('derived')} "
+                f"(ledger says {phase['status']}): " + "; ".join(phase.get("evidence") or
+                                                                 ["no evidence"]))
+    if not ledger.get("branch"):
+        blockers.append("the ledger records no branch to merge")
+    return blockers
+
+
+def migration_survey(repo, base, branch):
+    """Migrations this branch adds, and the ones whose number `base` already used.
+
+    Two branches cut from one base can each mint a `0004`, which is NOT a file conflict
+    -- the names differ -- and is silently skipped by any migrator that only applies
+    journal entries newer than the last applied row. The deploy exits 0 and the table
+    is simply never created. Finding it is mechanical; regenerating from the merged
+    schema is the orchestrator's job.
+    """
+    _, out, _ = git_run("diff", "--name-only", "--diff-filter=A", f"{base}...{branch}",
+                        cwd=repo)
+    added = [p for p in out.splitlines() if MIGRATION_DIR.search(p)]
+    _, out, _ = git_run("ls-tree", "-r", "--name-only", base, cwd=repo)
+    taken = {}
+    for path in out.splitlines():
+        if not MIGRATION_DIR.search(path):
+            continue
+        hit = MIGRATION_NUM.match(Path(path).name)
+        if hit:
+            taken.setdefault((str(Path(path).parent), hit.group(1)), []).append(path)
+    collisions = []
+    for path in added:
+        hit = MIGRATION_NUM.match(Path(path).name)
+        if not hit:
+            continue
+        number = hit.group(1)
+        clash = taken.get((str(Path(path).parent), number))
+        if clash:
+            collisions.append({"number": number, "branch": path, "base": clash})
+    return {"added": added, "collisions": collisions}
+
+
+def unmerged(land):
+    _, out, _ = git_run("diff", "--name-only", "--diff-filter=U", cwd=land)
+    return [line for line in out.splitlines() if line]
+
+
+def cmd_land(args):
+    """The mechanical half of Step 5: merge, push, delete. The judgement stays outside.
+
+    Split into steps on purpose, because the two things that need a model sit BETWEEN
+    them: resolving a merge conflict (after `merge`) and applying the production
+    migrations (before `push`). A single land-it-all command would have to either ask
+    or guess at both, and guessing at a migration is how a schema and its code part
+    company in production.
+
+        land --step check     is this set landable at all, per git
+        land --step merge     merge --no-ff into a throwaway worktree of the base
+        land --step push      push it to the base branch, retrying a base that moved
+        land --step cleanup   delete the land worktree, the set's worktree, the branch
+
+    `cleanup` is the destructive one and it is guarded twice: it refuses unless the
+    branch is already an ancestor of the base -- so every earlier stop leaves the
+    branch standing by construction -- and it refuses to delete the directory the
+    caller is standing in.
+    """
+    repo, slug = find_repo_and_slug(args.slug)
+    if not repo:
+        return soft("not inside a git repository")
+    path = durable_path(repo, slug)
+    ledger = load(path)
+    if not ledger:
+        return soft(f"no ledger for {slug}", repo=repo)
+
+    branch = ledger.get("branch")
+    base = base_ref(repo)
+    land = land_worktree(repo, slug)
+    wt = ledger.get("worktree")
+    out = {"swarm": True, "slug": slug, "step": args.step, "repo": repo,
+           "branch": branch, "base": base, "land_worktree": str(land),
+           "worktree": wt, "dry_run": bool(args.dry_run),
+           "landed": ledger.get("landed")}
+
+    if not base:
+        out.update({"ok": False, "reason": "no main/master branch resolves in this repo"})
+        print(json.dumps(out, indent=2))
+        return 0
+
+    if args.step == "check":
+        blockers = landable(repo, ledger)
+        out.update({"ok": not blockers, "blockers": blockers,
+                    "migrations": migration_survey(repo, base, branch) if branch else {},
+                    "phases": [{k: p.get(k) for k in ("n", "status", "derived", "commit")}
+                               for p in ledger.get("phases", [])]})
+        print(json.dumps(out, indent=2))
+        return 0
+
+    if args.step == "merge":
+        blockers = landable(repo, ledger)
+        if blockers and not args.force:
+            out.update({"ok": False, "blockers": blockers,
+                        "hint": "every phase must derive as done -- run verify --apply, "
+                                "or --force if you have decided otherwise"})
+            print(json.dumps(out, indent=2))
+            return 0
+        if args.dry_run:
+            out.update({"ok": True, "would": f"worktree add -B land-{slug} {land} {base}"
+                                             f" && merge --no-ff {branch}"})
+            print(json.dumps(out, indent=2))
+            return 0
+
+        git_run("fetch", "origin", "--quiet", cwd=repo)
+        base = base_ref(repo) or base
+        out["base"] = base
+        if not land.is_dir():
+            land.parent.mkdir(parents=True, exist_ok=True)
+            code, _, err = git_run("worktree", "add", "-B", f"land-{slug}",
+                                   str(land), base, cwd=repo)
+            if code:
+                out.update({"ok": False, "reason": f"worktree add failed: {err}"})
+                print(json.dumps(out, indent=2))
+                return 0
+        else:
+            out["reused_land_worktree"] = True
+
+        stuck = unmerged(land)
+        if stuck:                              # a previous merge is still half-resolved
+            out.update({"ok": False, "merged": False, "conflicts": stuck,
+                        "hint": "resolve these, git add, git commit --no-edit, then "
+                                "land --step push"})
+            print(json.dumps(out, indent=2))
+            return 0
+
+        title = ledger.get("title") or slug
+        message = args.message or (f"merge({slug}): {len(ledger.get('phases', []))} "
+                                   f"phases -- {title}")
+        code, _, err = git_run("merge", "--no-ff", branch, "-m", message, cwd=land)
+        conflicts = unmerged(land)
+        head = git("rev-parse", "HEAD", cwd=land)
+        out.update({"ok": code == 0, "merged": code == 0, "conflicts": conflicts,
+                    "head": head, "message": message,
+                    "migrations": migration_survey(repo, base, branch),
+                    "stderr": err or None})
+        if conflicts:
+            out["hint"] = ("decide each on the precedence ladder, git add, "
+                           "git commit --no-edit -- or git merge --abort to stop, "
+                           "which leaves the branch exactly as it was")
+        elif code == 0:
+            out["hint"] = ("apply and VERIFY the production migrations now, before "
+                           "land --step push: main is what production deploys from")
+        print(json.dumps(out, indent=2))
+        return 0
+
+    if args.step == "push":
+        if not land.is_dir():
+            out.update({"ok": False, "reason": f"no land worktree at {land} -- "
+                                               "run land --step merge first"})
+            print(json.dumps(out, indent=2))
+            return 0
+        stuck = unmerged(land)
+        if stuck:
+            out.update({"ok": False, "conflicts": stuck,
+                        "reason": "the merge is still unresolved"})
+            print(json.dumps(out, indent=2))
+            return 0
+        target = base.split("/", 1)[-1] if base.startswith("origin/") else base
+        if args.dry_run:
+            out.update({"ok": True, "would": f"push origin HEAD:{target} from {land}"})
+            print(json.dumps(out, indent=2))
+            return 0
+
+        attempts = []
+        for attempt in range(1, args.retries + 1):
+            code, _, err = git_run("push", "origin", f"HEAD:{target}", cwd=land)
+            attempts.append({"attempt": attempt, "ok": code == 0, "stderr": err or None})
+            if code == 0:
+                break
+            # A base that moved is the ordinary race and merges forward; anything else
+            # -- a protection rule, no permission, a hook -- will not fix itself by
+            # being retried, so say so once instead of hammering the remote.
+            if "non-fast-forward" not in err and "fetch first" not in err \
+                    and "behind" not in err:
+                attempts[-1]["fatal"] = True
+                break
+            git_run("fetch", "origin", target, "--quiet", cwd=land)
+            code, _, err = git_run("merge", "--no-edit", f"origin/{target}", cwd=land)
+            if code:
+                attempts[-1]["remerge_conflicts"] = unmerged(land)
+                attempts[-1]["fatal"] = True
+                break
+
+        pushed = attempts[-1]["ok"]
+        sha = git("rev-parse", "HEAD", cwd=land) if pushed else None
+        if pushed:
+            with locked(path) as data:
+                data["landed"] = {"commit": sha, "base": target, "at": now(),
+                                  "machine": os.uname().nodename}
+                data["updated"] = now()
+            out["landed"] = {"commit": sha, "base": target}
+        out.update({"ok": pushed, "pushed": pushed, "attempts": attempts,
+                    "hint": None if pushed else
+                            "nothing landed: main is untouched and the branch is intact"})
+        print(json.dumps(out, indent=2))
+        return 0
+
+    # ------------------------------------------------------------------- cleanup
+    here = os.getcwd()
+    if inside(here, land) or (wt and inside(here, wt)):
+        out.update({"ok": False, "reason": f"cwd {here} is inside a worktree this step "
+                                           "deletes",
+                    "hint": f"cd {repo} first -- a session cannot outlive its own cwd"})
+        print(json.dumps(out, indent=2))
+        return 0
+
+    git_run("fetch", "origin", "--quiet", cwd=repo)
+    base = base_ref(repo) or base
+    merged = branch and git_run("merge-base", "--is-ancestor", branch, base,
+                                cwd=repo)[0] == 0
+    if not merged and not args.force:
+        out.update({"ok": False, "merged_into_base": False, "base": base,
+                    "reason": f"{branch} is not an ancestor of {base} -- nothing is "
+                              "deleted until the set has actually landed"})
+        print(json.dumps(out, indent=2))
+        return 0
+
+    plan = []
+    if land.is_dir():
+        plan.append(("remove the land worktree", ("worktree", "remove", "--force",
+                                                  str(land))))
+        plan.append(("delete the land branch", ("branch", "-D", f"land-{slug}")))
+    if wt and Path(wt).is_dir():
+        plan.append(("remove the set's worktree", ("worktree", "remove", "--force", wt)))
+    if branch:
+        plan.append(("delete the local branch", ("branch", "-D", branch)))
+        if not args.keep_remote:
+            plan.append(("delete the remote branch",
+                         ("push", "origin", "--delete", branch)))
+
+    if args.dry_run:
+        out.update({"ok": True, "merged_into_base": merged,
+                    "would": [f"git {' '.join(a)}" for _, a in plan]})
+        print(json.dumps(out, indent=2))
+        return 0
+
+    # `worktree remove --force` is right here and only here: the ancestor check above
+    # already proved every commit is on the base, so what remains in that directory is
+    # residue rather than work. Keep a record of it anyway -- a dirty worktree at this
+    # point is worth knowing about even when it is safe to delete.
+    if wt and Path(wt).is_dir():
+        _, dirt, _ = git_run("status", "--porcelain", cwd=wt)
+        if dirt:
+            logs_dir(repo, slug).mkdir(parents=True, exist_ok=True)
+            (logs_dir(repo, slug) / "worktree-dirt.txt").write_text(dirt + "\n")
+            out["uncommitted_at_removal"] = str(logs_dir(repo, slug) /
+                                                "worktree-dirt.txt")
+
+    done, failed = [], []
+    for what, argv in plan:
+        code, _, err = git_run(*argv, cwd=repo)
+        (done if code == 0 else failed).append(
+            {"did": what, "git": " ".join(argv), "stderr": err or None})
+    git_run("worktree", "prune", cwd=repo)
+    out.update({"ok": not failed, "merged_into_base": merged,
+                "cleaned": done, "failed": failed})
+    print(json.dumps(out, indent=2))
+    return 0
+
+
 def plan_matches(needle, recorded, slug):
     """Does this plan path belong to THIS set's phase?
 
@@ -1260,6 +1613,42 @@ def selftest():
        ensure_trusted("/nonexistent/wt", "/nonexistent/repo", enabled=False)["action"]
        in ("left alone (--no-trust)", "no ~/.claude.json to read"), True)
 
+    # Landing. The gate is the DERIVED status, not the ledger's word -- a phase whose
+    # commit is not on the branch is a claim, and merging on a claim ships nothing.
+    claimed = {"branch": "feature/nope", "phases": [
+        {"n": 1, "status": "done", "commit": "a" * 40, "depends_on": [], "task_id": None},
+        {"n": 2, "status": "running", "commit": None, "depends_on": [1], "task_id": None}]}
+    blockers = landable("/nonexistent-repo", claimed)
+    eq("a phase that is not done blocks the landing",
+       any("phase 2" in b for b in blockers), True)
+    eq("an unfetched done is not held against it",
+       any("phase 1" in b for b in blockers), False)
+    eq("a ledger with no branch cannot be merged",
+       any("no branch" in b for b in landable("/nonexistent-repo", {"phases": []})), True)
+
+    # The guard that makes cleanup safe to run unattended: it deletes the directory the
+    # session may be standing in, so standing in it is a refusal, not a crash.
+    eq("cwd inside the worktree is a refusal", inside("/tmp/wt/pkg/x", "/tmp/wt"), True)
+    eq("a sibling path is not inside it", inside("/tmp/wt-other", "/tmp/wt"), False)
+    eq("no worktree recorded, nothing to be inside", inside("/tmp/x", None), False)
+
+    # Two branches off one base can each mint a 0004. Different filenames, so git sees
+    # no conflict -- and a migrator that only applies entries newer than the last
+    # applied row skips it, exits 0, and the table never exists.
+    survey = migration_survey("/nonexistent-repo", "origin/main", "feature/x")
+    eq("no repo, no migrations, no exception", survey["collisions"], [])
+    eq("a numbered migration is recognised",
+       bool(MIGRATION_NUM.match("0004_add_nina_tuning.sql")), True)
+    eq("drizzle, alembic and supabase all match",
+       [bool(MIGRATION_DIR.search(p)) for p in
+        ("db/migrations/0004_x.sql", "alembic/migrations/0004_x.py",
+         "supabase/migrations/0004_x.sql", "src/migrate/0004_x.go",
+         "docs/migrating.md")], [True, True, True, True, False])
+
+    eq("landing a set that has no ledger is a soft no", cmd_land(argparse.Namespace(
+        slug="no-such-slug-selftest", step="check", message=None, retries=3,
+        keep_remote=False, force=False, dry_run=True)), 0)
+
     eq("a missing plan is a soft no", cmd_init(argparse.Namespace(
         plan="/nonexistent/NOPE_PLAN.md", slug=None, coordinator=None,
         coordinator_session_id=None)), 0)
@@ -1326,6 +1715,22 @@ def main(argv=None):
     p.add_argument("--slug", required=True)
     p.add_argument("--apply", action="store_true", help="write the derivation back")
 
+    p = sub.add_parser("land", help="merge the set to main, push it, delete the branch")
+    p.add_argument("--slug", required=True)
+    p.add_argument("--step", required=True,
+                   choices=("check", "merge", "push", "cleanup"),
+                   help="the two steps needing judgement -- resolving a conflict and "
+                        "applying the migrations -- sit between merge and push")
+    p.add_argument("--message", help="the merge commit subject")
+    p.add_argument("--retries", type=int, default=3,
+                   help="how many times to merge a base that moved and push again")
+    p.add_argument("--keep-remote", action="store_true",
+                   help="leave origin/<branch> in place (an open PR still needs it)")
+    p.add_argument("--force", action="store_true",
+                   help="merge with phases not derived done, or clean up an unmerged "
+                        "branch -- both are decisions, not defaults")
+    p.add_argument("--dry-run", action="store_true")
+
     p = sub.add_parser("find", help="which swarm owns this plan file or TaskID")
     p.add_argument("--plan")
     p.add_argument("--task")
@@ -1347,7 +1752,7 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
     return {"init": cmd_init, "waves": cmd_waves, "spawn": cmd_spawn,
-            "reap": cmd_reap, "report": cmd_report,
+            "reap": cmd_reap, "report": cmd_report, "land": cmd_land,
             "verify": cmd_verify, "status": cmd_status,
             "find": cmd_find, "track": cmd_track, "launch": cmd_launch,
             "selftest": lambda _: selftest()}[args.cmd](args)

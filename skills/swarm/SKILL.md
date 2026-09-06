@@ -172,6 +172,9 @@ Then, until nothing is runnable and nothing is live:
    never before it — an unverified `done` is a claim, and its window is the evidence.
 7. **Re-compute.** `waves` again; a finished phase may have unblocked others. Go to 1.
 
+8. **When every phase is `done`, land the set** — `land`, below. The loop does not end with a
+   branch somebody has to merge in the morning.
+
 Stop when `runnable_now` is empty. `stalled` lists phases that can never run because a dependency
 failed — report those to the user rather than spawning them, and **keep driving whatever is still
 runnable**. A failure in one branch of the DAG never pauses the branches it does not touch, and it
@@ -195,6 +198,48 @@ it is omitted because the failure is otherwise silent.
 a mode *broader* than its own session runs under. A peer doing what your session was denied is
 permission laundering: it routes around a decision the user made. If a phase needs permissions
 you do not have, stop and say so.
+
+## Landing the set
+
+The loop above ends with N phases on a branch, which is worth nothing until it is on `main`.
+`land` is the mechanical half of getting it there — and it is **four steps rather than one**,
+because the two things that need a model sit *between* them:
+
+```bash
+S=~/.claude/skills/swarm/swarm.py
+python3 $S land --slug <slug> --step check     # is this landable? -- derived from git
+python3 $S land --slug <slug> --step merge     # --no-ff, into a throwaway worktree of origin/main
+#   -> resolve any conflicts yourself, then apply and VERIFY the production migrations
+python3 $S land --slug <slug> --step push      # push it, re-merging a base that moved
+python3 $S land --slug <slug> --step cleanup   # delete both worktrees and the branch
+```
+
+**`check` derives, it does not read the ledger.** A phase recorded `done` whose commit is not on
+the branch blocks the landing, which is the same distrust `verify` exists for, applied to the one
+irreversible step.
+
+**`merge` never touches the shared main checkout.** It cuts `land-<slug>` from `origin/main` —
+the remote-tracking ref, deliberately, because the local `main` in a repo whose work happens in
+worktrees is usually behind — merges `--no-ff`, and on conflict leaves the merge in place with the
+conflicted paths listed. Resolve them on the precedence ladder, `git add`, `git commit --no-edit`,
+and re-run `--step push`; or `git merge --abort`, which leaves the branch exactly as it was.
+`merge` also reports the branch's **migration collisions**: two branches cut from one base can
+each mint a `0004`, which is not a file conflict and which a migrator that only applies entries
+newer than the last applied row will silently skip. Regenerate from the merged schema — never
+rename the file.
+
+**Migrations run between `merge` and `push`, and that order is the whole point.** Production
+deploys from `main`, so code that arrives ahead of its schema is a runtime error on the first
+request. Apply from the land worktree, verify the objects exist by querying for them rather than
+trusting the migrator's exit code, and only then push. A migration that will not apply stops the
+landing with `main` untouched and the branch intact — which is why nothing was pushed yet.
+
+**`cleanup` is the destructive step and it is guarded twice.** It refuses unless `git merge-base
+--is-ancestor <branch> <base>` proves the work is already in the base, so every earlier stop
+leaves the branch standing *by construction* rather than by someone remembering to check. And it
+refuses when the caller's cwd is inside a worktree it would delete — the coordinator's own cwd is
+usually the set's worktree, so `cd` to the main checkout first. `--keep-remote` leaves
+`origin/<branch>` alone when an open pull request still needs it.
 
 ## Closing the windows
 
@@ -388,6 +433,7 @@ ordinary `/do` outside any swarm is unaffected.
 | `reap --slug S [--phase N]` | capture the scrollback, then close the windows of finished phases |
 | `report --slug S --phase N --status ...` | record an outcome (then send the message) |
 | `verify --slug S [--apply]` | re-derive status from git and todos.md |
+| `land --slug S --step check\|merge\|push\|cleanup` | merge the set into `main`, push it, delete the worktrees and the branch |
 | `status --slug S` | durable + runtime, merged, for a human |
 | `find --plan P \| --task T` | which swarm owns this, and who to report to |
 | `track` | make `.workflows/orchestration/` survive the repo's `.gitignore` |

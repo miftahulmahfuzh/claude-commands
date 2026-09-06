@@ -175,9 +175,13 @@ into the index and the ledger, so N children inherit the answer instead of meeti
 independently — and it **answers a child that asks rather than relaying the question**, being the
 only session holding the index, the Requirements table and every sibling's report. Decisions
 surface in the termination block's `Decided without asking` section, which is the morning's review
-queue. **There is no legitimate wait left, the merge included** — Step 5 lands the set itself:
-merge to `main` in a throwaway worktree cut from `origin/main`, apply and *verify* the production
-migrations, push, then delete the plan set's worktree and its branch (local and remote). A night
+queue. **There is no legitimate wait left, the merge included** — Step 5 lands the set itself via
+`swarm.py land`: merge to `main` in a throwaway worktree cut from `origin/main`, apply and
+*verify* the production migrations, push, then delete the plan set's worktree and its branch
+(local and remote). `land` is four steps (`check`, `merge`, `push`, `cleanup`) rather than one
+because the two that need a model sit *between* them — resolving a merge conflict, and deciding a
+migration is safe to apply — and a helper that guessed at either would be guessing about
+production. A night
 that ends with every phase committed to a branch nobody merged still needs a human before it is
 worth anything, which is the same dead night iron rule 4 exists to prevent, moved to where it is
 least visible. The order is load-bearing: **migrations apply before the push**, because production
