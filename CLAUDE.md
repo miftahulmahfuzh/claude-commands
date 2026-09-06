@@ -37,6 +37,27 @@ for d in skills agents commands; do diff -rq --exclude=__pycache__ --exclude='.*
 The excludes matter: the deployed tree accumulates `__pycache__` and local dotfiles that are not
 drift, and a check that cries wolf is a check nobody runs.
 
+**A deploy target must be a real directory on the Linux filesystem — never a symlink.** `sync.sh`
+refuses to deploy into a symlinked `commands/`, `agents/` or `skills/`, and warns when one sits on
+a non-local filesystem. MEASURED 2026-09-06: `~/.claude/commands` was a symlink to a *second,
+stale clone of this repo* on the Windows drive, reached over WSL's 9p mount. Commands were the
+only artifact type behind 9p — `skills/` and `agents/` are real ext4 directories — and they were
+the only ones that intermittently failed to load: sessions came up reporting `Unknown command:
+/analyze-orchestrator` while every skill still worked. 9p `readdir` is 50–100x slower than ext4
+and can stall outright (host hiccup, sleep/resume, an antivirus pass), and a discovery scan that
+times out yields an **empty registry rather than an error** — so the symptom is a command that
+does not exist, not a command that failed to read.
+
+Pointing the link at a repo *root* rather than its `commands/` made it worse twice over:
+discovery walked the clone's `.git/` — 486 entries over 9p instead of 14 — and registered its
+`.subagents/` and `.workflows/` as phantom directory-scoped skills (`.subagents:context-loader`,
+`.workflows:todos`) that shadowed nothing and belonged to no one. The failure is worst for an
+unattended swarm, where a child that cannot resolve `/analyze-orchestrator` never starts the phase
+and the coordinator waits on a session that is not running.
+
+Deleting such a link is safe and is the whole fix: `rm` on a symlink removes the link, never the
+target. `rm ~/.claude/commands && mkdir ~/.claude/commands && ./sync.sh`.
+
 ## Architecture
 
 ### Three artifact types
