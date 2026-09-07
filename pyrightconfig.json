@@ -1,0 +1,11 @@
+{
+  "extraPaths": ["skills/task"],
+
+  "//": "sync_todos.py imports taskcore/task_gl/todos from the DEPLOYED task skill at runtime (sys.path.insert on ~/.claude/skills/task). extraPaths points the checker at the repo copies -- the same files sync.sh deploys.",
+
+  "ignore": ["skills/update-ats-cv"],
+
+  "// ignore": "Analyzed, but not reported. Every diagnostic there is a PyMuPDF stub gap rather than a defect: get_text('dict') is typed as returning str, Document iteration is untyped, and get_pixmap's own stub defaults colorspace to None against its own annotation -- which no code here even passes. Silencing them with per-line ignores would mean scattering noise through working PDF code. A check that cries wolf is a check nobody runs.",
+
+  "exclude": ["**/__pycache__"]
+}

@@ -767,17 +767,30 @@ def cmd_spawn(args):
         return soft("tmux new-window failed", argv=argv)
     window, _, pane = handle.partition(" ")
 
+    # The phase was checked before the window opened, but `locked` re-reads the ledger
+    # from disk -- and a concurrent `init` re-reading a plan index whose phase table
+    # changed can leave a number that no longer exists. The window is already running
+    # by now, so a missing row is reported rather than raised: `verify` derives this
+    # phase from git either way, which is the whole reason it exists.
+    recorded = False
     with locked(durable_path(repo, slug)) as data:
         target = phase_of(data, args.phase)
-        target["status"] = "spawned"
-        data["updated"] = now()
+        if target:
+            target["status"] = "spawned"
+            data["updated"] = now()
+            recorded = True
     with locked(runtime_path(repo, slug)) as data:
         data.setdefault("sessions", {})[str(args.phase)] = {
             "name": name, "window": window, "pane": pane.strip(),
             "cwd": cwd, "spawned_at": now(), "machine": os.uname().nodename,
             "permission_mode": args.permission_mode}
     out = {"swarm": True, "spawned": args.phase, "name": name, "window": window,
-           "pane": pane.strip(), "cwd": cwd, "trust": trust, "prompt": prompt}
+           "pane": pane.strip(), "cwd": cwd, "trust": trust, "prompt": prompt,
+           "recorded_in_ledger": recorded}
+    if not recorded:
+        out["ledger_note"] = (f"phase {args.phase} was not in the ledger by the time "
+                              "the window opened -- the session IS running; recover it "
+                              "with init then verify --apply")
     if not args.permission_mode:
         # MEASURED: a child on a different permission mode than the coordinator has its
         # reports "held for approval" -- the coordinator never sees them until a human
@@ -911,8 +924,13 @@ def cmd_verify(args):
     findings = verify(repo, ledger)
     if args.apply and findings:
         with locked(path) as data:
+            # Re-looked-up under the lock, not carried in from the findings: `verify`
+            # read an unlocked copy, and a phase session reporting concurrently may
+            # have rewritten the table since. A row that is gone is left alone.
             for finding in findings:
-                phase_of(data, finding["phase"])["status"] = finding["derived"]
+                target = phase_of(data, finding["phase"])
+                if target:
+                    target["status"] = finding["derived"]
             data["updated"] = now()
             data["verified_at"] = now()
         ledger = load(path)
@@ -1662,7 +1680,8 @@ def selftest():
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    summary = (__doc__ or "Mechanics for orchestrating a plan set.").splitlines()[0]
+    parser = argparse.ArgumentParser(description=summary)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("init", help="create a ledger from a plan index")

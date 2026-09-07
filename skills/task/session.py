@@ -161,13 +161,20 @@ def window_name(mine, siblings):
     Two task sessions both have one, and no single number is honest, so both are shown.
     """
     names = [n for n in siblings if n and n != mine]
-    claims = sorted({mine, *[n for n in names if TASK_NAME.match(n)]},
-                    key=lambda n: (int(TASK_NAME.match(n).group(1)) if TASK_NAME.match(n)
-                                   else 0, n))
+    # Matched once per name and kept, rather than re-matched inside the sort key and
+    # again inside the join: the digits are needed as a number to order by and as the
+    # original text to print (a `task-007` keeps its zeros).
+    numbered = {}
+    for n in {mine, *names}:
+        hit = TASK_NAME.match(n)
+        if hit:
+            numbered[n] = (int(hit.group(1)), hit.group(1))
+    claims = sorted({mine} | {n for n in names if n in numbered},
+                    key=lambda n: (numbered.get(n, (0, ""))[0], n))
     if len(claims) == 1:
         return mine
-    if all(TASK_NAME.match(n) for n in claims):
-        return "task-" + "+".join(TASK_NAME.match(n).group(1) for n in claims)
+    if all(n in numbered for n in claims):
+        return "task-" + "+".join(numbered[n][1] for n in claims)
     return "+".join(claims)
 
 
@@ -250,7 +257,7 @@ def rename_session(wanted):
     return {"renamed": True, "name": wanted, "from": before}
 
 
-def rename(name, tmux_too=True, no_widen=False):
+def rename(name, tmux_too=True, no_widen=False) -> dict:
     """Both names, independently. The two can disagree and neither blocks the other.
 
     A window already called `task-17` says nothing about whether the session is, and a
@@ -269,14 +276,15 @@ def rename(name, tmux_too=True, no_widen=False):
             return {"renamed": False, "name": current, "requested": wanted,
                     "reason": f"{current} is more specific than {wanted}; "
                               "refused to widen"}
-    out = dict(rename_session(wanted), requested=wanted)
+    out: dict = dict(rename_session(wanted), requested=wanted)
     if tmux_too:
-        out["tmux"] = rename_window(wanted)
+        out["tmux"] = rename_window(wanted)      # a report nested inside a report
     return out
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    summary = (__doc__ or "Name this Claude Code session.").splitlines()[0]
+    parser = argparse.ArgumentParser(description=summary)
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("rename", help="rename this session, e.g. task-17")
     p.add_argument("name")
