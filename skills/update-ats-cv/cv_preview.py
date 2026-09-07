@@ -20,7 +20,9 @@ import fitz
 
 def render(path, dpi):
     doc = fitz.open(path)
-    return [p.get_pixmap(dpi=dpi) for p in doc], doc.page_count
+    # type: ignore on the next line -- get_pixmap's stub defaults `colorspace` to None
+    # against its own `Colorspace` annotation, and no call here passes one.
+    return [p.get_pixmap(dpi=dpi) for p in doc], doc.page_count  # type: ignore[arg-type]
 
 
 def main():

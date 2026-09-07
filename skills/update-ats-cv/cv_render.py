@@ -23,6 +23,7 @@ import argparse
 import copy
 import os
 import sys
+from typing import cast
 
 import fitz
 import yaml
@@ -594,7 +595,9 @@ def main():
     ladder = FIT_LADDER if args.autofit else [(1.0, 1.0, 1.0)]
     if args.autofit and args.expand:
         ladder = EXPAND_RUNGS + ladder
-    chosen, height = None, None
+    # height is read only after the `chosen is None` bail-out below returns, so the
+    # initial value is never used -- it is a float so that the arithmetic there is one.
+    chosen, height = None, 0.0
     for gap_s, lead_s, font_s in ladder:
         t, s = scaled(theme, space, gap_s, lead_s, font_s)
         h = measure(cv, t, s, fonts, geom)
@@ -637,7 +640,7 @@ def main():
         sys.stderr.write("FAIL: page count exceeded\n")
         return 2
     if args.report:
-        txt = fitz.open(args.out)[0].get_text().split()
+        txt = cast(str, fitz.open(args.out)[0].get_text()).split()
         sys.stderr.write(f"extract-check: {len(txt)} whitespace-separated tokens recovered\n")
     return 0
 

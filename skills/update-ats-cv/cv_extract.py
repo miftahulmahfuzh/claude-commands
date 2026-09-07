@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import cast
 
 import fitz
 
@@ -38,11 +39,11 @@ def main():
             print(p.get_text())
         return 0
 
-    print(f"# {os.path.basename(args.pdf)}  pages={doc.page_count}  producer={doc.metadata.get('producer')!r}")
-    for pno, page in enumerate(doc):
+    print(f"# {os.path.basename(args.pdf)}  pages={doc.page_count}  producer={(doc.metadata or {}).get('producer')!r}")
+    for pno, page in enumerate(doc.pages()):
         r = page.rect
         print(f"\n## page {pno + 1}  size={r.width:.2f} x {r.height:.2f}pt")
-        d = page.get_text("dict")
+        d = cast(dict, page.get_text("dict"))
         spans = [s for b in d["blocks"] if b["type"] == 0 for l in b["lines"] for s in l["spans"]]
         if spans:
             xs0 = min(s["bbox"][0] for s in spans); xs1 = max(s["bbox"][2] for s in spans)
@@ -65,7 +66,7 @@ def main():
     print("\n## typeface identification (advance-width match vs vendored family)")
     refs = []
     for page in doc:
-        for b in page.get_text("dict")["blocks"]:
+        for b in cast(dict, page.get_text("dict"))["blocks"]:
             if b["type"] != 0:
                 continue
             for l in b["lines"]:
