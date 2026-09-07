@@ -272,7 +272,7 @@ class Layout:
     def _draw_justified(self, line, x, width):
         words = []
         for txt, w, s, c, it in line:
-            for j, word in enumerate(txt.split()):
+            for word in txt.split():
                 words.append((word, w, s, c, it))
         if len(words) < 2:
             cx = x
@@ -290,7 +290,7 @@ class Layout:
             cx += font.text_length(word, s) + gap
 
     def centered(self, runs, size):
-        total = sum(self.fonts.width(t, w, s, it, tr) for t, w, s, c, it, tr in runs)
+        total = sum(self.fonts.width(t, w, s, it, tr) for t, w, s, _c, it, tr in runs)
         cx = self.x0 + (self.width - total) / 2.0
         for t, w, s, c, it, tr in runs:
             font = self.fonts.get(w, it)[0]
@@ -469,7 +469,6 @@ class Layout:
             groups = [{"title": sec.get("title", ""), "columns": sec.get("columns", 1),
                        "items": sec.get("items", [])}]
         gutter = sp["column_gutter"]
-        weights = [g.get("width", g.get("columns", 1)) for g in groups]
         n_cols_total = sum(g.get("columns", 1) for g in groups)
         n_gaps = n_cols_total - 1
         unit = (self.width - gutter * n_gaps) / max(n_cols_total, 1)

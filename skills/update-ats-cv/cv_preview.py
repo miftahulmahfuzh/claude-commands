@@ -20,9 +20,10 @@ import fitz
 
 def render(path, dpi):
     doc = fitz.open(path)
-    # type: ignore on the next line -- get_pixmap's stub defaults `colorspace` to None
-    # against its own `Colorspace` annotation, and no call here passes one.
-    return [p.get_pixmap(dpi=dpi) for p in doc], doc.page_count  # type: ignore[arg-type]
+    # csRGB spelled out because get_pixmap's stub defaults `colorspace` to None against
+    # its own `Colorspace` annotation. It is what the default resolves to anyway --
+    # verified byte-identical -- so saying it costs nothing and needs no suppression.
+    return [p.get_pixmap(dpi=dpi, colorspace=fitz.csRGB) for p in doc], doc.page_count
 
 
 def main():

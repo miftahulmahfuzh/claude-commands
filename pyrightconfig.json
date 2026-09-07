@@ -1,9 +1,31 @@
 {
+  "typeCheckingMode": "standard",
+  "// typeCheckingMode": "standard, not basic. `strict` reports ~5000, of which ~4850 are Unknown*/MissingParameterType -- the price of an unannotated codebase with untyped deps (fitz, yaml), not defects. Every strict rule that does NOT demand annotations is enabled individually below instead, so the useful half of strict is on.",
   "extraPaths": [
     "skills/task"
   ],
-  "//": "sync_todos.py imports taskcore/task_gl/todos from the DEPLOYED task skill at runtime (sys.path.insert on ~/.claude/skills/task). extraPaths points the checker at the repo copies -- the same files sync.sh deploys.",
+  "// extraPaths": "sync_todos.py imports taskcore/task_gl/todos from the DEPLOYED task skill at runtime (sys.path.insert on ~/.claude/skills/task). This points the checker at the repo copies -- the same files sync.sh deploys.",
+  "// reportUnnecessaryContains": "Deliberately NOT enabled. Its one hit is todos.py's `eq(\"historical never blocks\", \"historical_reference\" in BLOCKING, False)` -- a regression guard whose whole job is to fail if someone adds that kind to BLOCKING. A rule that fights a test pinning an invariant is a rule that costs more than it finds.",
   "exclude": [
     "**/__pycache__"
-  ]
+  ],
+  "reportUnusedImport": "error",
+  "reportUnusedVariable": "error",
+  "reportUnusedExpression": "error",
+  "reportUnnecessaryComparison": "error",
+  "reportUnnecessaryIsInstance": "error",
+  "reportUnnecessaryCast": "error",
+  "reportDuplicateImport": "error",
+  "reportSelfClsParameterName": "error",
+  "reportAssertAlwaysTrue": "error",
+  "reportUnusedCoroutine": "error",
+  "reportUntypedFunctionDecorator": "error",
+  "reportInconsistentOverload": "error",
+  "reportImplicitOverride": "error",
+  "reportShadowedImports": "error",
+  "reportTypeCommentUsage": "error",
+  "reportCallInDefaultInitializer": "error",
+  "reportPropertyTypeMismatch": "error",
+  "reportUninitializedInstanceVariable": "error",
+  "reportOverlappingOverload": "error"
 }
