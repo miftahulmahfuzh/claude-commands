@@ -52,7 +52,7 @@ session after their errand, as soon as they know it:
 | `/implement` | `impl-<slug>-p<N>` | step 2, phase included when `--phase` gave one; never widening a launch name |
 | `/do <TaskID>` | `do-<TaskID>` | immediately; the id is the argument |
 | `/analyze-orchestrator` | `orch-<slug>` | step 3, once the ledger is verified |
-| `/token-maxxing` | `tokenmax-<idea>` | step 7, with the day's branch |
+| `/token-maxxing` | `tokenmax-<idea>` | step 5, with the day's branch |
 
 A rename never *widens*: `--no-widen` refuses one whose target is the name already held minus a
 suffix, so a phase session launched as `impl-<slug>-p2` cannot rename itself down to
@@ -294,9 +294,10 @@ in `~/.claude/`. Reference copies are in [`cmd/dlv/`](cmd/dlv) — see [setup](#
 
 Kicks off a deliberately high-consumption session that still lands real work. It reads the 5
 most recent `docs/token_maxxing/` docs so it doesn't re-propose finished work, surveys the repo,
-and offers 3–5 ranked ideas tagged fresh or continuation. Work lands on
-`token-maxxing-YYYY-MM-DD`, never auto-merged. Big ideas get handed to `/analyze --no-worktree`
-rather than freehanded.
+and generates 3–5 ranked ideas tagged fresh or continuation — then picks the winner itself, with
+no manual selection step. Work lands on `token-maxxing-YYYY-MM-DD` and is merged to `main`
+automatically once the session doc is written, unless told otherwise. Big ideas get handed to
+`/analyze --no-worktree` rather than freehanded.
 
 ```bash
 /token-maxxing            # anything

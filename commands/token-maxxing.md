@@ -1,5 +1,5 @@
 ---
-description: Start a deliberately high-token-consumption ("token-maxxing") work session — propose a menu of real-value ideas, pick one, branch, and roll.
+description: Start a deliberately high-token-consumption ("token-maxxing") work session — auto-generate a menu of real-value ideas, pick the best one yourself, branch, roll, and merge to main when done.
 argument-hint: "[optional theme, e.g. tests | docs | refactor | audit]"
 ---
 
@@ -10,9 +10,16 @@ overall Claude token consumption, and the team wants a defensible record of real
 engineering value to justify upgrading the company Claude subscription. So: burn tokens
 generously, but bias hard toward **genuinely useful work** so every session is defensible.
 
+**This command is fully automatic, end to end.** There is no menu presented for the user
+to pick from, no "surprise me / reroll" prompt, and no scope-confirmation checkpoint —
+you generate the candidate ideas, judge them, pick the best one, and go. The only
+legitimate stop is the same bar `/do` and `/implement` use: an undecidable fork where
+every branch is irreversible. Never stop to ask "which idea do you want?", "does this
+scope look right?", or "should I merge this?" — decide, record the decision, and proceed.
+
 Optional theme passed by the user: **$ARGUMENTS**
 (If empty, ideas may span anything. If present — e.g. `tests`, `docs`, `refactor`,
-`audit`, `teach` — bias the menu toward that theme.)
+`audit`, `teach` — bias selection toward that theme.)
 
 ## Do this, in order
 
@@ -45,22 +52,22 @@ Skim for grounding — do NOT do deep work yet:
 - Stale or thin docs under `docs/` , `**/analysis_report.md` , `**/package_readme.md` and `**/unittest_guide.md`
 - Obvious smells: large files, TODO/FIXME markers, dead code
 
-### 4. Propose a menu of 3–5 ideas
-Blend fresh ideas with continuations. Every option is tagged:
+### 4. Generate a menu of ideas, then pick the winner yourself
+Blend fresh ideas with continuations. Tag each candidate the same way as before, but this
+is now internal reasoning and session-doc material — not a prompt for the user:
 - **🆕 Fresh** — new work that does NOT collide with anything in the `completed` bucket.
 - **🔁 Continue/improve** — drawn from `continuation-candidates` (deepen, finish, or improve
   a prior session's work).
 
-Aim for a mix of both (e.g. 3 fresh + 1–2 continuations) unless a theme narrows it.
-Rank by value. For EACH idea give:
+Generate 3–5 candidates. For EACH, work out:
 - **Tag** — 🆕 or 🔁 (for 🔁, name the prior session it continues)
 - **What** — one crisp sentence
 - **Why it's real value** — not busywork
 - **Scope** — files/packages touched, rough size
 - **🔥 Burn potential** — low / med / high (how many tokens it will credibly consume)
 
-Bias the menu toward `$ARGUMENTS` if provided. Keep the fresh ideas varied across sessions by
-drawing from this catalog (don't propose the same set every day):
+Bias candidates toward `$ARGUMENTS` if provided, and keep the fresh ones varied across
+sessions by drawing from this catalog (don't propose the same set every day):
 
 - **Refactor** a subsystem for clarity/quality (e.g. `chatbot/queue`, `chatbot/cancellation`, `tools/toolcore/pipeline`)
 - **Test coverage** — raise coverage in one package with real, meaningful tests
@@ -70,23 +77,18 @@ drawing from this catalog (don't propose the same set every day):
 - **gofmt + lint** — sweep formatting/lint issues across a package (`gofmt`, `golangci-lint`)
 - **YAGNI hunt** — find and remove dead/speculative code
 
-End the menu with: **"Pick a number, or say `surprise me` (I pick the highest-value one) or `reroll` (new menu)."**
+Then **immediately select the single highest-value candidate yourself** — the same
+judgment call "surprise me" used to delegate to you, now made without waiting for that
+prompt. Rank by real value first, burn potential second. Post the menu and which one you
+picked plus why in one short message so the user has visibility, then proceed — this is a
+status update, not a question, and does not block on a reply.
 
-### 5. Let the user choose
-- A number → that idea.
-- `surprise me` → pick the highest-value idea yourself.
-- `reroll` → generate a fresh menu (go back to step 4).
-
-### 6. Confirm scope briefly
-One short exchange to lock scope. Adjust to user feedback.
-
-### 7. Create / reuse today's branch
+### 5. Create / reuse today's branch
 ```bash
 git checkout main && git pull --ff-only 2>/dev/null; \
 git checkout -b "token-maxxing-<DATE>" 2>/dev/null || git checkout "token-maxxing-<DATE>"
 ```
-One branch per day — reuse it if it already exists. All work lands here; do NOT merge
-to `main` automatically (the user reviews and merges later).
+One branch per day — reuse it if it already exists.
 
 Then name the session after the idea, not after the day:
 
@@ -108,10 +110,11 @@ because the status line covers the terminal's tab title. `--no-tmux` skips that 
 fail (no socket, no tmux, a session started some other way → `renamed: false` with a reason, exit
 0), and a session is not worth stopping over the name of a window.
 
-If the scope changes mid-session (a `reroll`, or the work turns into something else), rename
-again — it is idempotent and costs nothing.
+If the scope changes because deeper investigation reveals the idea should shift, rename
+again — it is idempotent and costs nothing. Do not pause to confirm the scope change; decide
+and keep moving.
 
-### 8. Roll
+### 6. Roll
 Do the work. Commit real increments with clear messages. Follow the project's skills
 (TDD, systematic-debugging, etc.) as normal — quality still matters. Be thorough and
 verbose; exhaustive-but-correct is the goal, not terse.
@@ -135,8 +138,25 @@ that ends in a reviewed plan rather than a half-finished refactor.
 is *more* specific than the day's idea, and it is the one the plan index and the artifacts carry.
 Rename back to `tokenmax-<IDEA-SLUG>` only once planning is done and implementation moves on.
 
-### 9. Auto-write the session doc when done
+### 7. Auto-write the session doc when done
 When you judge the work complete (or at a natural stopping point), **spawn a fresh
 subagent** to run the `/token-maxxing-update-docs` workflow so the session is recorded
 without you having to be asked. Give the subagent a full summary of what happened this
-session. You may also let the user trigger it manually.
+session, including the menu from Step 4 and why the winning idea was picked.
+
+### 8. Merge to main automatically
+Unless the user has explicitly instructed otherwise for this session, land the work on
+`main` yourself as soon as Step 7's doc is written — do not stop and wait for review:
+
+```bash
+git checkout main && git pull --ff-only
+git merge --no-ff "token-maxxing-<DATE>" -m "merge: token-maxxing session <IDEA-SLUG>"
+git push
+```
+
+If the merge conflicts, resolve it yourself (same judgment `/analyze-orchestrator`'s
+`swarm.py land` uses for merge conflicts) rather than leaving the branch unmerged for a
+human to sort out. Once merged and pushed, delete the day's branch only if it is now an
+ancestor of `origin/main` (`git merge-base --is-ancestor "token-maxxing-<DATE>" origin/main`) —
+never delete it on a failed or partial merge. Prefer the `pusher` agent for the final
+commit/push mechanics if any uncommitted work remains from Step 6.
