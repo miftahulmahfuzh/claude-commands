@@ -1,6 +1,6 @@
 ---
-description: Start a deliberately high-token-consumption ("token-maxxing") work session — auto-generate a menu of real-value ideas, pick the best one yourself, branch, roll, and merge to main when done.
-argument-hint: "[optional theme, e.g. tests | docs | refactor | audit]"
+description: Start a deliberately high-token-consumption ("token-maxxing") work session — auto-generate a menu of real-value ideas, pick the best one yourself, branch, roll, and merge to main when done. Pass a number to fan out N of these as parallel tmux sessions instead of one.
+argument-hint: "[N] [optional theme, e.g. tests | docs | refactor | audit]"
 ---
 
 # /token-maxxing
@@ -10,18 +10,36 @@ overall Claude token consumption, and the team wants a defensible record of real
 engineering value to justify upgrading the company Claude subscription. So: burn tokens
 generously, but bias hard toward **genuinely useful work** so every session is defensible.
 
-**This command is fully automatic, end to end.** There is no menu presented for the user
-to pick from, no "surprise me / reroll" prompt, and no scope-confirmation checkpoint —
-you generate the candidate ideas, judge them, pick the best one, and go. The only
-legitimate stop is the same bar `/do` and `/implement` use: an undecidable fork where
-every branch is irreversible. Never stop to ask "which idea do you want?", "does this
-scope look right?", or "should I merge this?" — decide, record the decision, and proceed.
+**This command is fully automatic, end to end, in every mode below.** There is no menu
+presented for the user to pick from, no "surprise me / reroll" prompt, and no
+scope-confirmation checkpoint — you generate the candidate ideas, judge them, pick the
+winner(s) yourself, and go. The only legitimate stop is the same bar `/do` and
+`/implement` use: an undecidable fork where every branch is irreversible. Never stop to
+ask "which idea do you want?", "does this scope look right?", or "should I merge this?" —
+decide, record the decision, and proceed. This holds for the solo session below exactly
+as it holds for a coordinator running five of them at once.
 
-Optional theme passed by the user: **$ARGUMENTS**
-(If empty, ideas may span anything. If present — e.g. `tests`, `docs`, `refactor`,
-`audit`, `teach` — bias selection toward that theme.)
+## Step 0: Mode Selection
 
-## Do this, in order
+Parse **$ARGUMENTS**:
+
+- **Starts with `--worker`** → this is an internal invocation from a Coordinator Mode
+  session, not a human. Skip straight to **Worker Mode** below; ignore everything else on
+  this page until then.
+- **First token is an integer > 1** (e.g. `5`) → that integer is `N`, the rest of
+  `$ARGUMENTS` is the optional theme. Go to **Coordinator Mode**.
+- **Anything else** (empty, a bare theme word, or `1`) → `N = 1`, the whole string is the
+  optional theme. Continue with **Solo Mode** below — this is today's behavior, byte-for-byte
+  unchanged.
+
+(If a theme is present — e.g. `tests`, `docs`, `refactor`, `audit`, `teach` — bias idea
+selection toward it, in every mode.)
+
+---
+
+## Solo Mode (default — N = 1)
+
+One session, one idea, one branch. Do this, in order.
 
 ### 1. Get the real date
 Run `date +%F` in bash. Never guess the date. Call the result `<DATE>`.
@@ -66,7 +84,7 @@ Generate 3–5 candidates. For EACH, work out:
 - **Scope** — files/packages touched, rough size
 - **🔥 Burn potential** — low / med / high (how many tokens it will credibly consume)
 
-Bias candidates toward `$ARGUMENTS` if provided, and keep the fresh ones varied across
+Bias candidates toward the theme if provided, and keep the fresh ones varied across
 sessions by drawing from this catalog (don't propose the same set every day):
 
 - **Refactor** a subsystem for clarity/quality (e.g. `chatbot/queue`, `chatbot/cancellation`, `tools/toolcore/pipeline`)
@@ -160,3 +178,218 @@ human to sort out. Once merged and pushed, delete the day's branch only if it is
 ancestor of `origin/main` (`git merge-base --is-ancestor "token-maxxing-<DATE>" origin/main`) —
 never delete it on a failed or partial merge. Prefer the `pusher` agent for the final
 commit/push mechanics if any uncommitted work remains from Step 6.
+
+---
+
+## Coordinator Mode (N > 1)
+
+`/token-maxxing 5` runs five token-maxxing sessions at once instead of one, each in its
+own tmux window, each on its own branch, each writing its own session doc — and this
+session becomes the coordinator that picks their ideas, watches them, and lands each one
+to `main` the moment it finishes. It borrows the shape of `/analyze-orchestrator` —
+generate/decompose centrally, dispatch in parallel, never wait on a human — but not its
+machinery: there is no plan index, no phase DAG, and deliberately **no ledger**. The N
+ideas are mutually independent (unlike phases of one plan, nothing here `depends_on`
+anything else), so there is nothing to resume across a crash except "the branch is still
+there, look at it" — a durable ledger would be real new infrastructure bought for a
+problem this command doesn't have. If this coordinator dies mid-run, each worker's branch
+and worktree survive independently and a human (or a fresh `/token-maxxing N`) can pick
+up from `git branch --list 'token-maxxing-<DATE>-*'`.
+
+**No tmux, no fan-out.** `swarm.py launch` needs a live tmux server to open a detached
+window in. If `$TMUX` is unset, print one line saying parallel mode needs tmux and fall
+back to running **Solo Mode** for a single winning idea instead of refusing outright — a
+worse session that does real work beats no session.
+
+### C1. Get the real date, recall, survey — once, centrally
+Run Solo Mode Steps 1–3 exactly as written, but **once**, for the whole coordinator run —
+not once per worker. This is the whole reason idea generation is centralized: a shared
+`completed` / `continuation-candidates` picture is what lets Step C2 hand out N ideas that
+don't collide, instead of N workers independently reading the same five docs and quite
+possibly picking the same one.
+
+### C2. Generate a menu, then pick N winners with disjoint scope
+Run Solo Mode Step 4's process, but generate **at least N + 2** candidates instead of 3–5,
+and select **N winners** instead of one. Two rules beyond Step 4's:
+
+- **No two winners may share a package or file** they'd both touch — that is what makes
+  N branches mergeable without every one of them fighting over the same lines. Prefer
+  candidates from different rows of the catalog (a refactor and a docs rewrite and a
+  test-coverage push touch disjoint trees almost by construction).
+- If fewer than N non-colliding candidates exist, generate more rather than picking two
+  that overlap — an idea menu is cheap; a guaranteed merge conflict between two workers
+  that never needed to happen is not.
+
+For each winner, derive its `SLUG_i` (kebab, three or four words, matching Solo Mode's
+idea-slug convention). Post the full menu, the N picks, and why each was chosen, in one
+status message — visibility, not a question.
+
+### C3. Cut one worktree + branch per winner, from one shared base
+Unlike Solo Mode, workers need real filesystem isolation — N sessions cannot each `git
+checkout` a different branch in the same working directory at once. Fetch once, then cut
+all N worktrees from that same fetched commit so no worker starts one commit behind
+another purely from timing:
+
+```bash
+ROOT=$(git rev-parse --show-toplevel)
+REPO=$(basename "$ROOT")
+WT_ROOT=${TASK_WORKTREES:-$HOME/.worktrees}
+git -C "$ROOT" fetch origin main --quiet 2>/dev/null || true
+BASE=origin/main   # fall back to main, or the repo's default branch, if origin/main is absent
+
+for SLUG_i in <the N slugs>; do
+  git -C "$ROOT" worktree add -b "token-maxxing-<DATE>-$SLUG_i" \
+      "$WT_ROOT/$REPO/tokenmax-<DATE>-$SLUG_i" "$BASE"
+done
+```
+
+A branch-name collision (two coordinators running the same day, same idea) makes
+`worktree add` fail loudly — that is a safe, visible failure, not a silent one; skip that
+worker and note it rather than inventing a disambiguated name.
+
+### C4. Rename this session
+```bash
+python3 ~/.claude/skills/task/session.py rename "tokenmax-orch-<DATE>" --no-widen
+```
+Workers address reports here by name — do this before spawning any of them.
+
+### C5. Spawn all N workers in one round
+No ledger means no `swarm.py spawn`/`init`/`waves` — those all key off a phase table that
+doesn't exist here. Use `swarm.py launch` instead, which needs none of that: it opens one
+named, detached tmux window per call and returns the window/pane id in its JSON output.
+Call it once per worker, **all in this one step**, and keep each returned `window` id in
+this session's own context, keyed by slug — that in-memory map is the entire "ledger":
+
+```bash
+python3 ~/.claude/skills/swarm/swarm.py launch \
+    --name "tokenmax-$SLUG_i" \
+    --cwd "$WT_ROOT/$REPO/tokenmax-<DATE>-$SLUG_i" \
+    --permission-mode <this session's mode, bypassPermissions by default> \
+    --prompt "/token-maxxing --worker --coordinator tokenmax-orch-<DATE> --slug $SLUG_i --idea $(printf '%q' "<idea i, one crisp sentence plus its Why>")"
+```
+
+`--permission-mode`: pass whatever this session runs under; default `bypassPermissions`
+for the same reason `/analyze` and `/analyze-orchestrator` do — an unattended worker on a
+mode that stops to ask stalls silently, because a child on a *different* mode than its
+coordinator has its reports held for a human to approve, which looks identical to a slow
+worker. Never hand a worker a mode broader than this session's own.
+
+### C6. Subscribe, then wait for reports
+Re-read `ListAgents` immediately before addressing anyone (a name captured a moment ago
+may already belong to someone else), then send each worker one `SendMessage` with
+`notify_when_idle: true` and no body — this is how a worker that dies without reporting
+is distinguished from one still working.
+
+**Answer a worker that asks, rather than relay it.** There is no plan index or invariant
+ladder here, but there is still a ladder: **the idea's own stated Why (from C2) → this
+repo's CLAUDE.md conventions → surrounding code convention.** This coordinator is the
+only session holding all N ideas and the full menu reasoning, which makes it the
+best-placed decider even without a formal plan document. The only real stop is the same
+one every command in this repo uses: a fork where every branch is irreversible.
+
+### C7. On each report, land it immediately
+Do not wait for the other workers. A report is one line stating a fact — `DONE slug=<s>
+branch=<b> commit=<sha> summary=<...> doc=<path>`, or `FAILED slug=<s> reason=<...>`, or
+`STOPPED slug=<s> reason=<irreversible fork>`. For a `DONE`:
+
+1. **Verify before believing** — `git -C "$WT_ROOT/$REPO/tokenmax-<DATE>-$SLUG_i" rev-parse HEAD`
+   must equal the reported commit.
+2. **Merge, same judgment as Solo Mode Step 8:**
+   ```bash
+   git checkout main && git pull --ff-only
+   git merge --no-ff "token-maxxing-<DATE>-$SLUG_i" -m "merge: token-maxxing session $SLUG_i"
+   git push
+   ```
+   Resolve any conflict yourself — idea's stated Why → repo convention — `git add`,
+   `git commit`, then continue. Never leave a landed worker's branch unmerged waiting for
+   the rest of the round; that is the exact overnight stall `/analyze-orchestrator`'s
+   iron rules exist to prevent, and nothing here has a reason to serialize on it.
+3. **Delete the branch and worktree only once it's a proven ancestor of `main`:**
+   `git merge-base --is-ancestor "token-maxxing-<DATE>-$SLUG_i" origin/main && git worktree remove ... && git push origin --delete ...`
+4. **Close that worker's window, permanently** — best-effort scrollback capture first,
+   since there is no `reap` without a ledger to back it:
+   ```bash
+   tmux capture-pane -t "$WINDOW_i" -pS -100000 > "/tmp/tokenmax-<DATE>-$SLUG_i.log" 2>/dev/null || true
+   tmux kill-window -t "$WINDOW_i"
+   ```
+   using the window id this session captured in C5. A `FAILED` or `STOPPED` worker keeps
+   its window open — that scrollback is what someone reads next — until the coordinator's
+   own termination step closes everything that's left.
+
+Each worker already wrote its own session doc before reporting (its own Worker Mode Step
+W3), so there is nothing left for the coordinator to write per worker. Concurrent workers
+editing `docs/token_maxxing/README.md`'s index table on different branches is expected and
+harmless: it surfaces as an ordinary merge conflict on that one file in step 2 above,
+resolved by keeping both new rows.
+
+### C8. Stragglers
+An idle notification with no report means that worker stopped without finishing. Send it
+one message asking what happened, but never hold the round on the reply — keep collecting
+from the others. If nothing arrives before you'd otherwise move on, decide from git: a
+commit on the worker's branch means it landed and simply failed to report (treat as
+`DONE`, land it); no commit means it failed (note it, close its window, move on). Never
+auto-respawn a straggler — report it and let a human decide whether to re-run that one
+idea.
+
+### C9. Terminate
+When every worker has reported (or been resolved as a straggler), print:
+
+```
+Token-maxxing fan-out — <N> workers, <DATE>
+
+Landed:
+  <slug-1>   <commit sha>   merged <merge sha>   doc docs/token_maxxing/<file>
+  <slug-3>   <commit sha>   merged <merge sha>   doc docs/token_maxxing/<file>
+
+Failed / stopped:
+  <slug-2>   <reason>   branch token-maxxing-<DATE>-<slug-2> left intact
+
+Windows: <k> closed, <m> left open for review
+```
+
+There is no `--resume` to offer — resuming a stuck or failed worker is re-running
+`/token-maxxing` with that one idea as its theme, from a clean branch, which is cheap
+enough that building resume machinery for it would cost more than it saves.
+
+---
+
+## Worker Mode (internal — invoked only by Coordinator Mode via `--worker`)
+
+A human never types this directly; `swarm.py launch` in Step C5 does. Parse from
+`$ARGUMENTS`: `--coordinator <name>`, `--slug <slug>`, `--idea "<one sentence, with its Why>"`.
+
+This session is already checked out on its own worktree and its own branch — the
+coordinator cut both in C3 before launching it. **Do not run Solo Mode Steps 1–5**: there
+is no date to recall against beyond what the coordinator already used, no menu to
+generate, no branch to create. The idea is pre-assigned; jump straight to execution.
+
+### W1. Rename
+```bash
+python3 ~/.claude/skills/task/session.py rename "tokenmax-<slug>" --no-widen
+```
+Same convention Solo Mode uses — this is exactly what a solo session would have named
+itself for this idea, which is why sibling workers and the coordinator can all address
+each other by the same pattern.
+
+### W2. Roll
+Run Solo Mode Step 6 verbatim, against the assigned idea instead of a self-picked one —
+including the `/analyze --no-worktree` escalation path for an idea that turns out to be
+big. `--no-worktree` still keeps things on this worker's own branch, not a nested one.
+
+### W3. Auto-write the session doc
+Run Solo Mode Step 7 verbatim: spawn a fresh subagent for `/token-maxxing-update-docs`,
+giving it the assigned idea and its Why in place of Step 4's menu.
+
+### W4. Report to the coordinator — never merge, never ask
+This is the one place Worker Mode diverges from Solo Mode's Step 8: **do not merge to
+`main`.** The coordinator owns every merge (C7) so that N workers are never all pulling
+and pushing `main` at once. Instead, commit everything locally, then send one fact-only
+message to `--coordinator`:
+
+- Finished clean → `DONE slug=<slug> branch=token-maxxing-<DATE>-<slug> commit=<sha> summary=<one line> doc=<path>`
+- Genuinely blocked, every option irreversible → `STOPPED slug=<slug> reason=<the fork, and why every branch is irreversible>`
+- Anything else that stopped progress → `FAILED slug=<slug> reason=<...>`
+
+Then go idle. Do not close your own window (the coordinator does that in C7 once it has
+verified and merged you), and do not poll or wait for acknowledgment — the report is a
+fact stated once, not the start of a conversation.

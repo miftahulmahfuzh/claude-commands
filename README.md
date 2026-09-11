@@ -36,7 +36,7 @@ deletes inside `~/.claude/commands/` and is safe to re-run.
 | `/reorganize-todos` | Re-sorts todos by priority |
 | `/postmortem` | Documents what went wrong in a session |
 | `/up-version` | Semver bump + CHANGELOG from commits since the last tag |
-| `/token-maxxing` | Starts a high-consumption session on deliberately useful work |
+| `/token-maxxing` | Starts a high-consumption session on deliberately useful work; `/token-maxxing N` fans out N of them in parallel |
 | `/token-maxxing-update-docs` | Records that session |
 
 ### Session names
@@ -53,6 +53,7 @@ session after their errand, as soon as they know it:
 | `/do <TaskID>` | `do-<TaskID>` | immediately; the id is the argument |
 | `/analyze-orchestrator` | `orch-<slug>` | step 3, once the ledger is verified |
 | `/token-maxxing` | `tokenmax-<idea>` | step 5, with the day's branch |
+| `/token-maxxing N` | `tokenmax-orch-<date>` (coordinator), `tokenmax-<idea>` (each worker) | coordinator step C4; each worker step W1 |
 
 A rename never *widens*: `--no-widen` refuses one whose target is the name already held minus a
 suffix, so a phase session launched as `impl-<slug>-p2` cannot rename itself down to
@@ -302,10 +303,22 @@ automatically once the session doc is written, unless told otherwise. Big ideas 
 ```bash
 /token-maxxing            # anything
 /token-maxxing tests      # bias the menu
+/token-maxxing 5          # fan out 5 sessions in parallel, biased toward nothing in particular
+/token-maxxing 5 refactor # same, biased toward refactor ideas
 ```
 
 `/token-maxxing-update-docs` writes the session log (achievement first) and maintains a
 newest-first index.
+
+**`/token-maxxing N` (N > 1)** turns this session into a coordinator, borrowing the shape of
+`/analyze-orchestrator` without its machinery: it recalls and surveys once, generates a menu of
+N ideas with disjoint scope so the workers can never collide, cuts one worktree and branch per
+idea, and launches N sessions via `swarm.py launch` — one tmux window each, running this same
+command in `--worker` mode. Each worker rolls its assigned idea, writes its own session doc, and
+reports back instead of merging; the coordinator verifies and lands each one to `main` the moment
+it finishes, rather than waiting for the slowest. There is deliberately no ledger and no
+`--resume` — the N ideas don't depend on each other, so recovering from a dead coordinator is
+just re-running `/token-maxxing` for whichever idea didn't land.
 
 ### `/up-version`
 
