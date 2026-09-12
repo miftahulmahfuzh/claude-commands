@@ -9,7 +9,17 @@ Record the current token-maxxing session as a comprehensive, deliberately verbos
 markdown doc. Verbosity is a feature here — write thoroughly. The doc must let a future
 reader see the **achievement at a glance** at the very top.
 
-## Do this, in order
+## Mode Selection
+
+Parse `$ARGUMENTS`:
+
+- **`--sweep-stale`** → **Sweep Mode** below: audit every existing doc's `Merge status`
+  line against git truth and repair whatever drifted, instead of recording a session.
+  Skip straight there; ignore Steps 1–5.
+- Anything else (including empty, or a title override) → **Recording Mode**, Steps 1–5
+  below — today's normal single-session write, unchanged.
+
+## Recording Mode — do this, in order
 
 ### 1. Resolve date and title
 - Run `date +%F` in bash → `<DATE>`. Never guess the date.
@@ -67,7 +77,9 @@ worker. Whoever performs the actual merge afterward (the solo session itself in 
 or the coordinator in C7) owns editing this same line to `merged (commit <sha>)` on the
 copy of the file that lands on `main` — that step is specified there, not here, and
 skipping it is exactly how a session doc ends up permanently claiming `NOT merged` for
-work that has been on `main` for months.
+work that has been on `main` for months. **Sweep Mode below is the backstop** for every
+doc written before that step existed, and for any future doc a merge step still manages
+to skip.
 
 ### 4. Update the index
 Maintain `docs/token_maxxing/README.md` as a table of all sessions. Create it if absent:
@@ -98,3 +110,69 @@ characters and shorten it if it's over the cap; this check is not optional.
 
 ### 5. Report
 Print the doc path and the one-line achievement so the user sees the result.
+
+---
+
+## Sweep Mode (`--sweep-stale`)
+
+Audit every doc under `docs/token_maxxing/` (excluding `README.md`) and correct any
+`Merge status` line that no longer matches reality, driven by fresh subagents rather than
+read one by one in this session's own context. Ground truth always comes from git, never
+from another doc's prose or from memory of "that session merged, I remember it."
+
+### S1. Enumerate
+`ls docs/token_maxxing/*.md`, excluding `README.md` — this is the full worklist, `<FILES>`.
+Could be dozens; that's expected, not a signal to shrink scope.
+
+### S2. Batch and spawn checker subagents, incrementally
+Split `<FILES>` into batches of ~8–10 files. Spawn one **fresh, read-only** subagent per
+batch — **incrementally**: launch the first batch or two, and as each reports back spawn
+the next, rather than firing every batch at once. This bounds concurrent load and lets a
+bad first result (a wrong lookup method, a misread doc) get caught and corrected before
+it's repeated across the whole corpus.
+
+Each checker subagent, for every file in its batch, does this and **only** this (no
+edits, no commits — a subagent racing another subagent's `git commit`/`git push` on
+`main` is exactly the hazard a batch design must avoid):
+
+1. Read the doc. Note its current `Merge status` line verbatim.
+2. Find the commit that first added this exact file — the doc's own "session doc"
+   commit, made before any merge:
+   ```bash
+   DOC_COMMIT=$(git log --format=%H --follow --diff-filter=A -- "<file>" | tail -1)
+   ```
+3. Ask git, not the doc, whether that commit is now live on `main`:
+   ```bash
+   git merge-base --is-ancestor "$DOC_COMMIT" origin/main && echo LANDED || echo NOT-LANDED
+   ```
+4. If `LANDED`, find the merge commit that carried it in (the first merge reachable from
+   `$DOC_COMMIT` on the way to `origin/main`; if there is none, `$DOC_COMMIT` itself is
+   already on `main` with no separate merge commit — e.g. a fast-forward):
+   ```bash
+   git log --format=%H --ancestry-path --merges "$DOC_COMMIT..origin/main" | tail -1
+   ```
+5. If `NOT-LANDED`, the branch may still be legitimately open — do not guess
+   `abandoned`; only report `still on branch` (matching what a correct doc should say
+   right now).
+6. Compare the doc's *current* line against what step 3/4 just measured. If they already
+   agree, report `<file>: accurate, no change`. If they disagree, report a finding:
+   `<file> | current: "<line>" | correct: "merged (commit <merge-or-doc-sha>)"` (or the
+   accurate on-branch wording) — plus the exact commands run, so the correction is
+   checkable, not asserted.
+
+### S3. Apply each batch's findings yourself, per batch
+As each batch's subagent reports, apply its flagged corrections directly in this
+session — edit the `Merge status` line of every flagged file. Do this per batch, not
+after every batch has finished, so an interruption partway through the sweep still leaves
+already-fixed files fixed.
+
+### S4. One commit per batch, pushed before the next
+`git add` only that batch's corrected files, commit
+(`docs(token_maxxing): sweep stale Merge status — batch <n>`), and `git push` before
+starting the next batch's spawn in S2. Small, reviewable, individually-pushed commits —
+never one giant commit at the very end that a mid-sweep crash would lose entirely.
+
+### S5. Report
+Print a summary: total docs checked, how many were already accurate, how many were
+corrected (old → new status, one line each), and any the checker couldn't resolve —
+name those explicitly rather than silently leaving them be.
