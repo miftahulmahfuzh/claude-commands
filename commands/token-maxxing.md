@@ -174,7 +174,18 @@ git push
 
 If the merge conflicts, resolve it yourself (same judgment `/analyze-orchestrator`'s
 `swarm.py land` uses for merge conflicts) rather than leaving the branch unmerged for a
-human to sort out. Once merged and pushed, delete the day's branch only if it is now an
+human to sort out.
+
+**Immediately flip the session doc's `Merge status` line.** Step 7 wrote
+`docs/token_maxxing/<DATE>-<title>.md` with `Merge status: on branch` — true when it was
+written, false the instant the merge above lands. The version of that file now sitting on
+`main` still says `on branch`. Edit it there to `merged (commit <merge-sha>)`, `git add`
+that one file, `git commit -m "docs: mark <IDEA-SLUG> merged"`, `git push`. Do this before
+the branch-deletion step below: Step 2 of this same command reads past session docs as
+ground truth, and a doc that claims `on branch` after its branch is gone is exactly the
+drift this fixes.
+
+Once merged and pushed, delete the day's branch only if it is now an
 ancestor of `origin/main` (`git merge-base --is-ancestor "token-maxxing-<DATE>" origin/main`) —
 never delete it on a failed or partial merge. Prefer the `pusher` agent for the final
 commit/push mechanics if any uncommitted work remains from Step 6.
@@ -304,9 +315,19 @@ branch=<b> commit=<sha> summary=<...> doc=<path>`, or `FAILED slug=<s> reason=<.
    `git commit`, then continue. Never leave a landed worker's branch unmerged waiting for
    the rest of the round; that is the exact overnight stall `/analyze-orchestrator`'s
    iron rules exist to prevent, and nothing here has a reason to serialize on it.
-3. **Delete the branch and worktree only once it's a proven ancestor of `main`:**
+3. **Flip the worker's own `Merge status` line before touching its branch.** The
+   worker's `doc=<path>` from its report was written under Worker Mode Step W3, before
+   this coordinator ever merged it, so it reads `Merge status: on branch, NOT merged —
+   this is a worker session; the coordinator owns landing worker branches` — the copy of
+   that file that just landed on `main` still says that. Edit it there to `merged
+   (commit <merge-sha>, landed by coordinator tokenmax-orch-<DATE>)`, `git add` that one
+   file, `git commit -m "docs: mark $SLUG_i merged"`, `git push`. Do this in the same
+   breath as step 2's merge, before step 4 below: a worker doc that still claims `NOT
+   merged` once its branch is deleted misleads every later Step 2 recall that reads it
+   as ground truth, and there is no other point at which anything will ever fix it.
+4. **Delete the branch and worktree only once it's a proven ancestor of `main`:**
    `git merge-base --is-ancestor "token-maxxing-<DATE>-$SLUG_i" origin/main && git worktree remove ... && git push origin --delete ...`
-4. **Close that worker's window, permanently** — best-effort scrollback capture first,
+5. **Close that worker's window, permanently** — best-effort scrollback capture first,
    since there is no `reap` without a ledger to back it:
    ```bash
    tmux capture-pane -t "$WINDOW_i" -pS -100000 > "/tmp/tokenmax-<DATE>-$SLUG_i.log" 2>/dev/null || true

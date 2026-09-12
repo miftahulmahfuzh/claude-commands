@@ -58,6 +58,17 @@ reader see the **achievement at a glance** at the very top.
 <commands run, notable diffs, references>
 ```
 
+**`Merge status` is written here as a snapshot, not a promise — this workflow never
+comes back to fix it.** This command runs *before* the merge (Solo Mode Step 7 / Worker
+Mode W3, both ahead of the merge in Solo Step 8 / Coordinator C7), so write it as true
+right now: `on branch` for a solo/coordinator-not-yet-run session, or `on branch, NOT
+merged — this is a worker session; the coordinator owns landing worker branches` for a
+worker. Whoever performs the actual merge afterward (the solo session itself in Step 8,
+or the coordinator in C7) owns editing this same line to `merged (commit <sha>)` on the
+copy of the file that lands on `main` — that step is specified there, not here, and
+skipping it is exactly how a session doc ends up permanently claiming `NOT merged` for
+work that has been on `main` for months.
+
 ### 4. Update the index
 Maintain `docs/token_maxxing/README.md` as a table of all sessions. Create it if absent:
 
