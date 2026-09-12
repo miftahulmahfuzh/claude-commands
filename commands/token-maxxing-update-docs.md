@@ -75,5 +75,15 @@ The branch is not a column in this index (branches are date-identified via the D
 column and deleted at session end); the per-session doc's Achievement block still
 records the branch name.
 
+**The Achievement cell is a hard cap, not a suggestion: ≤120 characters, one clause,
+no commit hashes / worker names / file counts / backtick-quoted identifiers.** This
+table exists so a scanning reader (or the recall step of `/token-maxxing`) can judge
+relevance from the row alone — every supporting detail (commit sha, files touched,
+worker name, exact counts) belongs in the per-session doc's own Achievement section,
+reached via the Doc link, never inlined into this cell. If the one-liner you drafted
+doesn't fit in 120 characters, that's the signal it's changelog detail, not an
+index entry — cut it, don't wrap it. Before writing the row, count the cell's
+characters and shorten it if it's over the cap; this check is not optional.
+
 ### 5. Report
 Print the doc path and the one-line achievement so the user sees the result.
