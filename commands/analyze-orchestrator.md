@@ -17,6 +17,13 @@ as a swarm: it computes which phases share no dependency edge, opens a session p
 them, verifies what they claim, and lands the result. Everything mechanical lives in
 `skills/swarm/swarm.py`; this command supplies the judgement.
 
+**This command exists for N > 1.** Everything about it — waves, a ledger, per-phase sessions,
+verifying before landing — is machinery for coordinating *several* phases at once. A one-phase
+plan set has no DAG to schedule and nothing to land except a single commit, so `/analyze` never
+routes one here: Step 11 there launches `/implement -f <PLAN> --phase 1` directly in a new tmux
+window instead, and this command is never invoked for it. Refuse and say so if handed one anyway
+(Step 1).
+
 It **writes no plans**. `/analyze` is the only command that writes plans — see the repo's
 `CLAUDE.md`. Handed an analysis document instead of a plan index, refuse and name `/analyze`.
 
@@ -77,6 +84,9 @@ Three consequences, each of them load-bearing:
 **Fresh (`-f`).** Read the plan index. Refuse and stop if:
 - it is an analysis document rather than a plan index → name `/analyze`
 - any phase's **Plan** column points at a file that does not exist
+- **`Phases: 1`** — a single-phase plan has nothing for this command to coordinate. Say that
+  `/analyze` should have launched `/implement -f <PLAN> --phase 1` directly for it (Step 11), and
+  point the user at that line instead of proceeding.
 
 **Read `## Decisions` and treat it as settled.** Each row is a fork `/analyze` resolved with the
 rung that resolved it; the children inherit them through the index, and reopening one here would

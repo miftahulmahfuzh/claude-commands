@@ -84,9 +84,9 @@ Most commands operate on a target package directory that contains a `.workflows/
 ### Who writes implementation plans
 **Only `/analyze`.** This is the single most important invariant in the repo — it was previously split between `/analyze` and `/implement`, which produced plans of two different provenances and no way to tell which was authoritative.
 
-- `/analyze` → read-only investigation **plus a complete plan, every run**: `<session-id>_code_analyzer.md` (descriptive) + `<SLUG>_PLAN.md` (index) + `.workflows/plan/<slug>/phase-{N}.md` for N ∈ 1..20, in a worktree it cuts. N=1 is not a different mode — same artifacts, one phase. It also numbers the user's asks `R1..Rn` and maps every phase onto the `R`s it serves — the plan index's **Requirements** table, which is what lets `create-task` shape the board without re-deriving the decomposition.
+- `/analyze` → read-only investigation **plus a complete plan, every run**: `<session-id>_code_analyzer.md` (descriptive) + `<SLUG>_PLAN.md` (index) + `.workflows/plan/<slug>/phase-{N}.md` for N ∈ 1..20, in a worktree it cuts. N=1 is not a different mode for the *planning* artifacts — same shape, one phase — but it is a different mode for the hand-off: Step 11 launches a one-phase plan straight into `/implement -f <PLAN> --phase 1` in a new tmux pane, and skips `/analyze-orchestrator` entirely, because there is no DAG to schedule and nothing to land except one commit. N > 1 still launches the orchestrator. It also numbers the user's asks `R1..Rn` and maps every phase onto the `R`s it serves — the plan index's **Requirements** table, which is what lets `create-task` shape the board without re-deriving the decomposition.
 - `/implement -f <SLUG>_PLAN.md` → **executes**. Creates one task per phase, copies each phase plan to `{pkg}/.workflows/plan/{TaskID}.md` unchanged, applies one phase, hands to `completion-handler`. It writes no plans; handed an analysis document it refuses and names `/analyze`.
-- `/do <TaskID>` → executes an **existing** task. Executes its plan file directly in the main context if there is one (the adopted path); builds a routing brief from the task text for EASY/NORMAL without one; **escalates a HARD task with no plan file by running `/analyze` itself** (Step 1c, before any subagent), which plans and — orchestration being its default — runs the set. `--no-escalate` prints the command and stops instead.
+- `/do <TaskID>` → executes an **existing** task. Executes its plan file directly in the main context if there is one (the adopted path); builds a routing brief from the task text for EASY/NORMAL without one; **escalates a HARD task with no plan file by running `/analyze` itself** (Step 1c, before any subagent), which plans and — launching execution being its default — runs it: directly for a single phase, via the orchestrator for several. `--no-escalate` prints the command and stops instead.
 - When code has drifted from what a plan quotes: small drift → follow intent and note it; large drift → stop and re-run `/analyze`. Neither executor improvises a replacement plan.
 - `/update-readme`, `/update-todos`, `/reorganize-todos`, `/postmortem`, `/analyze-package` → maintenance commands on `.workflows/` contents.
 - `/up-version` → semver bump + CHANGELOG generation for *this* repo (or any repo with tags).
@@ -155,9 +155,12 @@ that has not landed. GitHub only — GitLab has no sub-issues below Premium. A c
 but the board's Status still leads when the two disagree.
 
 ### Swarm orchestration (`commands/analyze-orchestrator.md`, `skills/swarm`)
-`/analyze-orchestrator` runs a whole plan set at once: it reads the plan index's **Depends on**
-column as a DAG, opens one session per phase for every phase in a wave, and collects their
-reports. It **writes no plans** — same invariant as `/implement` and `/do`.
+`/analyze-orchestrator` runs a whole **multi-phase** plan set at once: it reads the plan index's
+**Depends on** column as a DAG, opens one session per phase for every phase in a wave, and
+collects their reports. It **writes no plans** — same invariant as `/implement` and `/do`. It is
+for N > 1 only: a one-phase plan has no DAG to coordinate, so `/analyze` Step 11 launches
+`/implement -f <PLAN> --phase 1` directly instead of routing through here, and this command
+refuses a `Phases: 1` index handed to it anyway.
 
 Sessions address each other by name (`ListAgents` → `SendMessage`), which works because every
 long-running command already renames itself via `skills/task/session.py`; `swarm.py spawn` goes
