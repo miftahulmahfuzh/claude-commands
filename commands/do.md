@@ -312,10 +312,12 @@ Marks the task complete in `todos.md` (`- [ ]` → `- [x]`, completion metadata,
 was resolved, and — for a plan-set phase — ticks the phase in the plan index and unblocks the
 next phase's task.
 
-It also returns **the next session's command** — `/do {next TaskID}`, or the merge line when the
-phase just completed was the last one. It is the only step in this pipeline that has read the plan
-index, so the main context prints what it returns instead of deriving it; deriving it would mean
-reading `todos.md` in the main context, which is the thing this pipeline exists to prevent.
+It also returns **the next session's command** — `/do {next TaskID}`, or, when the phase just
+completed was the last one, nothing: it lands the set itself (its Step 5a) rather than handing a
+human a merge command, unless a swarm coordinator already owns landing it. It is the only step in
+this pipeline that has read the plan index, so the main context prints what it returns instead of
+deriving it; deriving it would mean reading `todos.md` in the main context, which is the thing
+this pipeline exists to prevent.
 
 Then dispatches:
 
@@ -601,17 +603,20 @@ Next — phase 2 of 4, in a new session:
   /do P1-TC-A002
 ```
 
-**Success — the last phase of a plan set.** No next task exists, so the hand-off is the merge:
+**Success — the last phase of a plan set.** No next task exists, so `completion-handler` lands
+it itself (its Step 5a) instead of handing back a merge command — remove human in the loop means
+this session is on `main`, pushed, and cleaned up before it prints anything:
 ```
 ✅ Task Completed: P1-TC-A004
 📦 Package: toolcore
 🌿 Branch: feature/purge-direct-streaming-tool
 
-Plan complete — 4/4 phases. Next, to review and merge:
-
-  cd ~/.worktrees/agentic/purge-direct-streaming-tool
-  git checkout main && git merge feature/purge-direct-streaming-tool
+Plan complete — 4/4 phases.
+Merged feature/purge-direct-streaming-tool into origin/main @ a1b2c3d, pushed.
+Worktree and branch feature/purge-direct-streaming-tool deleted.
 ```
+When a swarm coordinator owns the set instead, this phase reports `done` to it (Step 7) and
+prints that landing is the coordinator's job rather than merging anything itself.
 
 **A task that is not a plan-set phase prints no Next block.** There is no successor to name, and
 guessing one would put a wrong command at the end of every EASY task.
@@ -674,7 +679,7 @@ Deployed to `~/.claude/agents/` by `sync.sh`, dispatched by `subagent_type`:
 | `task-locator` | haiku | find the TaskID, extract metadata |
 | `context-loader` | opus | load and synthesize context — **brief path only** |
 | `plan-generator` | opus | execution brief for a task with no plan — **brief path only** |
-| `completion-handler` | opus | update `todos.md`, dispatch readme-updater and pusher |
+| `completion-handler` | opus | update `todos.md`, dispatch readme-updater and pusher, land the last phase |
 | `readme-updater` | opus | update the most-impacted `package_readme.md` |
 | `pusher` | haiku | stage, commit, push |
 

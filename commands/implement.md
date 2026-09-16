@@ -333,7 +333,85 @@ own line so it can be selected and pasted, and nothing follows it on that line �
 front, that context grows across phases. When the loop ends, print the **All phases done** block
 — the same terminal hand-off a one-phase-at-a-time run reaches.
 
-A single-phase plan finishes in one run either way.
+A single-phase plan finishes in one run either way, and it is the common case Step 5a exists for:
+`/analyze` Step 11 launches exactly this session for it, and nobody else is coming to merge.
+
+## Step 5a: Land It — Merge to Main, Push, Clean Up (only when there is no next phase)
+
+Runs when `completion_report.plan_set.next_task_id` came back empty — this was the plan set's
+last phase, whether because it is the only one or `--all` just finished the loop. **Remove human
+in the loop is the point of this step**: a session that stops here and prints a `git merge`
+command for someone to paste is the exact failure being fixed — this command does not get to be
+the one exception to its own Autonomy section.
+
+**Check whether a coordinator owns this first**, reusing the `swarm.py find` call from Step 4b
+(run it now if this phase had no swarm report to make):
+
+```bash
+python3 ~/.claude/skills/swarm/swarm.py find --plan <the phase plan just implemented>
+```
+
+- `{"swarm": true, ...}` → **stop here, land nothing.** This phase belongs to a coordinated set,
+  and per `analyze-orchestrator.md`, *the merge belongs to the set's coordinator* — it lands the
+  whole set with `swarm.py land` in its own Step 5. Landing it here too is exactly the double-merge
+  that rule exists to prevent. Skip straight to the **swarm-tracked** Termination block below; this
+  session already reported `done` in Step 4b.
+- `{"swarm": false, ...}` → no coordinator is coming. This session is the only one that will ever
+  land this branch — continue below.
+
+**Nothing to land** if the plan index's worktree is `none` and its branch is already `main` (a
+`--no-worktree` plan planned directly against it) — skip to Termination, nothing merges or deletes.
+
+Otherwise, merge in a throwaway worktree cut from the base, the same mechanical shape
+`swarm.py land` uses for a coordinated set — never checking `main` out in *this* worktree, since
+this session's own branch is what is being merged:
+
+```bash
+git fetch origin main --quiet
+BASE=$(git rev-parse --verify origin/main >/dev/null 2>&1 && echo origin/main || echo main)
+TARGET=$(basename "$BASE")
+REPO="$(git rev-parse --git-common-dir)/.."
+LAND="$(mktemp -d)/land-{slug}"
+git worktree add -B "land-{slug}" "$LAND" "$BASE"
+git -C "$LAND" merge --no-ff {branch} -m "merge({slug}): {title}"
+```
+
+- **Merge conflicts** → decide each one on the precedence ladder in **Deciding Without Asking**
+  below, `git add` the resolution, `git -C "$LAND" commit --no-edit`. If a conflict is genuinely
+  undecidable (every resolution irreversible), `git -C "$LAND" merge --abort` and print the
+  **Undecidable** block — `main` is untouched, the branch and its worktree stand as they were.
+- **Clean merge** → continue.
+
+Push, retrying once against a base that moved (mirrors `swarm.py land --step push`):
+
+```bash
+git -C "$LAND" push origin HEAD:"$TARGET" \
+  || { git -C "$LAND" fetch origin "$TARGET" --quiet \
+       && git -C "$LAND" merge --no-edit "origin/$TARGET" \
+       && git -C "$LAND" push origin HEAD:"$TARGET"; }
+```
+
+A push still failing after that retry is fatal to this step, not the session: print the
+**Landing failed** Termination block below, naming what git said, and stop. Nothing destructive
+has happened — `main` is unmodified and `{branch}` and its worktree are exactly as they were.
+
+Only once the push succeeds, clean up — guarded the same way `swarm.py land --step cleanup` is,
+so any earlier stop above leaves the branch standing by construction rather than by remembering
+to:
+
+```bash
+cd "$REPO"                     # never delete the worktree this session is standing in
+git worktree remove --force "$LAND"
+git branch -D "land-{slug}"
+git merge-base --is-ancestor {branch} "origin/$TARGET" && {
+  git worktree remove --force {worktree}
+  git branch -D {branch}
+  git push origin --delete {branch}
+}
+```
+
+Then print the **landed** Termination block below, with the merged commit — never a command for
+a human to run.
 
 ---
 
@@ -357,16 +435,36 @@ Next — phase {N+1} of {total}, in a new session:
   /do {TaskID of phase N+1}
 ```
 
-**All phases done:**
+**All phases done — landed (Step 5a landed it):**
 ```
 ✓ Plan complete — {SLUG}_PLAN.md ({total} phase(s))
+  Merged {branch} into {base} @ {merged commit sha}, pushed.
+  Worktree and branch {branch} deleted.
 
-Branch: {branch}
+Next — nothing: the plan set is on {base}, merged, and cleaned up.
+```
 
-Next — review and merge:
+**All phases done — swarm-tracked (coordinator lands it, Step 5a skipped landing):**
+```
+✓ Phase {N}/{total} complete: {TaskID} — {title} (last phase of this set)
+  Reported done to swarm coordinator {coordinator} in Step 4b.
+  Landing the set is the coordinator's job (analyze-orchestrator Step 5) — this session
+  does not merge, push, or delete anything.
 
-  cd {worktree}
-  git checkout main && git merge {branch}
+Next — nothing for this session.
+```
+
+**Landing failed (push rejected after retry, or an undecidable merge conflict):**
+```
+✗ Phase {N}/{total} implemented, but Step 5a could not land it: {what git said}
+  main/{base} is unmodified. {branch} and its worktree are intact.
+  Land worktree left at: {land worktree path}
+
+Next — resolve {the conflict, or the push rejection} and finish landing, in the same or a new
+session:
+
+  cd {land worktree path}
+  {git command that still needs to run}
 ```
 
 **Blocked:**
