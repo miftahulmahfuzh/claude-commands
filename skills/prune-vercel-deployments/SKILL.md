@@ -106,6 +106,22 @@ deploy` from the CLI is unaffected.
 | Committing the deploymentEnabled change without asking | Silently removes a preview-based QA step other people/workflows may depend on |
 | Hardcoding `"main"` | Breaks (does nothing useful) on a repo whose production branch is `master` or something else |
 
+## `--safe` has a floor, and it isn't "just the live one"
+
+`--safe` skips **any** deployment with an active alias — and a per-branch alias
+(`<project>-git-<branch>-<team>.vercel.app`) stays active for as long as that branch exists on
+GitHub, however stale. A repo that pushes many short-lived branches (a swarm/worktree workflow,
+one branch per phase) accumulates one alias — and therefore one permanently un-prunable
+deployment — per branch that's never been deleted. `vercel remove <project> --safe --yes`
+eventually returns `Could not find unaliased deployments`, but that floor can still be dozens of
+deployments, not one. Getting below it means deleting the stale git branches themselves (out of
+scope for this skill — that's a repo/branch-hygiene decision, not a storage-cleanup one) or
+dropping `--safe` after manually confirming none of the targets are actually live.
+
+Measured 2026-09-16 on `run-insights`: 350 deployments before this run, 77 left at the `--safe`
+floor after two full passes (243 removed) — and every other project in the same team pruned to a
+similar non-zero floor (1-14 remaining) rather than down to a single deployment.
+
 ## A benign race the script handles
 
 If something else — another session, another terminal, the Vercel dashboard — deletes a
