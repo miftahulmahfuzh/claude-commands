@@ -517,9 +517,11 @@ one-column CV, not a sidebar or two-column body. Needs `pymupdf` + `pyyaml`.
 Deletes Vercel Blob objects under `shots/` that no database row references, for Run Insights.
 
 ### `prune-vercel-deployments`
-Deletes stale Vercel deployments (`vercel remove <project> --safe --yes`, looping through the
-200-per-run cap and 10-minute cooldown) and checks/proposes disabling future preview deployments
-via `vercel.json`'s `git.deploymentEnabled`. General-purpose — works in any Vercel-linked repo on
+Clears orphaned per-branch Vercel aliases (the usual reason `--safe` prunes almost nothing —
+Vercel never removes a branch's alias when the branch is deleted from git), deletes stale
+deployments (`vercel remove <project> --safe --yes`, looping through the 200-per-run cap and
+10-minute cooldown), and checks/proposes disabling future preview deployments via
+`vercel.json`'s `git.deploymentEnabled`. General-purpose — works in any Vercel-linked repo on
 the machine, not tied to one project. A *different* quota from `reap-orphaned-blobs`'s Blob
 storage: this one targets the "Deployment Storage" free-tier cap.
 
@@ -766,7 +768,7 @@ claude-commands/
 │   ├── swarm/                # + swarm.py — the orchestrator's mechanics
 │   ├── sync-todos-into-gitlab-board/  # + sync_todos.py
 │   ├── reap-orphaned-blobs/
-│   ├── prune-vercel-deployments/  # + scripts/prune-deployments.sh
+│   ├── prune-vercel-deployments/  # + scripts/prune-deployments.sh, clear-orphaned-aliases.py
 │   └── update-ats-cv/        # + SCHEMA.md, cv_render/cv_extract/cv_preview.py, fonts
 ├── cmd/dlv/                  # Delve helpers — copy into your Go project
 ├── sync.sh
