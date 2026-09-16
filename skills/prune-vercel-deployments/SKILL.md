@@ -106,9 +106,19 @@ deploy` from the CLI is unaffected.
 | Committing the deploymentEnabled change without asking | Silently removes a preview-based QA step other people/workflows may depend on |
 | Hardcoding `"main"` | Breaks (does nothing useful) on a repo whose production branch is `master` or something else |
 
+## A benign race the script handles
+
+If something else — another session, another terminal, the Vercel dashboard — deletes a
+deployment out from under a batch this script is also removing, `vercel remove` exits
+non-zero with `Can't find the deployment ... under the context`. That's not a real failure;
+the deployment is gone either way. The script retries a few times with a short backoff
+instead of aborting on it. Only the 200-per-run cap message triggers the 10-minute sleep.
+
 ## Verified
 
 2026-09-16, against `run-insights` in the `jmt-arot` team: found 283 stale deployments on
 one project alone (confirming a single high-frequency repo can dominate a team-wide quota),
-exercised the 200-per-run cap warning, and cross-checked the `deploymentEnabled` schema
-against Vercel's own docs before writing it.
+exercised the 200-per-run cap warning, cross-checked the `deploymentEnabled` schema against
+Vercel's own docs before writing it, and hit the race case above for real (a concurrent
+smoke-test run raced the main prune job) — which is what surfaced the need for the retry
+logic rather than a hard failure on the first `Can't find the deployment` error.

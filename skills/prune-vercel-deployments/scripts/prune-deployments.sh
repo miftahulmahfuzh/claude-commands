@@ -30,6 +30,9 @@ echo "Pruning non-aliased deployments for '$PROJECT'${SCOPE:+ (scope: $SCOPE)}..
 echo "(--safe means only deployments with no active alias are ever touched.)"
 echo
 
+RACE_RETRIES=0
+MAX_RACE_RETRIES=10
+
 while true; do
   set +e
   OUT="$(vercel remove "$PROJECT" --safe --yes "${SCOPE_ARGS[@]}" 2>&1)"
@@ -37,18 +40,36 @@ while true; do
   set -e
   echo "$OUT"
 
-  if [ $STATUS -ne 0 ] && ! echo "$OUT" | grep -q "Only 200 deployments can get deleted at once"; then
-    echo
-    echo "vercel remove exited non-zero; stopping rather than looping on an error." >&2
-    exit $STATUS
-  fi
-
   if echo "$OUT" | grep -q "Only 200 deployments can get deleted at once"; then
     echo
     echo "Hit the 200-per-run cap. Waiting 10 minutes before the next batch..."
     sleep 600
     echo
+    RACE_RETRIES=0
     continue
+  fi
+
+  # "Can't find the deployment ... under the context" means something else
+  # (another process, another session, the dashboard) deleted a deployment
+  # in this batch between listing and removal. Benign — the deployment is
+  # gone either way — so retry rather than treating it as a real failure.
+  if [ $STATUS -ne 0 ] && echo "$OUT" | grep -q "Can't find the deployment"; then
+    RACE_RETRIES=$((RACE_RETRIES + 1))
+    if [ $RACE_RETRIES -gt $MAX_RACE_RETRIES ]; then
+      echo
+      echo "Still racing with something else deleting deployments after $MAX_RACE_RETRIES retries; stopping." >&2
+      exit 1
+    fi
+    echo
+    echo "A deployment in this batch was already removed by something else (retry $RACE_RETRIES/$MAX_RACE_RETRIES)..."
+    sleep 5
+    continue
+  fi
+
+  if [ $STATUS -ne 0 ]; then
+    echo
+    echo "vercel remove exited non-zero; stopping rather than looping on an error." >&2
+    exit $STATUS
   fi
 
   break
