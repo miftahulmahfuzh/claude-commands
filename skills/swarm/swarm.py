@@ -1319,6 +1319,72 @@ def plan_matches(needle, recorded, slug):
     return bool(slug) and here.name == Path(recorded).name and here.parent.name == slug
 
 
+def index_name_for(slug):
+    """The filename /analyze gives a set's plan index in the worktree.
+
+    `force-cs-only-picker-gap` -> `FORCE_CS_ONLY_PICKER_GAP_PLAN.md`. The transform is
+    exact and reversible, so matching on it cannot answer for the wrong set the way a
+    bare basename could.
+    """
+    return slug.replace("-", "_").upper() + "_PLAN.md" if slug else None
+
+
+def index_matches(needle, recorded, slug):
+    """Does this path name the SET'S INDEX, rather than one phase's plan file?
+
+    MEASURED 2026-09-25 on force-cs-only-picker-gap: `find --plan` answered
+    `swarm: false` for the set's own index while answering `swarm: true` for
+    `phase-3.md`. That is the dangerous direction, because the index is the path
+    `spawn` writes onto every child's command line:
+
+        /implement -f <...>/orchestration/<slug>/PLAN.md --phase 3
+
+    so a session probing with the value it was actually handed learned it belonged to
+    no swarm. Since /implement auto-lands a set's LAST phase when no coordinator owns
+    it, that answer routes the final phase into merging a set whose live coordinator
+    is already landing it -- two merges of one set on main. It was caught only because
+    the coordinator happened to warn the child by hand, which is not a mechanism.
+
+    Discovery must answer for the index as well as for the phase bodies. Note this is
+    the OPPOSITE hazard to the basename bug `plan_matches` guards: there, too loose a
+    match answered for a stranger; here, too tight a match answered for nobody. Both
+    end with a session acting on a wrong answer that looked right, so the rule is the
+    same -- match only what is provably this set, but match all of it.
+    """
+    if not needle or not recorded:
+        return False
+    if needle.endswith(recorded):              # the recorded path, in full
+        return True
+    if not slug:
+        return False
+    here = Path(needle)
+    if here.name == Path(recorded).name and here.parent.name == slug:
+        return True
+    return here.name == index_name_for(slug)   # the worktree copy /analyze wrote
+
+
+def find_payload(ledger, ledger_file, phase_n):
+    """The answer `find` prints, for a phase hit and an index hit alike."""
+    phases = ledger.get("phases", [])
+    out = {"swarm": True, "slug": ledger["slug"], "phase": phase_n,
+           "coordinator": ledger.get("coordinator"),
+           "coordinator_session_id": ledger.get("coordinator_session_id"),
+           "addressing_note":
+               "confirm this name is still in ListAgents before sending; names are "
+               "mutable and reused, and a stale one delivers your report to a "
+               "stranger. If it is gone, tell the user -- do not guess.",
+           "ledger": str(ledger_file),
+           "peers": [child_name("impl", ledger["slug"], p["n"])
+                     for p in phases if p["n"] != phase_n]}
+    if phase_n is None:
+        out["phase_note"] = (
+            "matched the SET'S INDEX, which names the set but not which phase you "
+            "are. Pass --phase N for your own row; `peers` here lists every phase, "
+            "yours included. `swarm: true` is the load-bearing half: this set has a "
+            "coordinator, so do NOT land it yourself.")
+    return out
+
+
 def cmd_find(args):
     """Which swarm, if any, owns this plan file or TaskID -- discovery over flags.
 
@@ -1332,28 +1398,30 @@ def cmd_find(args):
     if not root.is_dir():
         return soft("no orchestration directory", repo=repo)
     needle = str(Path(args.plan).expanduser()) if args.plan else None
-    for ledger_file in sorted(root.glob("*/ledger.json")):
-        ledger = load(ledger_file)
+    ledgers = [(f, load(f)) for f in sorted(root.glob("*/ledger.json"))]
+
+    # A TaskID or a phase body identifies ONE phase exactly, so it must win over an
+    # index match in some other set -- hence two passes over every ledger rather than
+    # one pass that takes whichever kind of hit a sorted scan reaches first.
+    for ledger_file, ledger in ledgers:
         for phase in ledger.get("phases", []):
             hit = (args.task and phase.get("task_id") == args.task) or (
                 needle and plan_matches(needle, phase.get("plan"),
                                         ledger.get("slug")))
             if hit:
-                print(json.dumps({"swarm": True, "slug": ledger["slug"],
-                                  "phase": phase["n"],
-                                  "coordinator": ledger.get("coordinator"),
-                                  "coordinator_session_id":
-                                      ledger.get("coordinator_session_id"),
-                                  "addressing_note":
-                                      "confirm this name is still in ListAgents before "
-                                      "sending; names are mutable and reused, and a "
-                                      "stale one delivers your report to a stranger. "
-                                      "If it is gone, tell the user -- do not guess.",
-                                  "ledger": str(ledger_file),
-                                  "peers": [child_name("impl", ledger["slug"], p["n"])
-                                            for p in ledger.get("phases", [])
-                                            if p["n"] != phase["n"]]}, indent=2))
+                print(json.dumps(find_payload(ledger, ledger_file, phase["n"]),
+                                 indent=2))
                 return 0
+
+    for ledger_file, ledger in ledgers:
+        if needle and index_matches(needle, ledger.get("plan"), ledger.get("slug")):
+            n = getattr(args, "phase", None)
+            if n is not None and not any(p.get("n") == n
+                                         for p in ledger.get("phases", [])):
+                n = None                       # a phase this set does not have
+            print(json.dumps(find_payload(ledger, ledger_file, n), indent=2))
+            return 0
+
     return soft("no swarm owns that", plan=args.plan, task=args.task)
 
 
@@ -1556,6 +1624,49 @@ def selftest():
     eq("a failure does not block its sibling", runnable(ledger), [2])
     eq("but it strands everything downstream", stalled(ledger), [4])
 
+    # --- discovery must answer for the index, not only for the phase bodies -------
+    # Both directions are failures with the same shape: a session acting on a wrong
+    # answer that looked right. Too loose matched a stranger's set (the basename bug);
+    # too tight matched nobody, and a last phase then auto-landed a set that already
+    # had a live coordinator landing it.
+    idx = "/repo/.workflows/orchestration/branch-sort-order/PLAN.md"
+    body = "/repo/.workflows/orchestration/branch-sort-order/phase-2.md"
+    eq("index filename transform", index_name_for("branch-sort-order"),
+       "BRANCH_SORT_ORDER_PLAN.md")
+    eq("a phase body still matches as a phase body",
+       plan_matches(body, body, "branch-sort-order"), True)
+    eq("the index is not a phase body",
+       plan_matches(idx, body, "branch-sort-order"), False)
+    eq("the index matches the index",
+       index_matches(idx, idx, "branch-sort-order"), True)
+    eq("the worktree copy /analyze wrote matches too",
+       index_matches("/wt/BRANCH_SORT_ORDER_PLAN.md", idx, "branch-sort-order"), True)
+    eq("a phase body is not the index",
+       index_matches(body, idx, "branch-sort-order"), False)
+    eq("another set's index does not match",
+       index_matches("/repo/.workflows/orchestration/other-set/PLAN.md", idx,
+                     "branch-sort-order"), False)
+    eq("a bare PLAN.md in a stranger's directory does not match",
+       index_matches("/somewhere/else/PLAN.md", idx, "branch-sort-order"), False)
+    eq("no slug, no basename fallback",
+       index_matches("/somewhere/else/PLAN.md", idx, None), False)
+
+    fixture = {"slug": "branch-sort-order", "coordinator": "orch-branch-sort-order",
+               "phases": [{"n": 1}, {"n": 2}, {"n": 3}]}
+    eq("an index hit still names the coordinator",
+       find_payload(fixture, "/l", None)["coordinator"], "orch-branch-sort-order")
+    eq("an index hit with no phase is still swarm: true",
+       find_payload(fixture, "/l", None)["swarm"], True)
+    eq("peers with no phase lists every phase",
+       find_payload(fixture, "/l", None)["peers"],
+       ["impl-branch-sort-order-p1", "impl-branch-sort-order-p2",
+        "impl-branch-sort-order-p3"])
+    eq("peers with a phase excludes only that phase",
+       find_payload(fixture, "/l", 2)["peers"],
+       ["impl-branch-sort-order-p1", "impl-branch-sort-order-p3"])
+    eq("a phase hit carries no index caveat",
+       "phase_note" in find_payload(fixture, "/l", 2), False)
+
     cyclic = {"phases": [{"n": 1, "depends_on": [2], "status": "pending"},
                          {"n": 2, "depends_on": [1], "status": "pending"}]}
     eq("a cycle is reported, not looped on", waves(cyclic)[-1].get("cycle"), [1, 2])
@@ -1753,6 +1864,10 @@ def main(argv=None):
     p = sub.add_parser("find", help="which swarm owns this plan file or TaskID")
     p.add_argument("--plan")
     p.add_argument("--task")
+    # --plan may name the set's INDEX, which says which set but not which phase.
+    # A child knows its own number from its /implement invocation; passing it back
+    # turns an index hit into the same answer a phase-body hit gives.
+    p.add_argument("--phase", type=int)
 
     p = sub.add_parser("launch", help="open one named session in a new tmux window")
     p.add_argument("--name", required=True)

@@ -423,6 +423,19 @@ no other warning.
 `swarm.py` read prints `{"swarm": false, ...}` and exits 0 when there is no ledger, so an
 ordinary `/do` outside any swarm is unaffected.
 
+**The index answers too, and it has to.** `--plan` accepts either a phase body or the set's
+own index — the `PLAN.md` that `spawn` writes onto every child's command line
+(`/implement -f <...>/orchestration/<slug>/PLAN.md --phase 3`). FIXED 2026-09-25, having been
+the mirror image of the basename bug above: too *tight* a match, answering `swarm: false` for
+the one path every child is guaranteed to hold. Since `/implement` auto-lands a set's last
+phase when no coordinator owns it, that answer sent the final phase to merge a set its live
+coordinator was already landing — two merges of one set on `main`, caught only because the
+coordinator warned the child by hand. An index hit names the set but not which phase you are,
+so it returns `"phase": null` with a `phase_note`; pass `--phase N` — your own number, from
+your `/implement` invocation — to get the same answer a phase body gives. Either way
+`swarm: true` is the load-bearing half: **it means this set has a coordinator, so do not land
+it yourself.**
+
 ## Commands
 
 | | |
@@ -435,6 +448,6 @@ ordinary `/do` outside any swarm is unaffected.
 | `verify --slug S [--apply]` | re-derive status from git and todos.md |
 | `land --slug S --step check\|merge\|push\|cleanup` | merge the set into `main`, push it, delete the worktrees and the branch |
 | `status --slug S` | durable + runtime, merged, for a human |
-| `find --plan P \| --task T` | which swarm owns this, and who to report to |
+| `find --plan P \| --task T [--phase N]` | which swarm owns this, and who to report to. `P` may be a phase body OR the set's index |
 | `track` | make `.workflows/orchestration/` survive the repo's `.gitignore` |
 | `selftest` | offline assertions; no git, tmux or network |
