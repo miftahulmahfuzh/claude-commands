@@ -513,6 +513,35 @@ color, which rendered identically but made parsers read every heading before any
 **Limits:** letter-spacing applies to headings only; the layout engine covers a standard
 one-column CV, not a sidebar or two-column body. Needs `pymupdf` + `pyyaml`.
 
+### `edit-pdf-text`
+`/edit-pdf-text <file.pdf> <what to change>` — rewrites text *inside* an existing PDF by
+editing the glyph codes in its content stream, so background art, scans, stamps, photos and
+signatures come through byte-identical. The opposite of `update-ats-cv`, which never patches
+its input: here the input is the only copy there is — a signed surat, a stamped invoice — and
+re-exporting from source is not on the table.
+
+Covering the old text with a white box and retyping is the obvious approach and it is wrong:
+it erases whatever the text sat on. `pdftext.py` instead parses the content stream (`Tj`, `TJ`,
+`'`, `"`, Form XObjects, multiple streams), maps codes through the font's `ToUnicode` or
+encoding, and rewrites only the bytes that change.
+
+**Reduces the edit before applying it.** "Loading In" → "Loading out" becomes `In` → `out`.
+Producers emit roughly one show operator per word, each with its own absolute `Tm`, so editing
+only the word that actually changed leaves every other word's position exactly as authored.
+
+**The trap worth knowing:** a producer declares `/Widths` only for characters the document
+actually uses. Introduce a letter the original never contained — a `j`, say — and it draws with
+**zero advance**, so the next letter lands on top of it, while the extracted text reads
+perfectly. `replace` detects this and writes the real advance into `/Widths`, taken from the
+embedded font program or the matching standard metrics.
+
+`verify` is the point of the skill as much as `replace` is: per-page image SHA-1, a rendered
+pixel diff with its bounding box, before/after crop PNGs, and a text diff. "Nothing else
+changed" is a claim about a binary file, and this is what makes it checkable.
+
+**Limits:** text that is pixels in a scan cannot be edited (`find` says so rather than
+guessing); a glyph absent from a subset font is refused outright. Needs `pymupdf`.
+
 ### `reap-orphaned-blobs`
 Deletes Vercel Blob objects under `shots/` that no database row references, for Run Insights.
 
@@ -769,7 +798,8 @@ claude-commands/
 │   ├── sync-todos-into-gitlab-board/  # + sync_todos.py
 │   ├── reap-orphaned-blobs/
 │   ├── prune-vercel-deployments/  # + scripts/prune-deployments.sh, clear-orphaned-aliases.py
-│   └── update-ats-cv/        # + SCHEMA.md, cv_render/cv_extract/cv_preview.py, fonts
+│   ├── update-ats-cv/        # + SCHEMA.md, cv_render/cv_extract/cv_preview.py, fonts
+│   └── edit-pdf-text/       # + pdftext.py, run_tests.sh
 ├── cmd/dlv/                  # Delve helpers — copy into your Go project
 ├── sync.sh
 ├── remove_non_commands.sh
