@@ -378,6 +378,21 @@ Reuses the `confluence-reader` credentials, so it usually needs zero setup. Stdl
 **Limits:** video audio is never transcribed, so a verbally-explained bug isn't readable from
 frames; sparse sampling can miss a transient error toast; pdf/xlsx are downloaded, not converted.
 
+### `fetch-gdocs-content`
+The Google counterpart. Exports a Doc, Sheet, Slide or Drive file straight from
+`docs.google.com/.../export` into local files you can Read — no browser, no copy-paste.
+Defaults to **markdown** for Docs because the `txt` export silently drops every hyperlink;
+`-f zip` additionally unpacks inline images. Writes `meta.json` with `fetched_at_utc` and a
+`sha256`, because a live doc changes under you mid-analysis.
+
+Public "anyone with the link" docs need no setup. For a private one the user signs in once with
+`gcloud auth login --enable-gdrive-access --no-activate <account>` — `--no-activate` so reading a
+doc doesn't silently switch their active gcloud identity — and the script mints a read-only token
+per call. The token is never printed or stored. Stdlib-only.
+
+Invoked as `/fetch-gdocs-content <url> <what you want to know>`; the notes are the deliverable,
+not the dump.
+
 ### `task`
 Task cards on GitHub Projects (personal repos) or GitLab Issues (work repos), chosen from the
 `origin` remote. `/task 14` claims the card by moving it to In Progress, reads every comment,
@@ -792,6 +807,7 @@ claude-commands/
 │   ├── confluence-writer/    # SKILL.md, template.html
 │   ├── confluence-reader/    # + confluence_fetch.py, credentials.example
 │   ├── issue-ticket-reader/  # + issue_fetch.py, credentials.example
+│   ├── fetch-gdocs-content/  # + gdocs_fetch.py
 │   ├── create-task/
 │   ├── task/                 # + DESIGN.md, taskcore/task_gh/task_gl/todos/session.py
 │   ├── swarm/                # + swarm.py — the orchestrator's mechanics
