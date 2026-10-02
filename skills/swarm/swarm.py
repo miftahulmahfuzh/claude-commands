@@ -140,6 +140,24 @@ def inside(child, parent):
         return False
 
 
+def real_path(p):
+    """A path from the plan index, made usable.
+
+    `/analyze` writes the index's **Worktree:** line as `~/.worktrees/<repo>/<slug>`,
+    and `init` stores that string verbatim -- so every consumer that treats it as a
+    real path saw a directory that has never existed. MEASURED 2026-10-02 on
+    `media-parity-compact-pager`: `spawn` refused both phases with "cwd
+    ~/.worktrees/... does not exist / the worktree may have been removed" against a
+    worktree plainly present on disk, and the message points at the worktree's
+    DELETION, so the instinct is to re-cut one that is fine. `land --step cleanup`
+    would have handed the same literal to `git worktree remove`.
+
+    Applied at init's write so new ledgers are born absolute, AND at every read, so
+    the ledgers already on disk carrying a tilde are repaired without a migration.
+    """
+    return str(Path(p).expanduser()) if p else p
+
+
 def main_worktree(start):
     """The repo the ledger lives in -- the MAIN checkout, not the worktree.
 
@@ -682,7 +700,7 @@ def cmd_init(args):
             "slug": slug,
             "plan": str(plan),
             "branch": meta.get("branch") or None,
-            "worktree": meta.get("worktree") or None,
+            "worktree": real_path(meta.get("worktree")) or None,
             "coordinator": args.coordinator or data.get("coordinator")
                            or meta.get("coordinator"),
             # A NAME IS NOT AN IDENTITY. Session names are mutable and reused: MEASURED
@@ -744,7 +762,7 @@ def cmd_spawn(args):
                     hint="pass --force to relaunch it anyway")
 
     name = child_name(args.prefix, slug, args.phase)
-    cwd = args.cwd or ledger.get("worktree") or repo
+    cwd = args.cwd or real_path(ledger.get("worktree")) or repo
     if not Path(cwd).is_dir():
         return soft(f"cwd {cwd} does not exist", hint="the worktree may have been removed")
     prompt = args.prompt or f"/implement -f {ledger['plan']} --phase {args.phase}"
@@ -967,7 +985,8 @@ def cmd_status(args):
     done = sum(1 for p in ledger.get("phases", []) if p["status"] == "done")
     print(json.dumps({"swarm": True, "slug": slug,
                       "coordinator": ledger.get("coordinator"),
-                      "branch": ledger.get("branch"), "worktree": ledger.get("worktree"),
+                      "branch": ledger.get("branch"),
+                      "worktree": real_path(ledger.get("worktree")),
                       "progress": f"{done}/{len(ledger.get('phases', []))}",
                       "runnable_now": runnable(ledger), "stalled": stalled(ledger),
                       "this_machine": runtime.get("machine"),
@@ -1009,6 +1028,65 @@ def base_ref(repo):
 def land_worktree(repo, slug):
     root = os.environ.get("TASK_WORKTREES") or str(Path.home() / ".worktrees")
     return Path(root) / Path(repo).name / f"land-{slug}"
+
+
+def sync_base_checkout(repo, target, sha):
+    """Bring the MAIN checkout's local `main` up to what we just pushed.
+
+    `push` runs in the throwaway land worktree and pushes `HEAD:main` straight to the
+    remote, so the shared checkout's own `main` ref never moves. MEASURED 2026-10-02 on
+    `media-parity-compact-pager`: local `main` sat at the pre-merge tip while
+    `origin/main` carried the merge, and the coordinator's close-out commit was built on
+    the stale parent -- `git push` then rejected it as non-fast-forward, correctly, and
+    the obvious "fix" (`--force`) would have reverted the entire merge. A `git fetch`
+    before committing does NOT help: by then the commit's PARENT is already wrong.
+
+    Fast-forward only, and never when that would mean moving someone else's work:
+
+      - the branch is checked out HERE  -> `merge --ff-only`, which git itself refuses
+        if it would clobber uncommitted changes
+      - checked out in ANOTHER worktree -> left alone; that tree is not ours to move
+      - not checked out anywhere        -> `update-ref`, which touches no working tree
+
+    A local branch that is not an ancestor of what we pushed means somebody has local
+    commits. Say so and change nothing -- the whole point is that the next commit lands
+    on the right parent, not that this ref gets forced into agreement.
+    """
+    out = {"branch": target, "to": sha}
+    git_run("fetch", "origin", target, "--quiet", cwd=repo)
+    local = git("rev-parse", "--verify", "--quiet", f"refs/heads/{target}", cwd=repo)
+    if not local:
+        out["did"] = "nothing -- no local branch of that name"
+        return out
+    out["from"] = local
+    if local == sha:
+        out["did"] = "nothing -- already current"
+        return out
+    code, _, _ = git_run("merge-base", "--is-ancestor", local, sha, cwd=repo)
+    if code:
+        out.update({"did": "nothing -- local branch has commits of its own",
+                    "warn": f"local {target} is not an ancestor of {sha[:7]}; "
+                            "commit onto origin/" + target + " or rebase, never force"})
+        return out
+
+    here = git("symbolic-ref", "--short", "--quiet", "HEAD", cwd=repo)
+    if here == target:
+        code, _, err = git_run("merge", "--ff-only", sha, cwd=repo)
+        out["did"] = "fast-forwarded the checkout" if code == 0 else "FAILED"
+        if code:
+            out["warn"] = err or "ff-only merge refused -- uncommitted changes?"
+        return out
+
+    for line in (git("worktree", "list", "--porcelain", cwd=repo) or "").splitlines():
+        if line.strip() == f"branch refs/heads/{target}":
+            out["did"] = "nothing -- checked out in another worktree"
+            return out
+
+    code, _, err = git_run("update-ref", f"refs/heads/{target}", sha, local, cwd=repo)
+    out["did"] = "moved the ref (not checked out here)" if code == 0 else "FAILED"
+    if code:
+        out["warn"] = err
+    return out
 
 
 def landable(repo, ledger):
@@ -1101,7 +1179,7 @@ def cmd_land(args):
     branch = ledger.get("branch")
     base = base_ref(repo)
     land = land_worktree(repo, slug)
-    wt = ledger.get("worktree")
+    wt = real_path(ledger.get("worktree"))
     out = {"swarm": True, "slug": slug, "step": args.step, "repo": repo,
            "branch": branch, "base": base, "land_worktree": str(land),
            "worktree": wt, "dry_run": bool(args.dry_run),
@@ -1223,6 +1301,10 @@ def cmd_land(args):
                                   "machine": os.uname().nodename}
                 data["updated"] = now()
             out["landed"] = {"commit": sha, "base": target}
+            # The push went out from the land worktree, so this repo's own `main` is
+            # now behind what production deploys. Catch it up before anyone commits
+            # a close-out on top of the stale tip.
+            out["local_base"] = sync_base_checkout(repo, target, sha)
         out.update({"ok": pushed, "pushed": pushed, "attempts": attempts,
                     "hint": None if pushed else
                             "nothing landed: main is untouched and the branch is intact"})

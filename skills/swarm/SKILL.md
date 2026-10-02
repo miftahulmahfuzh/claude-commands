@@ -234,6 +234,17 @@ request. Apply from the land worktree, verify the objects exist by querying for 
 trusting the migrator's exit code, and only then push. A migration that will not apply stops the
 landing with `main` untouched and the branch intact — which is why nothing was pushed yet.
 
+**`push` also catches the main checkout's own `main` up, and that is not cosmetic.** The push goes
+out from the throwaway land worktree as `HEAD:main`, so the shared checkout's `main` ref does not
+move with it — and the coordinator's close-out commit is made *there*, on the stale tip. MEASURED
+2026-10-02 on `media-parity-compact-pager`: that close-out was rejected non-fast-forward, correctly,
+and the obvious reflex (`--force`) would have reverted the whole merge. A `git fetch` first does
+not save you either: by then the commit's PARENT is already wrong. `push` now reports what it did
+under `local_base`, fast-forward only — it moves the ref when nothing is checked out on it, lets
+git's own guard refuse a dirty tree, and leaves the branch alone when another worktree holds it or
+when it carries local commits of its own. If `local_base` says it changed nothing, rebase the
+close-out onto `origin/main` rather than forcing it.
+
 **`cleanup` is the destructive step and it is guarded twice.** It refuses unless `git merge-base
 --is-ancestor <branch> <base>` proves the work is already in the base, so every earlier stop
 leaves the branch standing *by construction* rather than by someone remembering to check. And it
