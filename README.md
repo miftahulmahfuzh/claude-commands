@@ -557,6 +557,17 @@ changed" is a claim about a binary file, and this is what makes it checkable.
 **Limits:** text that is pixels in a scan cannot be edited (`find` says so rather than
 guessing); a glyph absent from a subset font is refused outright. Needs `pymupdf`.
 
+### `analyze-and-fix-slow-tmux-pane-creation`
+Finds where new-pane/new-shell time actually goes, instead of blaming tmux, WSL or a memory
+leak. Walks a four-rung ladder — load vs cores and swap vs "used"; `shell -i` vs `shell -f` to
+separate the rc files from tmux; a timestamped-`PS4` xtrace to name the exact rc line (`zprof`
+cannot see external commands and will point elsewhere); then fd exhaustion and runaway
+filesystem scans, which are what turn an ordinary rc command slow. Ships `diagnose.sh`
+(read-only). MEASURED 2026-10-02: 22.9 s per pane, of which 18 s was one `lsof` in a
+double-quoted alias — the quotes made it run at every startup — and the `lsof` was only slow
+because a 2-hour runaway font scan held 95% of the system's file descriptors. Killing the scan
+alone took startup to 0.55 s.
+
 ### `reap-orphaned-blobs`
 Deletes Vercel Blob objects under `shots/` that no database row references, for Run Insights.
 
@@ -813,6 +824,7 @@ claude-commands/
 │   ├── swarm/                # + swarm.py — the orchestrator's mechanics
 │   ├── sync-todos-into-gitlab-board/  # + sync_todos.py
 │   ├── reap-orphaned-blobs/
+│   ├── analyze-and-fix-slow-tmux-pane-creation/  # + diagnose.sh
 │   ├── prune-vercel-deployments/  # + scripts/prune-deployments.sh, clear-orphaned-aliases.py
 │   ├── update-ats-cv/        # + SCHEMA.md, cv_render/cv_extract/cv_preview.py, fonts
 │   └── edit-pdf-text/       # + pdftext.py, run_tests.sh
