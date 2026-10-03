@@ -279,8 +279,12 @@ order — the file is the record, the message is the notification, and doing onl
 a silent coordinator or a set nobody can resume:
 
 ```bash
-python3 ~/.claude/skills/swarm/swarm.py find --plan <the phase plan just implemented>
+python3 ~/.claude/skills/swarm/swarm.py find --plan <the phase plan just implemented> --task <its TaskID>
 ```
+
+Either path works — the adopted copy `{pkg}/.workflows/plan/{TaskID}.md` leads `find` back to
+its phase body through the `Source:` header — but pass both: the ledger is built before TaskIDs
+are minted, so `--task` alone can miss, and a miss here is a phase that never reports.
 
 `{"swarm": false, ...}` means this task belongs to no swarm — say nothing, do nothing, done. Every
 `swarm.py` read exits 0 when there is no ledger, so an ordinary task is never affected by any of
@@ -348,7 +352,7 @@ the one exception to its own Autonomy section.
 (run it now if this phase had no swarm report to make):
 
 ```bash
-python3 ~/.claude/skills/swarm/swarm.py find --plan <the phase plan just implemented>
+python3 ~/.claude/skills/swarm/swarm.py find --plan <the phase plan just implemented> --task <its TaskID>
 ```
 
 - `{"swarm": true, ...}` → **stop here, land nothing.** This phase belongs to a coordinated set,

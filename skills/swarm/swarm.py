@@ -1476,6 +1476,47 @@ def index_matches(needle, recorded, slug):
     return here.name == index_name_for(slug)   # the worktree copy /analyze wrote
 
 
+ADOPTED_SOURCE = re.compile(r"^>\s*Adopted from .*?Source:\s*`([^`]+)`", re.MULTILINE)
+TASK_STEM = re.compile(r"^[A-Z0-9]+(?:-[A-Z0-9]+)+$")
+
+
+def adopted_source(text):
+    """The phase body an adopted plan copy was taken from, or None.
+
+    /implement Step 3 does not run a phase from `.workflows/plan/<slug>/phase-N.md`; it
+    copies it to `{pkg}/.workflows/plan/{TaskID}.md` under a header naming the source,
+    and that copy is the plan the session implements -- so it is the path a session
+    hands `find --plan`. MEASURED 2026-10-04 on trade-rules-dev-search: phase 10 asked
+    `find --plan engine/.workflows/plan/P1-ENG-PLRV.md`, matched nothing, concluded
+    `swarm: false` and never reported. Its ledger row had no task_id yet (the ledger is
+    built before /implement mints TaskIDs), so no TaskID route could have rescued it.
+    The header is the one link from the copy back to the set, and it is exact.
+    """
+    m = ADOPTED_SOURCE.search(text or "")
+    return m.group(1).strip() if m else None
+
+
+def plan_needles(needle):
+    """Every path `find --plan` should try: the path itself, then what it was adopted from."""
+    if not needle:
+        return []
+    out = [needle]
+    try:
+        with open(needle, encoding="utf-8") as fh:
+            src = adopted_source(fh.read(4096))
+    except OSError:
+        src = None
+    if src and src not in out:
+        out.append(src)
+    return out
+
+
+def task_from_plan(needle):
+    """`.../P1-ENG-PLRV.md` -> `P1-ENG-PLRV`: an adopted copy is named by its TaskID."""
+    stem = Path(needle).stem if needle else ""
+    return stem if TASK_STEM.match(stem) else None
+
+
 def find_payload(ledger, ledger_file, phase_n):
     """The answer `find` prints, for a phase hit and an index hit alike."""
     phases = ledger.get("phases", [])
@@ -1511,6 +1552,8 @@ def cmd_find(args):
     if not root.is_dir():
         return soft("no orchestration directory", repo=repo)
     needle = str(Path(args.plan).expanduser()) if args.plan else None
+    needles = plan_needles(needle)
+    tasks = {t for t in (args.task, task_from_plan(needle)) if t}
     ledgers = [(f, load(f)) for f in sorted(root.glob("*/ledger.json"))]
 
     # A TaskID or a phase body identifies ONE phase exactly, so it must win over an
@@ -1518,9 +1561,9 @@ def cmd_find(args):
     # one pass that takes whichever kind of hit a sorted scan reaches first.
     for ledger_file, ledger in ledgers:
         for phase in ledger.get("phases", []):
-            hit = (args.task and phase.get("task_id") == args.task) or (
-                needle and plan_matches(needle, phase.get("plan"),
-                                        ledger.get("slug")))
+            hit = (phase.get("task_id") in tasks) or any(
+                plan_matches(n, phase.get("plan"), ledger.get("slug"))
+                for n in needles)
             if hit:
                 print(json.dumps(find_payload(ledger, ledger_file, phase["n"]),
                                  indent=2))
@@ -1698,6 +1741,8 @@ INDEX = """# Plan: Demo
 
 
 def selftest():
+    import tempfile
+
     failures = []
 
     def eq(label, got, want):
@@ -1764,6 +1809,36 @@ def selftest():
     eq("no slug, no basename fallback",
        index_matches("/somewhere/else/PLAN.md", idx, None), False)
 
+    # --- an adopted copy must lead back to its phase ----------------------------------
+    # /implement runs a phase from `{pkg}/.workflows/plan/{TaskID}.md`, not from the
+    # set's phase body; a phase that probed with that path found no swarm and never
+    # reported (trade-rules-dev-search phase 10).
+    adopted = ("> Adopted from `BRANCH_SORT_ORDER_PLAN.md` phase 2. Source: "
+               "`.workflows/plan/branch-sort-order/phase-2.md`.\n"
+               "> Written and reconciled by /analyze — edit the source, not this copy.\n\n"
+               "# Phase 2: Docs\n")
+    eq("the adoption header names the source", adopted_source(adopted),
+       ".workflows/plan/branch-sort-order/phase-2.md")
+    eq("the source matches the ledger's phase body",
+       plan_matches(adopted_source(adopted), ".workflows/plan/branch-sort-order/phase-2.md",
+                    "branch-sort-order"), True)
+    eq("a plan with no header has no source", adopted_source("# Phase 2: Docs\n"), None)
+    eq("a Source: in prose is not a header",
+       adopted_source("we said Source: `x/phase-1.md` once\n"), None)
+    eq("an adopted copy is named by its TaskID",
+       task_from_plan("/wt/engine/.workflows/plan/P1-ENG-PLRV.md"), "P1-ENG-PLRV")
+    eq("a phase body is not a TaskID", task_from_plan("/wt/.workflows/plan/x/phase-2.md"),
+       None)
+    eq("the index is not a TaskID", task_from_plan("/wt/BRANCH_SORT_ORDER_PLAN.md"), None)
+    eq("no plan, no TaskID", task_from_plan(None), None)
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = Path(tmp) / "P2-TP-A012.md"
+        copy.write_text(adopted, encoding="utf-8")
+        eq("plan_needles reads the copy and adds its source", plan_needles(str(copy)),
+           [str(copy), ".workflows/plan/branch-sort-order/phase-2.md"])
+        eq("a missing file is only itself", plan_needles(str(Path(tmp) / "gone.md")),
+           [str(Path(tmp) / "gone.md")])
+
     fixture = {"slug": "branch-sort-order", "coordinator": "orch-branch-sort-order",
                "phases": [{"n": 1}, {"n": 2}, {"n": 3}]}
     eq("an index hit still names the coordinator",
@@ -1801,7 +1876,6 @@ def selftest():
        True)
 
     # The plan a child is handed must exist: the recorded path is only a first guess.
-    import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         repo_dir, wt = Path(tmp) / "repo", Path(tmp) / "wt"
         durable = orch_dir(repo_dir, "branch-sort-order") / "PLAN.md"

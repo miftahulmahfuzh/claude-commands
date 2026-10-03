@@ -459,6 +459,6 @@ it yourself.**
 | `verify --slug S [--apply]` | re-derive status from git and todos.md |
 | `land --slug S --step check\|merge\|push\|cleanup` | merge the set into `main`, push it, delete the worktrees and the branch |
 | `status --slug S` | durable + runtime, merged, for a human |
-| `find --plan P \| --task T [--phase N]` | which swarm owns this, and who to report to. `P` may be a phase body OR the set's index |
+| `find --plan P \| --task T [--phase N]` | which swarm owns this, and who to report to. `P` may be a phase body, the set's index, OR /implement's adopted copy `{TaskID}.md` (followed through its `Source:` header) |
 | `track` | make `.workflows/orchestration/` survive the repo's `.gitignore` |
 | `selftest` | offline assertions; no git, tmux or network |
