@@ -749,6 +749,30 @@ def cmd_waves(args):
     return 0
 
 
+def spawn_plan(ledger, repo, slug, cwd):
+    """The plan index a child should be handed, or None if no candidate exists.
+
+    `ledger["plan"]` is whatever path `init` was given, resolved on the machine that ran
+    it -- and that copy is not guaranteed to survive. MEASURED on strategy-a-backtest:
+    `init` ran from the worktree on a copy under the worktree's
+    `.workflows/orchestration/`, the set was then moved to the main checkout where the
+    ledger lives, and every child was spawned with `/implement -f <path that no longer
+    existed>`. A ledger resumed on another machine carries the other machine's absolute
+    path the same way. So the recorded path is a first guess, checked, then the index
+    `/analyze` leaves in the worktree the child runs in, then the durable copy next to
+    the ledger. A child is never handed a path nobody looked at.
+    """
+    candidates = [ledger.get("plan")]
+    name = index_name_for(slug)
+    if name:
+        candidates.append(str(Path(cwd) / name))
+    candidates.append(str(orch_dir(repo, slug) / "PLAN.md"))
+    for candidate in candidates:
+        if candidate and Path(candidate).expanduser().is_file():
+            return str(Path(candidate).expanduser())
+    return None
+
+
 def cmd_spawn(args):
     repo, slug = find_repo_and_slug(args.slug)
     if not repo:
@@ -765,7 +789,14 @@ def cmd_spawn(args):
     cwd = args.cwd or real_path(ledger.get("worktree")) or repo
     if not Path(cwd).is_dir():
         return soft(f"cwd {cwd} does not exist", hint="the worktree may have been removed")
-    prompt = args.prompt or f"/implement -f {ledger['plan']} --phase {args.phase}"
+    if args.prompt:
+        prompt = args.prompt
+    else:
+        plan = spawn_plan(ledger, repo, slug, cwd)
+        if not plan:
+            return soft(f"no plan index found for {slug}", recorded=ledger.get("plan"),
+                        hint="re-run init with --plan pointing at the set's PLAN.md")
+        prompt = f"/implement -f {plan} --phase {args.phase}"
     argv = spawn_argv(name, cwd, prompt, args.permission_mode, args.model)
     trust = ensure_trusted(cwd, ledger.get("repo") or repo, enabled=not args.no_trust)
 
@@ -1768,6 +1799,27 @@ def selftest():
        "'/implement -f P.md --phase 1'" in argv[-1], True)
     eq("permission mode is passed through", "--permission-mode acceptEdits" in argv[-1],
        True)
+
+    # The plan a child is handed must exist: the recorded path is only a first guess.
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        repo_dir, wt = Path(tmp) / "repo", Path(tmp) / "wt"
+        durable = orch_dir(repo_dir, "branch-sort-order") / "PLAN.md"
+        durable.parent.mkdir(parents=True)
+        wt.mkdir()
+        gone = {"plan": str(wt / ORCH_DIR / "branch-sort-order" / "PLAN.md")}
+        eq("a recorded plan that is gone and nothing else exists -> None",
+           spawn_plan(gone, repo_dir, "branch-sort-order", wt), None)
+        durable.write_text("x")
+        eq("falls back to the durable copy beside the ledger",
+           spawn_plan(gone, repo_dir, "branch-sort-order", wt), str(durable))
+        (wt / "BRANCH_SORT_ORDER_PLAN.md").write_text("x")
+        eq("prefers the worktree's own index over the durable copy",
+           spawn_plan(gone, repo_dir, "branch-sort-order", wt),
+           str(wt / "BRANCH_SORT_ORDER_PLAN.md"))
+        eq("a recorded plan that exists wins",
+           spawn_plan({"plan": str(durable)}, repo_dir, "branch-sort-order", wt),
+           str(durable))
 
     # Reaping. The gate is the ledger backed by git, never what the pane looks like:
     # a claude that finished its phase sits at an idle prompt rather than exiting.
