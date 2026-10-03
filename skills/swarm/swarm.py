@@ -537,7 +537,33 @@ def child_name(prefix, slug, n):
     return head[:MAX_NAME - len(tail)] + tail
 
 
-def spawn_argv(name, cwd, prompt, permission_mode=None, model=None, keep_open=True):
+THREAD_CAPS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+               "BLIS_NUM_THREADS", "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS")
+
+
+def thread_cap_env(environ=None):
+    """`-e VAR=value` pairs capping native thread pools in a spawned session.
+
+    MEASURED 2026-10-04 on seer trade-rules-dev-search: five phases of one wave each ran
+    the full pytest suite at once. numpy/scipy/scikit-learn sized their pools to the 24
+    cores, so every pytest held 58 threads, load sat near 60 for hours, and a suite that
+    takes 2 min alone took 7-8.5 h -- and a wall-time test then failed in every phase.
+    Capped at 1, four concurrent suites finished in 2:40 each. A wave IS concurrent
+    suites, so the cap belongs on every child rather than in each repo's test setup.
+
+    The coordinator's own value is forwarded when it has one: tmux hands a new window
+    the SERVER's environment, not this process's, so an explicit setting would otherwise
+    be lost on the way to the child.
+    """
+    env = os.environ if environ is None else environ
+    out = []
+    for var in THREAD_CAPS:
+        out += ["-e", f"{var}={env.get(var) or '1'}"]
+    return out
+
+
+def spawn_argv(name, cwd, prompt, permission_mode=None, model=None, keep_open=True,
+               environ=None):
     inner = ["claude", "-n", name]
     if permission_mode:
         inner += ["--permission-mode", permission_mode]
@@ -549,8 +575,9 @@ def spawn_argv(name, cwd, prompt, permission_mode=None, model=None, keep_open=Tr
         # Without this the window closes the instant claude exits and the scrollback
         # -- which is the only record of a phase that failed -- goes with it.
         command += "; exec ${SHELL:-/bin/sh}"
-    return ["tmux", "new-window", "-d", "-n", name, "-c", cwd,
-            "-P", "-F", "#{window_id} #{pane_id}", command]
+    return (["tmux", "new-window", "-d", "-n", name, "-c", cwd]
+            + thread_cap_env(environ)
+            + ["-P", "-F", "#{window_id} #{pane_id}", command])
 
 
 # -------------------------------------------------------------------- reaping tmux
@@ -1874,6 +1901,17 @@ def selftest():
        "'/implement -f P.md --phase 1'" in argv[-1], True)
     eq("permission mode is passed through", "--permission-mode acceptEdits" in argv[-1],
        True)
+    eq("every thread pool is capped at 1 by default",
+       [a for a in spawn_argv("n", "/tmp", "p", environ={}) if "=" in a and "_THREADS" in a],
+       [f"{v}=1" for v in THREAD_CAPS if "THREADS" in v])
+    eq("the veclib cap too", "VECLIB_MAXIMUM_THREADS=1" in spawn_argv("n", "/tmp", "p",
+                                                                     environ={}), True)
+    eq("an explicit value in the coordinator is forwarded, not overridden",
+       "OMP_NUM_THREADS=4" in spawn_argv("n", "/tmp", "p", environ={"OMP_NUM_THREADS": "4"}),
+       True)
+    eq("every cap is a tmux -e pair", thread_cap_env({}).count("-e"), len(THREAD_CAPS))
+    eq("the command stays last, after the env flags",
+       spawn_argv("n", "/tmp", "p", environ={})[-1].startswith("claude -n n"), True)
 
     # The plan a child is handed must exist: the recorded path is only a first guess.
     with tempfile.TemporaryDirectory() as tmp:
