@@ -159,13 +159,17 @@ Then, until nothing is runnable and nothing is live:
 
 1. **Spawn every runnable phase, in one round.** `spawn --slug <slug> --phase N` opens a detached
    tmux window (`-d`, so it never steals the window the user is watching) running
-   `/implement -f <plan> --phase N`.
+   `/implement -f <plan> --phase N`. Every phase of the set gets the **same worktree** — phase
+   N+1 has to build against phase N's code, so one worktree per phase would have each phase
+   planning against a tree the others' work never reached. See **One worktree, many writers**.
 2. **Subscribe to each one:** `SendMessage` with `notify_when_idle: true` and no message. This is
    the only way to catch a phase that dies without reporting — a report-back alone cannot
    distinguish "still working" from "crashed".
 3. **Collect reports.** Each arrives as `<cross-session-message from="impl-<slug>-pN">`.
 4. **Verify before believing.** `swarm.py verify --slug <slug> --apply`. A phase that says it
-   landed but whose commit is not on the branch has not landed.
+   landed but whose commit is not on the branch has not landed. Then read the commit's file list
+   (`git show --stat --format="" <sha>`) against the plan index's **File ownership** table —
+   `verify` proves a commit is on the branch, not that it contains only what its phase owned.
 5. **Commit and push the ledger.** Every round, not at the end — this is what bounds a
    cross-machine resume to losing at most one phase.
 6. **Reap the windows the wave finished with.** `reap --slug <slug>`, after `verify` and
@@ -180,6 +184,35 @@ failed — report those to the user rather than spawning them, and **keep drivin
 runnable**. A failure in one branch of the DAG never pauses the branches it does not touch, and it
 is never a reason to ask whether to continue: halting a set on one failed phase turns a partial
 night into an empty one.
+
+### One worktree, many writers
+
+Every phase of a set runs in the worktree `/analyze` cut for it, concurrently. That is the right
+design — a phase must build against its dependencies' code — but it means `git status` in that
+tree shows **other phases' half-written files** alongside the running phase's own, with nothing
+in git to mark which is which.
+
+So a phase that stages the tree as a whole commits its siblings' unfinished work under its own
+name, pushes it, and reports a green test run against a tree that will never exist again. The
+plan index's **File ownership** table is the only thing that separates them, and it is prose, not
+a lock.
+
+The flow closes this: `/implement` and `/do` report `modified_files`, `completion-handler` turns
+that into a `paths` allowlist, and `pusher` stages that list — never `git add .`, `git add -A` or
+`git commit -a`. A coordinator checks it held by reading each commit's file list against the
+ownership table before believing the phase's report.
+
+MEASURED 2026-10-06 on `build-promotion-path`: phases 1, 2 and 3 ran at once in one worktree.
+Phase 1 committed while phase 3's partly-written `lab/prereg.py`, `commands/lab.py` and new tests
+sat dirty beside it; phase 3 later committed while phase 2's `research.py` was mid-edit. Both
+scoped their stages and nothing was contaminated — but at the time nothing *required* it, so a
+clean set was two independent correct guesses. The allowlist exists to make it a property of the
+flow instead.
+
+One thing the allowlist does **not** license: never `git stash`, `git restore`, `git checkout --`
+or `git clean` a path outside it to tidy the tree first. Everything outside your allowlist is a
+peer's uncommitted work, and discarding it is the only failure in this area that nothing can
+recover — the commit is still in history, but their edits are simply gone.
 
 ### Spawn children on the coordinator's own permission mode
 

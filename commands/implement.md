@@ -254,6 +254,14 @@ Run the plan's **Verification** commands before reporting success. A failing bui
 failure, not a caveat.
 
 Then dispatch **`completion-handler`**:
+
+**`modified_files` must be complete and must be yours.** It becomes the `paths` allowlist that
+`pusher` stages, so a file missing from it is a file left out of the commit, and a file wrongly
+in it is a peer's work committed under your name. When this phase belongs to a plan set, the
+other phases of that set are running **in this same worktree right now** — `git status` here
+shows their half-written files alongside yours, and the plan index's **File ownership** table is
+what tells the two apart. List what you changed, not what is dirty.
+
 ```yaml
 completion_report:
   task_id: "{TaskID}"

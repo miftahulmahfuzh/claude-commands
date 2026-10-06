@@ -52,6 +52,24 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
    reviewer reaches from `git log` without opening `todos.md`.
    - EASY/NORMAL: target branch is current branch (typically `main`).
    - Plan-set phases: target branch is the plan set's branch. Do NOT merge to main.
+   - **Always pass `paths` — the allowlist of files this commit may contain.** Build it from
+     `completion_report.modified_files`, plus whatever steps 1-3 just wrote: the package's
+     `todos.md`, the plan index, and anything `readme-updater` reported. You hold that list
+     already; pusher cannot reconstruct it.
+
+   **Why the allowlist is required, not optional.** A plan set's phases run **concurrently in one
+   shared worktree**. When this phase commits, a sibling's half-written files are routinely dirty
+   in the same tree, and an unscoped `git add .` cannot tell them apart from yours. MEASURED
+   2026-10-06 on `build-promotion-path`: phases 1, 2 and 3 ran at once in a single worktree, and
+   an unscoped stage in phase 1 would have pushed phase 3's uncompilable half-written
+   `lab/prereg.py` under phase 1's name — invalidating phase 1's verified "suite green" claim and
+   committing phase 3's work before it was finished. It was avoided only because both sessions
+   independently chose to scope their stage. Passing `paths` is what makes that a property of the
+   flow instead of a coin flip.
+
+   If pusher reports dirty paths it left out, **carry that line into your final report** — it is
+   how the calling session learns a peer is mid-write in the same tree. Do not go back and commit
+   them.
 
 5. **Work out the next session's command.** You are the only step that has read the plan
    index, so this is yours to produce and the calling command's only to print. It is what

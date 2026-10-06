@@ -333,6 +333,15 @@ Runs **before** the pusher so README updates are committed with the code.
 
 Stages, writes a conventional-commit message, commits, pushes.
 
+It stages a **`paths` allowlist**, never `git add .`, and `completion-handler` builds that list
+from `completion_report.modified_files` plus the bookkeeping files steps 4 and 5 wrote. A
+plan-set phase shares its worktree with every other phase of the set running at the same time, so
+an unscoped stage commits a peer's half-written files under this task's name. Report what *this
+task* changed, not what `git status` shows dirty.
+
+If pusher reports paths it left out of the commit, that is a peer mid-write in the same tree, not
+an error — it surfaces in the final report and nothing goes back to sweep them in.
+
 #### Step 7: Report to the Swarm (Main Context, only if there is one)
 
 A phase run by an orchestrator has a session waiting on it. Report in **both** halves, in this

@@ -191,6 +191,26 @@ Loop until `runnable_now` is empty:
    Each opens a detached tmux window running `/implement -f <PLAN.md> --phase N` in a session
    already named `impl-<slug>-p<N>`. Detached on purpose: it must never steal the window the user
    is reading.
+
+   **Every phase in the wave runs in the SAME worktree — the one `/analyze` cut for the set — and
+   that is deliberate.** Phase N+1 needs phase N's code on disk to build against, so one worktree
+   per phase would mean each phase planning against a tree the others' work had not reached. The
+   cost is that concurrent phases see each other's uncommitted files, and a phase that stages the
+   tree as a whole commits its siblings' half-written work under its own name.
+
+   The flow handles this — `completion-handler` passes `pusher` a `paths` allowlist built from
+   `modified_files`, and `pusher` refuses `git add .` — but **verify it held rather than assuming
+   it**: when a phase reports, check its commit's file list against the plan index's
+   **File ownership** table before you believe the report (Step 4.5). A commit carrying a file
+   another phase owns is a contaminated commit even when the tests passed, because the tests
+   passed against a tree that included work its author never finished.
+
+   MEASURED 2026-10-06 on `build-promotion-path`: phases 1, 2 and 3 ran concurrently in one
+   worktree. Phase 1 committed while phase 3's partly-written `lab/prereg.py`, `commands/lab.py`
+   and tests were dirty beside it. Both sessions chose explicit path allowlists unprompted and
+   nothing was contaminated — but at the time nothing in the flow required it, so the clean
+   result was two correct guesses rather than a guarantee. `pusher` and `completion-handler` were
+   changed to require the allowlist; this check is the belt to that braces.
 3. **Re-read `ListAgents` before addressing anyone.** A name captured a minute ago may now
    belong to a different session — names are mutable and reused. Then **subscribe to each**,
    in one message, with `SendMessage` carrying `notify_when_idle: true`
@@ -210,6 +230,24 @@ Loop until `runnable_now` is empty:
    reported, not asked.
 5. **Verify, then believe.** `swarm.py verify --slug <slug> --apply`. A phase that reports `done`
    whose commit is not on the branch has not landed, whatever it said.
+
+   `verify` answers *did it land*, not *did it land only what it owned* — and in a shared worktree
+   those are different questions. So also read the commit's own file list:
+
+   ```bash
+   git show --stat --format="" <sha>
+   ```
+
+   Check it against the plan index's **File ownership** table. A file another phase owns, or one
+   no phase claims, means the stage was not scoped — stop and look before spawning anything that
+   depends on it, because a dependent phase built on a contaminated commit inherits the problem
+   and buries it one layer deeper. `verify` cannot catch this: the commit is a perfectly good
+   ancestor of the branch either way.
+
+   Where a phase's exit criteria name a guardrail that a bad stage could silently break — a
+   pinned constant, a test that must not be edited, a fingerprint that must not move — re-run
+   that check yourself here rather than quoting the phase's report of it. A phase verifying its
+   own guardrail is the weaker witness, and these are cheap: one `grep`, one `git diff --numstat`.
 6. **Push the ledger** via `pusher`. Every round. This is iron rule 2.
 7. **Reap the finished windows.**
    ```bash

@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **A plan-set phase could commit its siblings' half-written files** (`pusher`,
+  `completion-handler`, `/implement`, `/do`, `/analyze-orchestrator`, `skills/swarm`)
+  - `pusher` step 5 said *"Execute `git add .` to stage all changes"*. Every phase of a plan set
+    runs **concurrently in one shared worktree** — by design, since phase N+1 must build against
+    phase N's code — so at the moment any phase commits, its siblings' partly-written files are
+    routinely dirty in the same tree. `git add .` cannot tell them apart
+  - The result would be a phase pushing an uncompilable half-module under its own name,
+    committing a peer's work before that peer finished it, and reporting a verified "suite green"
+    about a tree that never exists again. The peer's next commit then shows those files as
+    already-committed, so the loss is silent at both ends
+  - `pusher` now stages an explicit `paths` allowlist (`git add -- <paths>`) and refuses
+    `git add .`, `git add -A` and `git commit -a`. Its change analysis is scoped too — an
+    unscoped `git diff HEAD` in a shared worktree writes a commit message describing someone
+    else's work. It reports any dirty path it deliberately left out, by name
+  - `completion-handler` now builds that allowlist from `completion_report.modified_files` plus
+    the bookkeeping files it and `readme-updater` wrote, and passes it. The list already existed
+    and was being discarded one step short of the thing that needed it
+  - `pusher` is forbidden from `git stash`/`restore`/`checkout --`/`clean` on paths outside the
+    allowlist. Sweeping a peer's file into a commit is recoverable; discarding it is not
+  - `/analyze-orchestrator` and `skills/swarm` gained the other half: a coordinator reads each
+    phase commit's file list against the plan index's **File ownership** table before believing
+    the report. `verify` proves a commit is an ancestor of the branch, which is true of a
+    contaminated commit as well — so it cannot catch this on its own
+  - MEASURED 2026-10-06 on `build-promotion-path`: phases 1, 2 and 3 ran at once in one worktree.
+    Phase 1 committed with phase 3's `lab/prereg.py`, `commands/lab.py` and tests dirty beside it;
+    phase 3 committed with phase 2's `research.py` mid-edit. Nothing was contaminated — both
+    sessions independently chose explicit path allowlists. A guarantee that depends on two agents
+    each guessing right is not a guarantee, which is what this change fixes
+
 ## [3.0.0] - 2026-09-04
 
 ### Breaking Changes
