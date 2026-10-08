@@ -211,6 +211,35 @@ Loop until `runnable_now` is empty:
    nothing was contaminated — but at the time nothing in the flow required it, so the clean
    result was two correct guesses rather than a guarantee. `pusher` and `completion-handler` were
    changed to require the allowlist; this check is the belt to that braces.
+
+   **The allowlist stops contamination; it does not stop a tree-wide command, and that is the
+   failure that actually destroys work.** `git reset --hard` names no path, so "stay inside your
+   allowlist" never catches it — and it reverts every tracked file of every peer, leaving no
+   recoverable object behind for anything unstaged. Same for `git clean -fd`, `git checkout .`,
+   `git restore .`, bare `git stash` and `git checkout <branch>`.
+
+   MEASURED 2026-10-08 on `gotrade-fee-rebuild`: phase 1 committed, correctly noticed its commit
+   had swept in phase 3's `benchmark.py` and `test_paper_benchmark.py` under its own message, and
+   reached for `git reset --hard origin/<branch>` to undo it. The contamination guard worked
+   perfectly — neither bad commit reached the branch. The *cleanup* destroyed phase 4's twelve
+   files of finished, verified, uncommitted work in the same instant and cost phase 3 ~86 lines
+   of tests. One session's correct instinct, executed tree-wide, took out two uninvolved peers.
+
+   So when a wave spawns into a shared worktree, **say the ban once to every child in the wave**,
+   with the safe alternative beside it — the reach for `reset --hard` is almost always a correct
+   instinct aimed at the wrong tool:
+
+   - to undo your own commit: `git reset --soft HEAD~1` (moves HEAD, touches nothing in the tree)
+   - to revert your own edits: `git checkout -- <each path you own>`
+   - to set work aside: `git stash push -u -m "p<N>-<unique-tag>"`, recover with `apply <sha>`
+
+   **If one has already run, preserve before you repair, and do it first.** `git reflog` names
+   every commit the reset orphaned, and orphaned commits are gc-able — so tag each one *before*
+   investigating: `git tag -f rescue/reset-casualty-<sha> <sha>`. Then diff each tag against the
+   branch to learn what is actually missing, and tell the owning phase what to recover. Do not
+   restore a peer's files yourself: the phase owns them and knows which version it wanted. A
+   phase whose work is gone re-runs from its plan — which is exactly why `/analyze` builds phases
+   that stand alone.
 3. **Re-read `ListAgents` before addressing anyone.** A name captured a minute ago may now
    belong to a different session — names are mutable and reused. Then **subscribe to each**,
    in one message, with `SendMessage` carrying `notify_when_idle: true`

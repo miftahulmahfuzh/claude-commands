@@ -214,6 +214,45 @@ or `git clean` a path outside it to tidy the tree first. Everything outside your
 peer's uncommitted work, and discarding it is the only failure in this area that nothing can
 recover — the commit is still in history, but their edits are simply gone.
 
+### Never run a tree-wide git command in a shared worktree
+
+The rule above is phrased per-path, and that phrasing left a hole wide enough to lose a phase
+through: **the most destructive commands take no path at all.** `git reset --hard` does not read
+as "a path outside my allowlist", because it names no path — it reverts *every tracked file of
+every peer*, and for unstaged changes it leaves no object behind. There is no reflog entry, no
+dangling blob, no `fsck --lost-found` to recover from. The work is simply gone.
+
+**Banned outright while any peer shares the worktree, no exceptions and no path form:**
+
+| Never | Because | Do this instead |
+|---|---|---|
+| `git reset --hard` | reverts every tracked file in the tree, all peers included; unstaged work leaves no recoverable object | `git reset --soft HEAD~1` to undo your own commit — it moves HEAD and touches **nothing** in the working tree |
+| `git clean -fd` / `-fdx` | deletes every untracked file, including peers' new source files | delete your own files by name |
+| `git checkout .` / `git checkout -- .` / `git restore .` | the bare `.` is the whole tree | `git checkout -- <each path you own>` |
+| `git stash` (bare) / `git stash pop` | stashes the whole tree and the stack is shared across worktrees | `git stash push -u -m "<phase>-<unique-tag>"`, recover with `apply <sha>` |
+| `git checkout <branch>` / `git switch` | moves every peer's tree to another commit | never; the set has one branch by design |
+
+**The trap is that the reach for one of these is almost always correct in intent.** MEASURED
+2026-10-08 on `gotrade-fee-rebuild`: phase 1 committed, noticed its commit had swept in phase 3's
+`benchmark.py` and `test_paper_benchmark.py` under phase 1's own message — the contamination this
+section exists to prevent, caught correctly by the phase itself — and reached for
+`git reset --hard origin/<branch>` to undo it. The guard worked: neither bad commit ever reached
+the branch. But the *cleanup* destroyed phase 4's twelve files of finished, verified, uncommitted
+work in the same instant, and cost phase 3 ~86 lines of tests it had to be told to recover from a
+tag. One session's correct instinct, executed tree-wide, took out two uninvolved peers.
+
+So: **to undo your own commit, `git reset --soft HEAD~1`.** It does exactly what the instinct
+wants — unmakes the commit, leaves every byte in the tree — and it is safe with twelve writers
+present. `--mixed` (the default, no flag) is also tree-safe: it unstages but edits nothing.
+`--hard` is the only one that writes to the working tree, and it is never the right tool here.
+
+**If one has already been run, the coordinator's first move is to preserve, not to repair.**
+`git reflog` names every commit the reset orphaned; tag each one immediately —
+`git tag -f rescue/reset-casualty-<sha> <sha>` — *before* anything else, because orphaned commits
+are gc-able and tags make them permanent. Then diff each tag against the branch to find out what
+is actually missing, and tell the owning phase what to recover. Do not restore a peer's files
+yourself: the phase owns them and is the better judge of which version it wanted.
+
 ### Spawn children on the coordinator's own permission mode
 
 Two separate reasons, and both are load-bearing.

@@ -262,6 +262,24 @@ other phases of that set are running **in this same worktree right now** — `gi
 shows their half-written files alongside yours, and the plan index's **File ownership** table is
 what tells the two apart. List what you changed, not what is dirty.
 
+**Never run a tree-wide git command in that worktree, including to clean up your own mistake.**
+`git reset --hard` is banned outright, and so are `git clean -fd`, `git checkout .`,
+`git restore .`, bare `git stash` and `git checkout <branch>`. None of them names a path, so none
+is covered by "stay inside your allowlist" — and `--hard` reverts every tracked file of every
+peer, leaving no recoverable object for anything that was unstaged.
+
+**To undo a commit you just made, use `git reset --soft HEAD~1`** — it unmakes the commit and
+touches nothing in the working tree. To revert your own edits, name them:
+`git checkout -- <each path you own>`.
+
+MEASURED 2026-10-08 on `gotrade-fee-rebuild`: a phase committed, correctly noticed it had swept in
+a peer's files under its own message, and reached for `git reset --hard origin/<branch>` to undo
+it. The detection was right and nothing bad reached the branch — but the cleanup destroyed a
+third phase's twelve files of finished, verified, uncommitted work, and cost a fourth ~86 lines
+of tests. The instinct was correct; only the tool was tree-wide. If you have already run one,
+**stop and tell the coordinator immediately** — orphaned commits are recoverable from `git reflog`
+only until garbage collection, and the coordinator tags them.
+
 ```yaml
 completion_report:
   task_id: "{TaskID}"

@@ -342,6 +342,20 @@ task* changed, not what `git status` shows dirty.
 If pusher reports paths it left out of the commit, that is a peer mid-write in the same tree, not
 an error — it surfaces in the final report and nothing goes back to sweep them in.
 
+**And never run a tree-wide git command there, not even to undo your own mistake.**
+`git reset --hard`, `git clean -fd`, `git checkout .`, `git restore .`, bare `git stash` and
+`git checkout <branch>` are all banned while a peer shares the worktree. None of them takes a
+path, so none is caught by "stay inside your allowlist", and `--hard` reverts every tracked file
+of every peer with no recoverable object left for unstaged work.
+
+To undo a commit you just made: **`git reset --soft HEAD~1`**, which moves HEAD and touches
+nothing in the tree. To revert your own edits: `git checkout -- <each path you own>`.
+
+MEASURED 2026-10-08 on `gotrade-fee-rebuild`: a session correctly caught that its own commit had
+swept in a peer's files, reached for `git reset --hard` to undo it, and destroyed another phase's
+twelve files of finished uncommitted work in the same instant. If you have already run one, stop
+and tell the coordinator — `git reflog` still names the orphaned commits until gc takes them.
+
 #### Step 7: Report to the Swarm (Main Context, only if there is one)
 
 A phase run by an orchestrator has a session waiting on it. Report in **both** halves, in this

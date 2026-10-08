@@ -71,6 +71,29 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
    how the calling session learns a peer is mid-write in the same tree. Do not go back and commit
    them.
 
+   **And never run a tree-wide git command to tidy the tree, at any point.** `git reset --hard`
+   is banned outright, and so are `git clean -fd`, `git checkout .`, `git restore .`, bare
+   `git stash` and `git checkout <branch>`. None of them names a path, so none is caught by the
+   allowlist rule above — and `--hard` reverts every tracked file of every peer in the shared
+   worktree, leaving no recoverable object for anything unstaged.
+
+   MEASURED 2026-10-08 on `gotrade-fee-rebuild`: **a completion-handler ran one.** Its calling
+   phase had handed it an allowlist slightly wider than that phase's Owns, the resulting commit
+   swept in a peer's files, and this agent reached for `git reset --hard origin/<branch>` to undo
+   it — destroying a third phase's twelve files of finished, verified, uncommitted work, and
+   costing a fourth ~86 lines of tests. The detection was correct; the tool was tree-wide. This
+   is why the ban is written here and not only in the calling command: this agent is the one that
+   actually held the shell.
+
+   If a commit went out wrong: **`git reset --soft HEAD~1`** unmakes it and touches nothing in the
+   working tree. To unstage, `git restore --staged <specific paths>`. If it was already pushed,
+   do not try to fix it — report the fact and let the calling session decide, because rewriting a
+   branch that other sessions are pushing to is worse than the bad commit.
+
+   **Keep `paths` no wider than the phase's Owns.** A todos.md or package_readme the phase did not
+   change is how a peer's file gets within reach in the first place — include bookkeeping files
+   only when steps 1-3 actually wrote them.
+
 5. **Work out the next session's command.** You are the only step that has read the plan
    index, so this is yours to produce and the calling command's only to print. It is what
    lets a plan set be walked from phase 1 to phase N without anyone re-deriving the order.
@@ -184,6 +207,10 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
 
 ## Rules
 - NEVER run the task's own `git add/commit/push` directly. The pusher subagent owns that.
+- NEVER run `git reset --hard`, `git clean`, `git checkout .`/`--  .`, `git restore .`, bare
+  `git stash`, or `git checkout <branch>`. These are tree-wide, the worktree is shared with every
+  other phase of the set, and `--hard` destroys peers' unstaged work irrecoverably. To undo your
+  own commit use `git reset --soft HEAD~1`; to unstage use `git restore --staged <paths>`.
 - **Step 5a is the one exception**: landing the last phase of a non-swarm plan set — the merge,
   its push, and the worktree/branch cleanup — is this agent's own job, run directly, after
   pusher has already pushed the phase's commit.

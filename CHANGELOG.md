@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A tree-wide `git reset --hard` could destroy every peer's uncommitted work, and nothing
+  forbade it** (`completion-handler`, `pusher`, `/implement`, `/do`, `/analyze-orchestrator`,
+  `skills/swarm`)
+  - The existing protections were all phrased **per-path** — "never discard a path *outside your
+    allowlist*". The most destructive git commands take no path at all, so none of them was
+    covered. `git reset --hard` does not read as "a path outside my allowlist" because it names
+    no path; it reverts every tracked file of every session sharing the worktree
+  - This is strictly worse than the contamination it was reached for. A contaminated commit is
+    recoverable — the work is in history under the wrong name. Unstaged changes killed by
+    `--hard` leave **no object at all**: no reflog entry, no dangling blob, nothing for
+    `fsck --lost-found`. It is the one failure in this area with no recovery path
+  - All six surfaces now ban the tree-wide forms outright while a peer shares the worktree:
+    `git reset --hard`, `git clean -fd`, `git checkout .`, `git restore .`, bare `git stash`,
+    and `git checkout <branch>` — each stated with its per-path replacement beside it
+  - **The safe form of the instinct is named everywhere the ban appears**: `git reset --soft
+    HEAD~1` unmakes your own commit and touches nothing in the working tree, which is exactly
+    what the reach for `--hard` is usually trying to do. `--mixed` (the default) is tree-safe
+    too; `--hard` is the only one that writes to the tree
+  - `completion-handler` gets the ban twice — in its allowlist section and in its Rules — because
+    it is the agent that actually held the shell. It is also now told to keep `paths` no wider
+    than the phase's Owns, since an over-wide allowlist is how a peer's file comes within reach
+  - `/analyze-orchestrator` gained the recovery procedure: on hearing of a reset, **preserve
+    before repairing** — `git reflog` names every orphaned commit, and they are gc-able, so tag
+    each one (`git tag -f rescue/reset-casualty-<sha> <sha>`) *first*, then diff against the
+    branch and tell the owning phase what to recover. A coordinator never restores a peer's files
+    itself; the phase owns them and knows which version it wanted
+  - MEASURED 2026-10-08 on `gotrade-fee-rebuild`: phase 1's commit swept in phase 3's
+    `benchmark.py` and `test_paper_benchmark.py` under phase 1's message. Phase 1 caught it —
+    the allowlist guard working as designed, and neither bad commit ever reached the branch — and
+    its `completion-handler` ran `git reset --hard origin/<branch>` to undo it. That destroyed
+    phase 4's twelve files of finished, verified, uncommitted work and cost phase 3 ~86 lines of
+    tests. One session's correct detection, executed with a tree-wide tool, took out two
+    uninvolved peers. The 2026-10-06 fix below closed the contamination; this one closes the
+    cleanup
+
 - **A plan-set phase could commit its siblings' half-written files** (`pusher`,
   `completion-handler`, `/implement`, `/do`, `/analyze-orchestrator`, `skills/swarm`)
   - `pusher` step 5 said *"Execute `git add .` to stage all changes"*. Every phase of a plan set

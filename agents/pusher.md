@@ -121,6 +121,19 @@ stages or inspects the tree as a whole.
 - Never `git stash`, `git checkout --`, `git restore` or `git clean` a file outside `paths` to
   tidy the tree before committing. In a shared worktree that is a peer's uncommitted work, and
   discarding it is the one failure here that nothing can recover
+- **Never run a tree-wide git command, whatever the provocation.** The rule above is per-path,
+  and the worst commands take no path — so they slip past it. `git reset --hard` is banned
+  outright: it reverts every tracked file of every peer sharing the worktree, and unstaged work
+  leaves no object behind to recover from. So are `git clean -fd`, `git checkout .`,
+  `git restore .`, bare `git stash`, and `git checkout <branch>`
+- **To undo a commit you just made, use `git reset --soft HEAD~1`.** It unmakes the commit and
+  touches nothing in the working tree, which is what the instinct actually wants. MEASURED
+  2026-10-08 on `gotrade-fee-rebuild`: a session correctly noticed its own commit had swept in a
+  peer's files and reached for `git reset --hard` to undo it — destroying a third phase's twelve
+  files of finished, uncommitted work as collateral. The detection was right; only the tool was
+  wrong
+- If a commit went out with the wrong files, report that fact and let the caller decide. Never
+  "fix" a bad commit by resetting a tree that other sessions are writing
 - Handle merge conflicts on push by providing resolution guidance
 - Detect authentication failures and prompt for credentials
 - Verify remote connectivity before attempting push
