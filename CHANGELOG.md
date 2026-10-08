@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Staging by explicit path does not scope a commit, because the INDEX is shared too**
+  (`pusher`, `completion-handler`, `/implement`, `/do`, `/analyze-orchestrator`, `skills/swarm`)
+  - The 2026-10-06 fix below made every phase stage a `paths` allowlist instead of `git add .`.
+    That is necessary and still not sufficient: in a shared worktree the index is shared as well
+    as the working tree, so the race is **between your `add` and your `commit`**, not inside
+    either. A peer stages into the same index, and whichever session reaches `git commit` next
+    takes all of it
+  - `git commit -- <explicit paths>` is now the required form everywhere. A pathspec-limited
+    commit reads the working tree for exactly those paths and ignores the rest of the index
+  - **A pathspec commit only sees TRACKED files**, so a file the phase just created would be
+    silently dropped and the window reopens for it. Documented shape for new files:
+    `git add -- <newfile>` then `git commit -m "<msg>" -- <every path, new and old>` — the
+    pathspec on the *commit* is what bounds the result
+  - `pusher` additionally re-reads `git show --stat --format="" HEAD` after committing and
+    reports the file list when it does not equal `paths`. It must **not** amend, reset or rewrite
+    to correct it
+  - `/analyze-orchestrator` gains the two consequences that bite a coordinator: a commit's file
+    list no longer identifies whose work it is, only that the work landed *somewhere*; and a
+    phase must never be told its work vanished until the whole branch has been searched for the
+    file. Telling a phase to re-run its plan when its work is already on the branch turns a
+    cosmetic mis-attribution into a real conflict
+  - **Mis-attribution is not repaired by rewriting.** Every file is committed and on the branch;
+    only the message lies, and a plan set merges as one branch where the subject line is
+    cosmetic. Rewriting a pushed commit in a worktree five sessions are pushing to is strictly
+    worse. Record it and move on
+  - MEASURED 2026-10-08 on `gotrade-fee-rebuild`, reported independently by two phases from
+    opposite sides of the same collision. Phase 2 staged exactly its 13 files by name, used no
+    bare-path verb, and `86ae23f` went out under phase 4's message carrying **17 files, none of
+    them `sim/`**. Phase 3 staged its three paths, confirmed `git diff --cached` showed exactly
+    those three, then ran `git commit -m` with no pathspec — and `836d1a5` went out under phase
+    3's message carrying **phase 4's entire bracket path**. Both sessions verified correctly;
+    both were still wrong, because what they verified had changed by the time they committed.
+    Phase 4 meanwhile believed its work destroyed and was re-implementing it when the coordinator
+    found it already on the branch
+
 - **A tree-wide `git reset --hard` could destroy every peer's uncommitted work, and nothing
   forbade it** (`completion-handler`, `pusher`, `/implement`, `/do`, `/analyze-orchestrator`,
   `skills/swarm`)

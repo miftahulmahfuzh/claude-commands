@@ -342,6 +342,15 @@ task* changed, not what `git status` shows dirty.
 If pusher reports paths it left out of the commit, that is a peer mid-write in the same tree, not
 an error — it surfaces in the final report and nothing goes back to sweep them in.
 
+**The index is shared too, so staging carefully is not enough.** `git add <your paths>` followed
+by a bare `git commit` commits whatever the shared index holds, and a peer stages into it between
+your two commands. Use **`git commit -- <explicit paths>`**. A pathspec commit only sees tracked
+files, so a file you just created needs `git add -- <newfile>` first — then still bound the
+commit by pathspec. MEASURED 2026-10-08 on `gotrade-fee-rebuild`: two phases each staged only
+their own files, verified the staged set, and each still shipped a commit carrying a peer's entire
+phase under its own message. If your work turns up under a peer's message it is **not lost** —
+find it on the branch before re-implementing, and never rewrite pushed history over a message.
+
 **And never run a tree-wide git command there, not even to undo your own mistake.**
 `git reset --hard`, `git clean -fd`, `git checkout .`, `git restore .`, bare `git stash` and
 `git checkout <branch>` are all banned while a peer shares the worktree. None of them takes a

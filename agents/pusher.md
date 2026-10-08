@@ -121,6 +121,23 @@ stages or inspects the tree as a whole.
 - Never `git stash`, `git checkout --`, `git restore` or `git clean` a file outside `paths` to
   tidy the tree before committing. In a shared worktree that is a peer's uncommitted work, and
   discarding it is the one failure here that nothing can recover
+- **Commit with a pathspec: `git commit -- <paths>`, never a bare `git commit` after staging.**
+  The worktree's INDEX is shared with every other phase session, so `git add -- <paths>` does not
+  protect the commit: a peer stages into the same index between your add and your commit, and a
+  bare `git commit` takes all of it. A pathspec-limited commit reads the working tree for exactly
+  those paths and ignores the rest of the index. MEASURED 2026-10-08 on `gotrade-fee-rebuild`:
+  two sessions each staged only their own files, each verified `git diff --cached` showed exactly
+  those files, and each still produced a commit carrying a peer's entire phase under its own
+  message — one of them 17 files, none of which belonged to the message. Verifying the staged set
+  does not help, because the thing you verified changes before you commit it
+- **A pathspec commit only sees TRACKED files**, so a newly created file would be silently left
+  out. For new files: `git add -- <each new file>` and then still bound the commit with
+  `git commit -m "<msg>" -- <every path, new and old>`. The pathspec on the *commit* is what
+  bounds the result, so a peer staging in between changes nothing
+- **After committing, re-read the commit's own file list** (`git show --stat --format="" HEAD`)
+  and report it. If it does not equal `paths`, say so plainly in the result — do NOT amend,
+  reset or rewrite to fix it. A wrong commit message is cosmetic and reversible; rewriting a
+  commit in a tree other sessions are pushing to is not
 - **Never run a tree-wide git command, whatever the provocation.** The rule above is per-path,
   and the worst commands take no path — so they slip past it. `git reset --hard` is banned
   outright: it reverts every tracked file of every peer sharing the worktree, and unstaged work

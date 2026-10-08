@@ -71,6 +71,19 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
    how the calling session learns a peer is mid-write in the same tree. Do not go back and commit
    them.
 
+   **The index is shared as well as the tree, so the allowlist alone cannot protect the commit.**
+   `pusher` must commit by pathspec — `git commit -- <paths>` — because a peer stages into the
+   same index between the `add` and the `commit`, and a bare `git commit` takes everything in it.
+   MEASURED 2026-10-08 on `gotrade-fee-rebuild`: two phases each staged only their own files,
+   each verified the staged set, and each still produced a commit carrying a peer's entire phase
+   under its own message. Pass `paths` *and* expect pusher to use it as a pathspec on the commit,
+   not merely on the stage.
+
+   If pusher reports that the commit's file list did not equal `paths`, carry that into your
+   report and **stop** — do not amend, reset or rewrite to correct it. The files are committed and
+   on the branch; only the message is wrong, and that is cosmetic in a set that merges as one
+   branch. Rewriting a commit in a worktree other sessions are pushing to is the worse outcome.
+
    **And never run a tree-wide git command to tidy the tree, at any point.** `git reset --hard`
    is banned outright, and so are `git clean -fd`, `git checkout .`, `git restore .`, bare
    `git stash` and `git checkout <branch>`. None of them names a path, so none is caught by the

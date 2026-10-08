@@ -214,6 +214,56 @@ or `git clean` a path outside it to tidy the tree first. Everything outside your
 peer's uncommitted work, and discarding it is the only failure in this area that nothing can
 recover — the commit is still in history, but their edits are simply gone.
 
+### The index is shared too — commit by pathspec, never by index
+
+`git add <explicit paths>` is **not** sufficient, and believing it is cost this workflow three
+mis-attributed commits in one morning. The worktree's **index is shared as well as its working
+tree**: you stage your files, a peer stages theirs into the same index seconds later, and
+whichever session runs `git commit` next commits *both*. Per-path staging buys you nothing,
+because the race is between your `add` and your `commit`, not inside either one.
+
+> **`git commit -- <explicit paths>` is the only safe form.** A pathspec-limited commit takes its
+> content from the working tree for exactly those paths and ignores the rest of the index.
+
+**One sharp edge: a pathspec commit only sees TRACKED files.** A file your phase just created is
+untracked, so `git commit -- <newfile>` silently leaves it out, and the window reopens for it. The
+safe shape for a new file is to `git add` it and then *still* bound the commit by pathspec:
+
+```bash
+git add -- <newfile>                              # the only thing that must touch the index
+git commit -m "<message>" -- <every path, new and old>
+```
+
+The pathspec on the **commit** is what bounds the result. A peer staging into the index between
+those two commands then changes nothing: only your paths go in either way.
+
+MEASURED 2026-10-08 on `gotrade-fee-rebuild`, independently reported by two phases:
+
+- Phase 2 re-implemented 13 files, staged exactly those 13 by name, used no bare-path verb
+  anywhere — and phase 4's session committed moments later. `86ae23f` went out with phase 4's
+  message *"feat(sim): the bracket path can express and charge Gotrade's real fees"* carrying
+  **17 files, none of them `sim/`**: phase 2's 13, phase 3's `benchmark.py` and
+  `test_paper_benchmark.py`, plus bookkeeping.
+- Phase 3 staged its three paths, confirmed `git diff --cached` showed exactly those three, then
+  ran `git commit -m` with no pathspec. `836d1a5` went out under phase 3's message carrying
+  **phase 4's entire bracket path** — `sim/charges.py`, `rules.py`, `sizing.py`, `lifecycle.py`,
+  `split_adjust.py`, `__init__.py`, `paper/bracket.py` and six test files.
+
+Both verified their staged set correctly. Both were still wrong, because the thing they verified
+had changed by the time they committed.
+
+**The damage is attribution, not loss — so do not "fix" it by rewriting history.** Every file is
+committed and on the branch; only the commit messages lie, and the set merges as one branch where
+a message is cosmetic. Rewriting a pushed commit in a worktree that five sessions are actively
+pushing to is strictly worse than the wrong message. Report it, record it in the ledger, move on.
+
+**The coordinator's consequence:** a commit's file list may be a *peer's* work under this phase's
+name, so reading it against the ownership table tells you a phase's work landed **somewhere**, not
+that it landed in its own commit. When a file is missing from the phase that owns it, search the
+whole branch for it (`git log --format=%h <branch> | while read c; do git show --stat --format="" $c | grep -q <path> && echo $c; done`)
+**before** concluding it was lost — a phase told "your work vanished" will re-implement work that
+is already on the branch, which is how a wrong message turns into a real conflict.
+
 ### Never run a tree-wide git command in a shared worktree
 
 The rule above is phrased per-path, and that phrasing left a hole wide enough to lose a phase

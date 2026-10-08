@@ -212,6 +212,31 @@ Loop until `runnable_now` is empty:
    result was two correct guesses rather than a guarantee. `pusher` and `completion-handler` were
    changed to require the allowlist; this check is the belt to that braces.
 
+   **The allowlist does not stop the commit either, because the INDEX is shared as well as the
+   tree.** A phase can stage exactly its own files by name, verify `git diff --cached`, and still
+   ship a commit carrying a peer's whole phase — because a peer stages into the same index between
+   the `add` and the `commit`, and a bare `git commit` takes all of it. MEASURED 2026-10-08 on
+   `gotrade-fee-rebuild`, from two phases independently: `86ae23f` went out under phase 4's
+   message carrying 17 files **none of which were `sim/`**, and `836d1a5` went out under phase 3's
+   message carrying phase 4's entire bracket path. Both sessions had staged correctly.
+
+   Two consequences for a coordinator, and the second is the one that bites:
+
+   - **Reading a commit's file list against the ownership table no longer tells you whose work it
+     is.** It tells you the work landed *somewhere*. Before concluding a phase's work is missing,
+     search the whole branch for the file:
+     `git log --format=%h <branch> | while read c; do git show --stat --format="" $c | grep -q <path> && echo $c; done`
+   - **Never tell a phase its work vanished without running that search first.** MEASURED in the
+     same run: phase 4's entire bracket path was on the branch inside phase 3's commit while
+     phase 4 believed it had been destroyed. Had it re-implemented on that belief, a cosmetic
+     mis-attribution would have become a real conflict. The correct instruction to the phase is
+     "your work is at `<sha>`; diff against it and report", never "re-run your plan".
+
+   **Do not fix a mis-attributed commit by rewriting it.** Every file is on the branch, only the
+   message lies, and the set merges as one branch where the message is cosmetic. Rewriting a
+   pushed commit in a worktree five sessions are pushing to is strictly worse. Record it in the
+   ledger note and in `Decided without asking`, and move on.
+
    **The allowlist stops contamination; it does not stop a tree-wide command, and that is the
    failure that actually destroys work.** `git reset --hard` names no path, so "stay inside your
    allowlist" never catches it — and it reverts every tracked file of every peer, leaving no

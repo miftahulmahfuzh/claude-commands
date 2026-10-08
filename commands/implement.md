@@ -262,6 +262,21 @@ other phases of that set are running **in this same worktree right now** — `gi
 shows their half-written files alongside yours, and the plan index's **File ownership** table is
 what tells the two apart. List what you changed, not what is dirty.
 
+**The index is shared too, so staging carefully is not enough.** `git add <your paths>` then a
+bare `git commit` commits whatever the *shared index* holds — and a peer stages into it between
+your two commands. The safe form is **`git commit -- <explicit paths>`**, which reads the working
+tree for those paths and ignores the rest of the index. MEASURED 2026-10-08 on
+`gotrade-fee-rebuild`: two phases each staged only their own files, each verified `git diff
+--cached`, and each still shipped a commit carrying a peer's whole phase under its own message.
+A pathspec commit only sees **tracked** files, so a file you just created needs
+`git add -- <newfile>` first — then still bound the commit: `git commit -m "<msg>" -- <all paths>`.
+
+If you find your work committed under a peer's message, **it is not lost and you must not
+re-implement it** — check the branch first (`git log --format=%h <branch> | while read c; do git
+show --stat --format="" $c | grep -q <your path> && echo $c; done`). Re-implementing work that
+already landed is how a cosmetic mis-attribution becomes a real conflict. Report it and move on;
+nobody rewrites pushed history over a wrong message.
+
 **Never run a tree-wide git command in that worktree, including to clean up your own mistake.**
 `git reset --hard` is banned outright, and so are `git clean -fd`, `git checkout .`,
 `git restore .`, bare `git stash` and `git checkout <branch>`. None of them names a path, so none
