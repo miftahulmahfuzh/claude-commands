@@ -54,19 +54,23 @@ terminating branch in this file is a stop; there are no blocks.
 ## Usage
 
 ```bash
-/implement -f <SLUG>_PLAN.md [--phase N] [--all] [-note <note>]
+/implement -f <path>/<SLUG>_PLAN.md [--phase N] [--all] [-note <note>]
 ```
 
 **Arguments:**
-- `-f` — the plan index written by `/analyze` (required)
+- `-f` — the plan index written by `/analyze` (required). Pass the **path**, not a bare
+  filename: `/analyze` files the index under `docs/plans/` in a repo that has a `docs/`
+  directory and at the repo root otherwise, and every path you report downstream must be the
+  one you were handed here.
 - `--phase N` — implement phase N instead of the next unfinished one
 - `--all` — continue through every remaining phase in this session
 - `-note` — extra context for implementation; it never overrides the plan
 
 **Examples:**
 ```bash
-/implement -f PURGE_DIRECT_STREAMING_TOOL_PLAN.md
-/implement -f FIX_CITATION_AGGREGATION_PLAN.md --phase 2
+/implement -f docs/plans/PURGE_DIRECT_STREAMING_TOOL_PLAN.md
+/implement -f docs/plans/FIX_CITATION_AGGREGATION_PLAN.md --phase 2
+/implement -f FIX_CITATION_AGGREGATION_PLAN.md --phase 2   # repo with no docs/ tree
 ```
 
 ### Wrong input
@@ -76,7 +80,7 @@ Given a `*_code_analyzer.md`, or anything else that is not a plan index, **stop*
 ```
 ✗ Not a plan: {file}
   /implement executes plans; it does not write them.
-  Run /analyze to produce <SLUG>_PLAN.md, then re-run.
+  Run /analyze to produce <SLUG>_PLAN.md, then re-run with the path it reports.
 ```
 
 An analysis document describes the code. It is not a plan, and filling the gap here is what
@@ -189,7 +193,7 @@ Dispatch one subagent to create every phase's task. For each phase:
     - **Type**: {Bug|Feature|Update|Refactor}
     - **Context**: {phase Owns + Exit criteria}
     - **Status**: {in_progress for the first phase, blocked for the rest}
-    - **Plan Set**: `{SLUG}_PLAN.md` (phase {N} of {total})
+    - **Plan Set**: `{the -f path}` (phase {N} of {total})
     - **Satisfies**: {R id(s)} — {that requirement's one-line text from the index}
     - **Depends on**: {TaskIDs of the phases this one requires}
     - **Plan**: `.workflows/plan/{TaskID}.md`
@@ -198,7 +202,7 @@ Dispatch one subagent to create every phase's task. For each phase:
 - **Adopt the plan file — never rewrite it.** Copy `.workflows/plan/{slug}/phase-{N}.md` to
   `{pkg}/.workflows/plan/{TaskID}.md`, prepending:
   ```markdown
-  > Adopted from `{SLUG}_PLAN.md` phase {N}. Source: `.workflows/plan/{slug}/phase-{N}.md`.
+  > Adopted from `{the -f path}` phase {N}. Source: `.workflows/plan/{slug}/phase-{N}.md`.
   > Written and reconciled by /analyze — edit the source, not this copy.
   ```
 - Write the TaskID back into the index's **TaskID** column so a later session can map phases
@@ -304,7 +308,7 @@ completion_report:
   drift_notes: ["{if any}"]
   decisions: ["{question} → {choice} ({the rung that decided it})"]
 plan_set:
-  file: "{SLUG}_PLAN.md"
+  file: "{the -f path, verbatim — completion-handler reopens the index by it}"
   phase: N
   next_task_id: "{TaskID of phase N+1, or empty}"
 ```

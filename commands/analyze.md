@@ -77,14 +77,37 @@ Every run, without exception:
 
 | Artifact | Location | What it is |
 |---|---|---|
-| `<session-id>_code_analyzer.md` | repo/worktree root | the analysis — **descriptive**, what exists today |
-| `<SLUG>_PLAN.md` | repo/worktree root | the plan index — phases, order, invariants, open questions |
+| `<session-id>_code_analyzer.md` | `<analysis-dir>` | the analysis — **descriptive**, what exists today |
+| `<SLUG>_PLAN.md` | `<plans-dir>` | the plan index — phases, order, invariants, open questions |
 | `.workflows/plan/<slug>/phase-{N}.md` | repo/worktree root | one implementation plan per phase, with complete code |
+
+`<analysis-dir>` and `<plans-dir>` are resolved **once, in Step 4**, against the worktree root:
+
+| | `docs/` exists at the worktree root | no `docs/` directory |
+|---|---|---|
+| `<analysis-dir>` | `docs/analyzer/` | the worktree root |
+| `<plans-dir>` | `docs/plans/` | the worktree root |
+
+```bash
+# from the worktree root, before writing any artifact
+if [ -d docs ]; then analysis_dir=docs/analyzer; plans_dir=docs/plans
+else                 analysis_dir=.;             plans_dir=.; fi
+mkdir -p "$analysis_dir" "$plans_dir"
+```
+
+A project that already keeps its documentation under `docs/` gets these filed with the rest of
+it. Twenty sessions leave forty files, and a root carrying forty of them is a root nobody can
+read — the README is in there somewhere. A project with no `docs/` convention is left exactly as
+it was: the root is the right place when there is nowhere better, and `/analyze` does not get to
+invent a documentation tree the project never chose.
+
+This changes where the files land, not how they are named or referenced. **Every path you print
+or hand to a subagent is still absolute**, and the phase plans stay under `.workflows/`.
 
 The only thing that varies is **N**, the number of phases (1 to 20). A one-phase plan set has a
 short index and a single plan file; nothing else about the shape changes.
 
-`/implement -f <SLUG>_PLAN.md` executes what you wrote. **It does no planning of its own**, and
+`/implement -f <plans-dir>/<SLUG>_PLAN.md` executes what you wrote. **It does no planning of its own**, and
 neither does `/do` — a plan you leave vague is a plan nobody will fill in later.
 
 ---
@@ -231,6 +254,10 @@ Choosing `<BASE>`:
 Then:
 - All artifacts are written under the worktree root, by absolute path. The session's own cwd
   does not change — every subagent must be told the worktree root explicitly.
+- **Resolve `<analysis-dir>` and `<plans-dir>` here**, against the worktree root you just picked,
+  by the table in "What You Produce" — and `mkdir -p` both. Resolve them against the *worktree*,
+  never the directory you were invoked from: a fresh worktree of a repo that has `docs/` has it
+  too, and a `--no-worktree` run resolves them against the checkout it writes in place.
 - **Skip on `--no-worktree`**, or if this is not a git repo, or if `git worktree add` fails.
   Write in place, and say plainly which branch the plans are pinned to.
 - If already inside a worktree that isn't the default branch, reuse it — do not nest.
@@ -259,7 +286,7 @@ at 60 characters and a tmux window is narrow.
 
 ### Step 5: Write the Analysis Document
 
-Create `<session-id>_code_analyzer.md` at the worktree root. Template below.
+Create `<analysis-dir>/<session-id>_code_analyzer.md`. Template below.
 
 ### Step 6: Decompose Into Phases
 
@@ -308,7 +335,7 @@ declared out of caution — "phase 3 probably wants phase 1 first" — costs rea
 dependency omitted for tidiness produces two sessions editing the same file at once. State the
 edges that are true, and only those.
 
-Then write a **draft** `<SLUG>_PLAN.md` at the worktree root with the phase table filled in and
+Then write a **draft** `<plans-dir>/<SLUG>_PLAN.md` with the phase table filled in and
 each phase's boundary stated. This draft is the contract the planners plan against.
 
 ### Step 7: Write the Phase Plans
@@ -320,8 +347,8 @@ Each planner gets:
 
 ```yaml
 worktree_root: "{absolute path}"
-plan_index: "{worktree_root}/{SLUG}_PLAN.md"          # the draft
-analysis_file: "{worktree_root}/{session-id}_code_analyzer.md"
+plan_index: "{worktree_root}/{plans-dir}/{SLUG}_PLAN.md"          # the draft
+analysis_file: "{worktree_root}/{analysis-dir}/{session-id}_code_analyzer.md"
 phase_number: N
 phase_title: "{title}"
 phase_scope: "{what this phase owns — and what it must NOT touch}"
@@ -417,7 +444,7 @@ watch one child and then merge a branch it could have merged itself. Open the tm
 python3 ~/.claude/skills/swarm/swarm.py launch \
     --name "impl-<slug>" --cwd "<worktree>" \
     --permission-mode <--permission-mode, or bypassPermissions by default> \
-    --prompt "/implement -f <SLUG>_PLAN.md --phase 1"
+    --prompt "/implement -f <plans-dir>/<SLUG>_PLAN.md --phase 1"
 ```
 
 This is the same `swarm.py launch` primitive the N>1 path below uses — it needs no ledger, just a
@@ -430,7 +457,7 @@ and lands the set:
 python3 ~/.claude/skills/swarm/swarm.py launch \
     --name "orch-<slug>" --cwd "<worktree>" \
     --permission-mode <--permission-mode, or bypassPermissions by default> \
-    --prompt "/analyze-orchestrator -f <SLUG>_PLAN.md --permission-mode <same mode>"
+    --prompt "/analyze-orchestrator -f <plans-dir>/<SLUG>_PLAN.md --permission-mode <same mode>"
 ```
 
 **Refuse to launch, either way, and say why in the termination block, when either of these
@@ -465,7 +492,7 @@ from that point. This session's job is finished.
 
 ## Analysis Document Template
 
-Create `<session-id>_code_analyzer.md`:
+Create `<analysis-dir>/<session-id>_code_analyzer.md`:
 
 ```markdown
 # Code Analysis: <Target>
@@ -473,7 +500,7 @@ Create `<session-id>_code_analyzer.md`:
 **Type:** [Bug Investigation | Feature Implementation | Feature Update | Refactoring]
 **Date:** <timestamp>
 **Session ID:** <id>
-**Plan:** `<SLUG>_PLAN.md` (<N> phase(s))
+**Plan:** `<plans-dir>/<SLUG>_PLAN.md` (<N> phase(s))
 **Worktree:** <path + branch, or "none — planned against <branch>">
 
 ---
@@ -581,7 +608,7 @@ this is what the phase decomposition is built from.>
 
 ## Plan Index Template
 
-Create `<SLUG>_PLAN.md` at the worktree root (`SLUG` in SCREAMING_SNAKE, e.g.
+Create `<plans-dir>/<SLUG>_PLAN.md` (`SLUG` in SCREAMING_SNAKE, e.g.
 `PURGE_DIRECT_STREAMING_TOOL_PLAN.md`):
 
 ```markdown
@@ -589,7 +616,7 @@ Create `<SLUG>_PLAN.md` at the worktree root (`SLUG` in SCREAMING_SNAKE, e.g.
 
 **Slug:** <kebab-slug>
 **Date:** <timestamp>
-**Analysis:** `<session-id>_code_analyzer.md`
+**Analysis:** `<analysis-dir>/<session-id>_code_analyzer.md`
 **Worktree:** `<path>`
 **Branch:** `feature/<slug>` (base: `<base ref>` @ `<short sha>`)
 **Phases:** <N>
@@ -677,7 +704,7 @@ orchestrator launch at Step 11 and is the one thing that costs this plan its nig
 
 Execute the phases one at a time, starting at phase 1:
 
-    /implement -f <SLUG>_PLAN.md --phase 1
+    /implement -f <plans-dir>/<SLUG>_PLAN.md --phase 1
 
 <For N = 1 this line is the whole story — Step 11 already launched it directly in a new tmux
 pane, and the line below does not apply: there is no DAG to swarm over one phase, so drop it
@@ -686,11 +713,11 @@ from this section entirely rather than offering a no-op layer over the same /imp
 Or run the whole set as a swarm — a session per phase, concurrent wherever `Depends on` allows,
 resumable on any machine:
 
-    /analyze-orchestrator -f <SLUG>_PLAN.md
+    /analyze-orchestrator -f <plans-dir>/<SLUG>_PLAN.md
 
 Or put them on the board first (GitHub repos only):
 
-    /create-task --from-plan <SLUG>_PLAN.md
+    /create-task --from-plan <plans-dir>/<SLUG>_PLAN.md
 ```
 
 Note the shape of that section: each command sits alone on its line with its explanation
@@ -738,8 +765,8 @@ cards the user asked for — the **Requirements** table is what reconciles the t
 ## Termination
 
 ```bash
-Analysis written to <worktree>/<session-id>_code_analyzer.md
-Plan written to     <worktree>/<SLUG>_PLAN.md   (<N> phase(s)<, M inconsistencies reconciled>)
+Analysis written to <worktree>/<analysis-dir>/<session-id>_code_analyzer.md
+Plan written to     <worktree>/<plans-dir>/<SLUG>_PLAN.md   (<N> phase(s)<, M inconsistencies reconciled>)
 
 Worktree: <path>
 Branch:   feature/<slug>  (base <ref> @ <sha>)
@@ -766,7 +793,7 @@ downstream will ask about these, and nothing downstream will run.>
 Next — phase 1 of <N>, in a new session:
 
   cd <worktree>
-  /implement -f <SLUG>_PLAN.md --phase 1
+  /implement -f <plans-dir>/<SLUG>_PLAN.md --phase 1
 
 <Always offer this fallback line, whatever N is — it is what --no-orchestrate leaves the user to
 run by hand, or what to paste if the launched window ever needs to be redone. What follows it
@@ -782,7 +809,7 @@ add a coordinator over a set of one:>
 <N > 1 — a strictly sequential multi-phase set is the case that gains MOST from this, otherwise
 it is N commands pasted into N sessions, each waiting on a human to notice the last one finished:>
 
-  /analyze-orchestrator -f <SLUG>_PLAN.md
+  /analyze-orchestrator -f <plans-dir>/<SLUG>_PLAN.md
 
 <This has already happened unless --no-orchestrate was passed — so say which window it
 opened, rather than printing a command the user does not need to run:>

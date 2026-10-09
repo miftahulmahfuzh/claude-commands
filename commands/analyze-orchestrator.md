@@ -4,7 +4,7 @@ Drive a plan set written by `/analyze` across many sessions at once — one per 
 where the DAG allows — and **resume that same set on any machine, at any time.**
 
 ```
-/analyze-orchestrator -f <SLUG>_PLAN.md          # start driving a fresh plan set
+/analyze-orchestrator -f <path>/<SLUG>_PLAN.md   # start driving a fresh plan set
 /analyze-orchestrator --resume <slug>            # pick up a set already under way
 /analyze-orchestrator --resume                   # pick up the only unfinished set here
 /analyze-orchestrator --status <slug>            # report, change nothing

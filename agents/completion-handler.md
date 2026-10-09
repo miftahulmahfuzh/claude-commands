@@ -35,7 +35,9 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
    Skip silently if nothing relevant.
 
 2b. **If `plan_set` is present**:
-   - Tick the phase's row in the plan index (`{SLUG}_PLAN.md`) and set `**Status:**` to
+   - Tick the phase's row in the plan index — **open it at `plan_set.file`, the path you were
+     given, and do not assume the repo root**; `/analyze` files it under `docs/plans/` in a repo
+     that has a `docs/` tree — and set `**Status:**` to
      `phase {N}/{total} complete` (or `complete` on the last phase).
    - Find `next_task_id` in its own package's todos.md and flip `- **Status**: blocked` to
      `open`. Its plan assumed this phase had landed, and it has.
