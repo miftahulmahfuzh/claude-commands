@@ -148,6 +148,36 @@ The mode is passed twice on purpose: once to launch the session on it, once *ins
 so the orchestrator knows what to hand its own children. A session cannot read its own permission
 mode, so an argument is the only way it travels.
 
+### Never launch the same name twice
+
+**The launch's own JSON is the only evidence of whether it worked.** `launch` returns as soon as
+the session is spawned and trusted; tmux registers the window *a beat later*. So
+`tmux list-windows` run in the same breath — or in the same tool-call block — shows **nothing**,
+and reading that as "the launch failed" is wrong.
+
+MEASURED 2026-10-20, on the fold-selector plan set: a launch returned
+`{"swarm": true, "launched": ..., "trust": {"trusted": true}}`, an immediate `list-windows`
+showed no window, the launch was repeated, and **two Claude sessions ran the same plan in the
+same repo** — creating tasks against one `todos.md` and heading for the same files. Each was a
+full agent session, so the cost was two complete model budgets, not two shell commands. The owner
+caught it; the tooling did not.
+
+`launch` now **refuses** a name that already has a window and tells you this, so the mistake
+costs one soft error instead of a session. Rules:
+
+- Got a JSON with `"launched"` and a `window`? **It worked.** Do not verify by window list, and
+  do not re-launch.
+- Need to confirm by window anyway? Do it in a **separate, later** tool call — never in the block
+  that launched.
+- A peer reporting a name collision (*"X has become two sessions both named Y"*) is a
+  **duplication report**, not a naming note. Act on it immediately.
+- `--allow-duplicate` exists for the rare case where two sessions on one name is genuinely
+  intended. Reaching for it to get past the refusal is the bug.
+
+If two are already running, recovery is cheap **only while both are still in setup**: compare
+panes, keep the one further along, `tmux kill-window` the other, then check for duplicated task
+ids in `todos.md` and duplicated `.workflows/plan/*.md` files before continuing.
+
 ## The orchestrator loop
 
 ```bash

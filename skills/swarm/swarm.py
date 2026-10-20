@@ -604,6 +604,33 @@ def window_facts(window):
     return {"window": cells[0], "name": cells[1], "command": cells[2], "pane": cells[3]}
 
 
+def windows_named(name):
+    """Every tmux window across every session carrying this exact window name.
+
+    WHY THIS EXISTS, measured 2026-10-20. `launch` returns as soon as the session is
+    spawned and trusted; tmux registers the window a beat LATER. A caller that runs
+    `tmux list-windows` in the same breath sees nothing, concludes the launch failed and
+    launches again. Two Claude sessions then run the same plan in the same repo, create
+    duplicate tasks against one todos.md and race on the same files -- and because each
+    is a full agent session, the waste is two complete model budgets, not two shell
+    commands. That happened on the fold-selector plan set and the owner caught it, not
+    the tooling.
+
+    So the guard lives HERE, at the one place that can actually refuse, rather than in
+    prose somebody has to remember. An empty answer means "no window by that name right
+    now" and is never proof a launch failed -- only the launch's own return value is.
+    """
+    out = tmux("list-windows", "-a", "-F", "#{window_id}\t#{window_name}\t#{pane_current_command}")
+    if not out:
+        return []
+    hits = []
+    for line in out.splitlines():
+        cells = (line + "\t\t").split("\t")
+        if cells[1] == name:
+            hits.append({"window": cells[0], "name": cells[1], "command": cells[2]})
+    return hits
+
+
 def current_window():
     """This session's own window -- the one thing reap must never close.
 
@@ -1740,6 +1767,17 @@ def cmd_launch(args):
         return soft("not inside tmux -- cannot open a window",
                     hint=f"run this by hand: cd {cwd} && claude -n {name} "
                          f"{shlex.quote(args.prompt)}")
+    existing = windows_named(name)
+    if existing and not args.allow_duplicate:
+        return soft(f"a window named {name!r} already exists -- refusing to launch a second",
+                    existing=existing, name=name,
+                    hint="THIS LAUNCH ALREADY WORKED. tmux registers the window a beat "
+                         "AFTER this command returns, so an empty `tmux list-windows` "
+                         "immediately after a launch is NOT a failed launch -- re-reading "
+                         "it that way is what puts two sessions on one plan, each burning "
+                         "a full model budget. Check the launch's own JSON instead. If you "
+                         "genuinely want a second session on the same name, pass "
+                         "--allow-duplicate.")
     handle = tmux(*argv[1:])
     if handle is None:
         return soft("tmux new-window failed", argv=argv)
@@ -2144,6 +2182,10 @@ def main(argv=None):
     p.add_argument("--model")
     p.add_argument("--no-trust", action="store_true")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--allow-duplicate", action="store_true",
+                   help="launch even if a window of this name already exists "
+                        "(default: refuse -- a second session on one plan burns a whole "
+                        "model budget for nothing)")
 
     p = sub.add_parser("track", help="make .workflows/orchestration/ survive .gitignore")
     p.add_argument("--dry-run", action="store_true")
