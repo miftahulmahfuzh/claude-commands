@@ -178,6 +178,47 @@ Then name this session, so the phases have somewhere to report:
 python3 ~/.claude/skills/task/session.py rename "orch-<slug>" --no-widen
 ```
 
+## Step 3b: The write-set gate — before anything is spawned
+
+`swarm.py waves` schedules from the `Depends on` column, which records what must *exist* before a
+phase starts. It says nothing about what two phases in one wave will both *write*. Those are
+different questions, and the second is where the collisions come from:
+
+```bash
+python3 ~/.claude/skills/swarm/plan_graph.py <PLAN.md>      # exit 2 = a concurrent collision
+```
+
+It reads each phase plan's `## Files` table — the write set the planner declared, the same list
+`/implement` hands `pusher` as its allowlist — and reports every file two phases write, split by
+whether their waves are concurrent or sequential.
+
+MEASURED on `journal-versioning` (6 phases, the set that ran as four waves): six files are
+written by more than one phase, and **exactly one of them concurrently** —
+`engine/src/seer_engine/commands/lab.py`, written by phases 2, 3 and 4, all three in one wave.
+That is the file whose collision was reported by hand afterwards. The other five —
+`lab/store.py`, `test_lab_snapshot.py`, `lab/lab.sqlite`, `view.test.ts`, `web/data/lab.json` —
+are written in different waves and were never at risk.
+
+**Act on what it flags, by class:**
+
+- **ISOLATE** (ordinary source file): give each phase its own worktree. Separate worktrees turn
+  concurrent writes into separate branches, and disjoint regions of one file then merge cleanly.
+  On `journal-versioning` the three phases' edit anchors in `commands/lab.py` were 29 lines apart
+  at their closest (`3@101` / `2@130`; phase 4's single anchor at 843 sits 82 from its nearest
+  neighbour) — well outside git's 3-line merge context, so isolation would have cost nothing.
+  **Serializing that wave would have made it four waves into six.** Check the regions before
+  trusting the verdict; "same file" is not "same lines".
+- **ORDER** (generated artifact): it is regenerated, not merged. Add a dependency edge so one
+  phase publishes last. `journal-versioning`'s planner found the `4 → 6` edge this way by hand.
+- **BLOCK** (binary): two concurrent phases writing a database is unresolvable after the fact.
+  Serialize them, always. This is not a preference — a sqlite merge is a choice of side, and the
+  discarded side's rows are gone.
+
+**What this gate cannot buy you is width.** The schedule's parallelism is a property of the
+plan's DAG, not of the worktree model: `journal-versioning`'s widest wave holds three phases, so
+no amount of isolation runs it eight ways. If you want eight-way waves, that is a demand on
+`/analyze` to cut more independent phases — and `plan_graph.py` is also how you check it did.
+
 ## Step 4: Drive
 
 Loop until `runnable_now` is empty:
@@ -191,6 +232,27 @@ Loop until `runnable_now` is empty:
    Each opens a detached tmux window running `/implement -f <PLAN.md> --phase N` in a session
    already named `impl-<slug>-p<N>`. Detached on purpose: it must never steal the window the user
    is reading.
+
+   **Isolation: one worktree per phase, cut fresh from the integration branch at the start of
+   each wave.** `spawn --isolate` provisions it; the phase's session never sees a peer's
+   uncommitted state, and its commits land on its own branch. Three things must be right or the
+   isolation is worse than sharing: the worktree needs its **own `engine/.venv`** (Seer's
+   CLAUDE.md), `web/node_modules` must be **hardlinked and not symlinked** (a symlink passes
+   vitest and tsc, then fails `next build` with a misleading "filesystem root" error), and
+   `pytest` needs `PYTHONPATH=engine/src` or it silently tests the main checkout instead of the
+   branch. The research store is not copied into worktrees — point `--store` at the main checkout.
+
+   **Why the shared worktree was the old default, and what replaces the reason.** Phase N+1 needs
+   phase N's code on disk to build against, so per-phase worktrees would once have meant each
+   phase planning against a tree the others' work had not reached. What makes isolation safe now
+   is that **a wave does not start until the previous wave has integrated** (Step 4c): each
+   worktree is cut from an integration branch that already carries every landed predecessor. The
+   guarantee moved from "we all share a tree" to "the tree we are each cut from is complete".
+   Within a wave, phases are independent by construction — that is what the wave means — and the
+   write-set gate above is what proves it rather than assuming it.
+
+   The old shared-worktree default, for reference, and still what `spawn` does without
+   `--isolate`:
 
    **Every phase in the wave runs in the SAME worktree — the one `/analyze` cut for the set — and
    that is deliberate.** Phase N+1 needs phase N's code on disk to build against, so one worktree
@@ -318,8 +380,26 @@ Loop until `runnable_now` is empty:
    pinned constant, a test that must not be edited, a fingerprint that must not move — re-run
    that check yourself here rather than quoting the phase's report of it. A phase verifying its
    own guardrail is the weaker witness, and these are cheap: one `grep`, one `git diff --numstat`.
-6. **Push the ledger** via `pusher`. Every round. This is iron rule 2.
-7. **Reap the finished windows.**
+6. **Integrate the wave before the next one is cut** — only with `--isolate`, where each phase
+   landed on its own branch. Dispatch the **`integrator`** agent with the wave's branches and the
+   integration branch. It merges them in dependency order in a throwaway worktree, regenerates
+   derived artifacts rather than merging them, runs the **full** suite, and only then moves the
+   integration branch. It never pushes `main`.
+
+   This step is what makes per-phase isolation safe: the next wave's worktrees are cut from an
+   integration branch that already carries every landed predecessor, which is the guarantee the
+   shared worktree used to provide by sharing a disk. **A red integration stops the wave loop** —
+   the integration branch does not move, every phase branch stands untouched, and the report names
+   the merge on which the suite started failing. Do not spawn the next wave over a red integration;
+   that is how a one-phase regression becomes a six-phase bisect.
+
+   `lab/lab.sqlite` changed on both sides is the one thing it escalates instead of deciding. There
+   is no merge for a database — only a choice of side, and the other side's rows are then gone.
+   The write-set gate is where that is prevented, by never putting two database writers in one
+   wave.
+
+7. **Push the ledger** via `pusher`. Every round. This is iron rule 2.
+8. **Reap the finished windows.**
    ```bash
    python3 ~/.claude/skills/swarm/swarm.py reap --slug <slug>
    ```
@@ -365,6 +445,32 @@ Claude Code has not seen stops to ask whether the folder is trusted, before it b
 never becomes a peer and this session waits on it forever. Every worktree `/analyze` cuts is such
 a path. `spawn` propagates the repo's existing trust to the worktree; if the repo itself is not
 trusted it refuses rather than inventing trust, and the user has to open it once by hand.
+
+### Watching the wave while it runs
+
+A wave is only as fast as its slowest member, and a *stalled* member is not slow — it is stopped,
+and it blocks everything behind it. Watch rather than poll by hand: a `Monitor` on the wave's log
+directory and each worktree's test output surfaces three states worth acting on.
+
+- **Working** — the pane is producing output and the ledger moves. Leave it alone.
+- **Stalled** — no output for materially longer than its peers took to reach the same step. Check
+  `swarm.py status --slug <slug>`, then read the pane before acting; a HARD phase writing 20 tests
+  is quiet for a long time on purpose.
+- **Looping** — the same command repeating with the same result. This is the one to kill: it will
+  not recover on its own, and it burns a slot plus tokens. `reap --force` the window, then
+  `spawn` the phase again from the integration branch. A phase respawned from a clean cut of an
+  integrated branch starts from a better place than the one that got stuck.
+
+Kill-and-respawn is cheap **because** of isolation: the phase's branch holds whatever it committed
+and its worktree holds the rest, so nothing a peer did is at risk either way. In a shared worktree
+the same action risked a peer's uncommitted files, which is why it was never the default before.
+
+**A note on width, measured.** Isolation removes the collision ceiling, not the machine's. Five
+concurrent *lab* phases — each loading the research store, ~1 GB resident — took this laptop's WSL
+down twice at 15 GB. Implementation phases are lighter (no store), but each still carries a Claude
+session, its own `engine/.venv` and a hardlinked `node_modules`, so treat eight-way as something to
+measure on the first set that wants it rather than as a setting to turn on. The honest cap today
+is: lab waves 4, implementation waves unmeasured above 4.
 
 ## Step 5: Land the Set
 

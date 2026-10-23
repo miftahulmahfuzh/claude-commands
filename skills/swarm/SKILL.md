@@ -19,6 +19,35 @@ Two channels, and keeping them apart is what makes the whole thing work:
 
 Never use one for the other's job. A message is not a record; a commit is not a notification.
 
+
+## `plan_graph.py` — the write-set gate
+
+`swarm.py waves` schedules from `Depends on`, which says what must *exist* before a phase runs.
+It says nothing about what two phases in one wave both *write*. Run this before spawning:
+
+```bash
+python3 ~/.claude/skills/swarm/plan_graph.py <PLAN.md>     # --json for the machine form
+```
+
+Exit codes: **0** clean, **2** a file is written by concurrent phases, **1** the plan could not be
+read (no phase table, or a phase plan missing). 1 is deliberately not 0 — a caller that reads 0 as
+"nothing collides" would spawn a wave on the strength of an analysis that never ran.
+
+It reads each phase plan's `## Files` table, the same write set `/implement` hands `pusher`, and
+classifies every shared path:
+
+| Class | Meaning | Fix |
+|---|---|---|
+| ISOLATE | ordinary source file, concurrent writers | one worktree per phase; disjoint regions then merge. Check the regions — "same file" is not "same lines" |
+| ORDER | generated artifact (`web/data/lab.json`) | regenerated, not merged; add an edge so one phase publishes last |
+| BLOCK | binary (`lab/lab.sqlite`) | serialize, always. A database merge is a choice of side and the other side's rows are gone |
+| sequential | written in different waves | nothing to do |
+
+Measured against four real plan sets: `journal-versioning` 6 files shared, 1 concurrent
+(`commands/lab.py`, phases 2+3+4 in one wave — the collision that was reported by hand);
+`sean-gotrade-tracker` 12 shared, 0 concurrent; `strategy-b-ranker` none shared;
+`journal-unseen-badges` has no phase table and exits 1.
+
 ## Nobody in a swarm waits for a human
 
 A swarm exists to turn a night into N phases of progress. A question suspends that, and the cost
