@@ -367,6 +367,23 @@ text carries `[IMG: images/<file>]` markers so you only open the ones that matte
 Credentials come from `CONFLUENCE_PAT`, `CONFLUENCE_USER`/`CONFLUENCE_PASS`, or a git-ignored
 `~/.config/confluence-reader/credentials`. `confluence_fetch.py` is stdlib-only.
 
+### `spawn-new-cv-test` / `finish-cv-test`
+A two-sided drill for computer-vision live-coding interviews, run against
+`github.com/miftahulmahfuzh/cv-problems`. `spawn-new-cv-test` picks a problem off a twelve-rung
+ladder, builds the data (synthetic plan sheet with exact ground truth, an existing fixture, or
+one you supply), writes a deliberately terse brief, and opens a **fresh Claude Code session in
+its own tmux window** to solve it in. `finish-cv-test`, run inside that window, stops the clock,
+reconstructs your verbatim instructions from the session's own transcript jsonl, checks the
+solution against ground truth, and scores how you *drove the agent* on seven dimensions.
+
+The integrity mechanism is the directory split: the exam session's cwd is
+`attempts/<slug>/workspace/`, and the `CLAUDE.md` written there forbids reading the parent —
+where `PROBLEM.md` and `GROUND_TRUTH.json` live. Without that, "read PROBLEM.md and do it" is a
+valid move and the drill measures nothing.
+
+Trust is propagated, never invented, the same way `swarm` does it: a brand-new workspace path
+would otherwise stop on the folder-trust dialog and eat the opening minutes of a timed run.
+
 ### `issue-ticket-reader`
 The Jira counterpart. Pulls the description **and every comment in thread order** — on a
 returning ticket the bug report is usually in the comments — plus linked issues, subtasks, and
@@ -827,7 +844,9 @@ claude-commands/
 │   ├── analyze-and-fix-slow-tmux-pane-creation/  # + diagnose.sh
 │   ├── prune-vercel-deployments/  # + scripts/prune-deployments.sh, clear-orphaned-aliases.py
 │   ├── update-ats-cv/        # + SCHEMA.md, cv_render/cv_extract/cv_preview.py, fonts
-│   └── edit-pdf-text/       # + pdftext.py, run_tests.sh
+│   ├── edit-pdf-text/        # + pdftext.py, run_tests.sh
+│   ├── spawn-new-cv-test/    # CV interview drill — scaffold + spawn
+│   └── finish-cv-test/       # CV interview drill — score the run
 ├── cmd/dlv/                  # Delve helpers — copy into your Go project
 ├── sync.sh
 ├── remove_non_commands.sh
