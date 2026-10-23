@@ -258,6 +258,22 @@ Loop until `runnable_now` is empty:
    - to revert your own edits: `git checkout -- <each path you own>`
    - to set work aside: `git stash push -u -m "p<N>-<unique-tag>"`, recover with `apply <sha>`
 
+   **Say the between-wave protocol in the same breath**, because every phase in every wave but
+   the first inherits a tree that moved under it, and three of the four items cost nothing until
+   the one time they are missing:
+
+   - commit explicit paths, and a **private `GIT_INDEX_FILE`** when a file is genuinely shared —
+     a pathspec commit reads the working tree, so it takes a peer's uncommitted edit to any file
+     it names
+   - `git fetch` and rebase before reporting, never `--autostash`, and `merge --ff-only` instead
+     of rebase for a branch carrying a shared binary
+   - re-run the touched test files *after* catching up: a green from before a peer landed is not
+     a green, and the plan's impact counts were measured at the base commit
+   - a peer's failure report is unverified until this session reproduces it — a concurrent run
+     reddens tests that read exactly like your own regression
+
+   `/implement` carries all four in full; the wave message only has to make the child expect them.
+
    **If one has already run, preserve before you repair, and do it first.** `git reflog` names
    every commit the reset orphaned, and orphaned commits are gc-able — so tag each one *before*
    investigating: `git tag -f rescue/reset-casualty-<sha> <sha>`. Then diff each tag against the

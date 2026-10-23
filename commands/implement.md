@@ -275,6 +275,25 @@ tree for those paths and ignores the rest of the index. MEASURED 2026-10-08 on
 A pathspec commit only sees **tracked** files, so a file you just created needs
 `git add -- <newfile>` first — then still bound the commit: `git commit -m "<msg>" -- <all paths>`.
 
+**When two phases must genuinely edit one file, the pathspec form is not enough either.**
+`git commit -- <paths>` reads the *working tree* for the paths it names, so a peer's uncommitted
+edit to a file you also name rides along inside your commit. MEASURED 2026-10-23 in a scratch
+repo: with a peer's line sitting uncommitted in a shared file, `git commit -- shared.py mine.py`
+committed the peer's line; the same state committed through a private index did not, and left the
+peer's edit untouched in the tree. Give your commit its own index when a file is shared:
+
+```bash
+IDX=.git/index-p{N}
+GIT_INDEX_FILE=$IDX git read-tree HEAD
+GIT_INDEX_FILE=$IDX git add -- <only your paths>
+GIT_INDEX_FILE=$IDX git commit -m "<msg>"   # no pathspec: the private index IS the bound
+rm -f "$IDX"
+```
+
+The File ownership table exists so this stays rare. If two phases are editing one file often
+enough that you reach for this twice, say so to the coordinator — the split is wrong, and
+serializing the two phases costs less than a race run repeatedly.
+
 If you find your work committed under a peer's message, **it is not lost and you must not
 re-implement it** — check the branch first (`git log --format=%h <branch> | while read c; do git
 show --stat --format="" $c | grep -q <your path> && echo $c; done`). Re-implementing work that
@@ -298,6 +317,28 @@ third phase's twelve files of finished, verified, uncommitted work, and cost a f
 of tests. The instinct was correct; only the tool was tree-wide. If you have already run one,
 **stop and tell the coordinator immediately** — orphaned commits are recoverable from `git reflog`
 only until garbage collection, and the coordinator tags them.
+
+**Three checks before the report, because the wave moved while you worked.** Everything above
+protects peers from this phase; these protect this phase from them. All three run *before* the
+`completion_report` — `pusher` commits and pushes straight from it, so a stale green in that
+report is on the branch before anyone reads it.
+
+1. **Catch up to what landed.** `git fetch origin`, then bring your branch onto it:
+   `git rebase origin/<branch>` for ordinary files. **Never `--autostash`** — it rewrites the
+   working tree under peers who are mid-write. And never rebase a branch carrying a **shared
+   binary** (a committed database, a generated snapshot): the replay puts your stale copy back
+   over the live one peers are still writing. For those, `git merge --ff-only origin/<branch>`,
+   which leaves dirty files alone and refuses instead of rewriting.
+2. **Then re-run the test files your change touches** — the files, not the suite. A green
+   measured before a peer phase landed is not a green. The plan's own "breaks N tests and nothing
+   else" was measured at the base commit, and a peer landing first adds breakages the plan never
+   saw. If the re-run is red because of what landed, that is drift: report it. Do not patch a
+   peer's file to get your green back.
+3. **A failure a peer reports is unverified until you reproduce it.** Re-run the named file
+   alone, in this session, before believing it or acting on it — a peer's concurrent run can
+   redden tests that read exactly like your own regression, and a report written mid-wave
+   describes a tree that no longer exists. Reproduce first, then fix. Never fix from someone
+   else's transcript.
 
 ```yaml
 completion_report:
@@ -429,6 +470,13 @@ git -C "$LAND" merge --no-ff {branch} -m "merge({slug}): {title}"
   below, `git add` the resolution, `git -C "$LAND" commit --no-edit`. If a conflict is genuinely
   undecidable (every resolution irreversible), `git -C "$LAND" merge --abort` and print the
   **Undecidable** block — `main` is untouched, the branch and its worktree stand as they were.
+- **A binary conflict has no resolution, only a choice of side** — and in this worktree `--ours`
+  is the *base's* side, not yours. Never pick one blind: a committed database or snapshot loses
+  whichever rows the discarded side held. The rehearsal is already here (`$LAND` is throwaway and
+  `main` is untouched until the push), so use it: take the side that holds more, re-apply what
+  the other side had, and **prove the result against both inputs** — two digests, two row counts —
+  before `commit --no-edit`. If you cannot prove it, abort and print **Undecidable** as above:
+  a destroyed record does not come back from a merge.
 - **Clean merge** → continue.
 
 Push, retrying once against a base that moved (mirrors `swarm.py land --step push`):
