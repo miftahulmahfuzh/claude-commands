@@ -542,9 +542,16 @@ export function register(on) {
       if (sets.length === 0) {
         return { text: 'no orchestrated set in this repo. Try /fleet <slug>.' }
       }
-      // Several: name them rather than pick one. A deck confidently showing the wrong
-      // run is worse than one that asks.
-      return { text: 'several sets here. Pick one:\n  /fleet ' + sets.join('\n  /fleet ') }
+      if (sets.length === 1) {
+        // The same adoption session.start does. A session that started before the set
+        // existed -- a coordinator that ran /analyze, which is the common case -- reaches
+        // discovery here instead, and must not be told there are "several" of one.
+        fleetSlug = sets[0]
+      } else {
+        // Several: name them rather than pick one. A deck confidently showing the wrong
+        // run is worse than one that asks.
+        return { text: 'several sets here. Pick one:\n  /fleet ' + sets.join('\n  /fleet ') }
+      }
     }
     await refresh($)
     // A session that named a set after startup has no timer yet.

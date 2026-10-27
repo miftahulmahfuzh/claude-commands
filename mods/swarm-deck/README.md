@@ -22,6 +22,11 @@ own process and can *answer* an event instead of letting it happen, so the dialo
 renders. The question stops being a thing the model is asked not to do and starts being a
 thing it cannot do.
 
+![The /fleet deck: three phases of a set, each reporting its own row](../../docs/img/fleet-deck.png)
+
+*`/fleet` in a coordinator. Each row is written by the phase itself, on a timer that runs
+outside any turn — watching the set costs no tokens.*
+
 ## What it does
 
 `tool.call` on `AskUserQuestion`, in a session that `swarm.py spawn` launched as a phase:
@@ -34,6 +39,28 @@ thing it cannot do.
   `todos.md`, the commit body and the swarm ledger
 
 Outside a swarm it is **dormant**: an ordinary interactive session is untouched.
+
+### A phase that asks
+
+![A phase session refusing AskUserQuestion and handing back the precedence ladder](../../docs/img/guard-refusal.png)
+
+The dialog never renders. The phase reads the ladder as the tool's result and decides on the
+highest rung that settles the question.
+
+### A phase that stops
+
+![The deck showing phase 3 as QUIET, with the band lit below the transcript](../../docs/img/fleet-quiet.png)
+
+Phase 3's session was killed mid-run. Sixty seconds later its row reads `QUIET` rather than
+the `working` it last claimed — staleness overrides what a row says about itself — and the
+band lights under the transcript. Nothing else lights it: a band that is always on is noise.
+
+![The deck updating as a phase goes quiet](../../docs/img/fleet-quiet.gif)
+
+> These are a demonstration set — three real sessions carrying real `SWARM_*` identities and
+> writing real rows, not a production run and not mocked output. Regenerate them with
+> [`tools/termshot.py`](tools/termshot.py), which renders a tmux pane straight to PNG or GIF;
+> a screenshot nobody can re-shoot rots the first time the layout changes.
 
 ## Two design points worth the words
 

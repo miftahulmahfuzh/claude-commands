@@ -902,6 +902,8 @@ that asks stalls the whole set* — but they said it in a prompt, and a prompt i
 a phase-2 session held an `AskUserQuestion` for eight hours and stalled a six-phase set whose
 answer was rung 1 of the precedence ladder.
 
+![The /fleet deck](docs/img/fleet-deck.png)
+
 `swarm-deck` hooks `tool.call` on `AskUserQuestion` in any session `swarm.py spawn` launched as a
 phase, and refuses it — handing back the precedence ladder as the tool result so the phase decides
 on the highest rung that settles it, and recording the decision for the coordinator's morning
@@ -911,10 +913,16 @@ It **fails closed**: a mod hook that throws is normally *skipped*, which here wo
 render and stall the night, so the guard carries a `.catch` that re-issues the refusal. A test
 forces the throw and asserts the refusal survives it.
 
+A phase that stops reporting reads `QUIET` rather than the `working` it last claimed, and the
+band lights under the transcript — nothing else lights it:
+
+![Phase 3 QUIET, with the band lit](docs/img/fleet-quiet.png)
+
 ```bash
 cd mods/swarm-deck
 claude plugin validate .   # the events, calls and env reads the engine will actually see
 claude plugin test         # offline: no session, no sign-in, no network
+python3 tools/termshot.py shot <tmux-target> out.png   # regenerate the screenshots
 ```
 
 It loads from the repo rather than through `sync.sh`:

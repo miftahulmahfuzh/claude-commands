@@ -72,6 +72,27 @@ test('a coordinator adopts the one set in its repo and keeps refreshing', async 
   await ui.unmount()
 })
 
+test('/fleet adopts the single set when the session started before it existed', async ($, on) => {
+  // A coordinator runs /analyze, which CREATES .workflows/orchestration/<slug>/. At its
+  // session.start there was nothing to discover, so the command path has to adopt too --
+  // and the first version told the user there were "several" of exactly one, because the
+  // tests covered zero sets and two but never one through this path.
+  asCoordinator(on, ['portfolio-access-grant'])
+  mock.clock(on)
+  const saved = storeSpy(on, {
+    'swarm/portfolio-access-grant/phase/1': { slug: 'portfolio-access-grant', phase: '1', status: 'idle', updatedAt: 0 },
+  })
+
+  await $.session.start(START)
+  const answer = await $.command.run({ command: 'fleet', args: '' })
+
+  // Opened the pane, said nothing.
+  expect(answer.text).toBeUndefined()
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: 'set portfolio-access-grant' })).toBeDefined()
+  await ui.unmount()
+})
+
 test('several sets are listed, never guessed between', async ($, on) => {
   asCoordinator(on, ['portfolio-access-grant', 'swarm-write-set-gate'])
   mock.clock(on)
