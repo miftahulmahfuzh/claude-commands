@@ -288,14 +288,13 @@ session fixes for itself.
   python3 ~/.claude/skills/swarm/swarm.py spawn --slug <slug> --phase N --cwd <path>
   ```
 
-  Use that form, not `spawn --isolate`. **`swarm.py spawn` has no `--isolate` argument** —
-  VERIFIED: `grep -c isolate skills/swarm/swarm.py` is `0`, and its argparse
-  (`skills/swarm/swarm.py:2113-2124`) defines only `--slug --phase --prefix --prompt --cwd
-  --permission-mode --model --force --no-trust --dry-run`. Step 4 of this command names
-  `--isolate` at `:237`, `:255` and `:383`; those three lines are wrong, they are outside this
-  phase's region, and fixing them serves none of R1-R4 (see **Handoffs**). `--cwd` does exist and
-  is the mechanism. Separate worktrees turn concurrent writes into separate branches, and disjoint
-  regions of one file then merge cleanly at Step 4c.
+  Use that form, not `spawn --isolate`. **`swarm.py spawn` has no `--isolate` argument and never
+  had one** — VERIFIED: `grep -c isolate skills/swarm/swarm.py` is `0`; `git log --all -S'isolate'
+  -- skills/swarm/swarm.py` is empty across the whole history, so the flag was only ever written
+  into prose; and its argparse (`skills/swarm/swarm.py:2113-2124`) defines only `--slug --phase
+  --prefix --prompt --cwd --permission-mode --model --force --no-trust --dry-run`. `--cwd` does
+  exist and is the mechanism. Separate worktrees turn concurrent writes into separate branches,
+  and disjoint regions of one file then merge cleanly at Step 4c.
 
   On `journal-versioning` the three phases' edit anchors in `commands/lab.py` were 29 lines apart
   at their closest (`3@101` / `2@130`; phase 4's single anchor at 843 sits 82 from its nearest
@@ -437,13 +436,28 @@ Loop until `runnable_now` is empty:
    is reading.
 
    **Isolation: one worktree per phase, cut fresh from the integration branch at the start of
-   each wave.** `spawn --isolate` provisions it; the phase's session never sees a peer's
-   uncommitted state, and its commits land on its own branch. Three things must be right or the
-   isolation is worse than sharing: the worktree needs its **own `engine/.venv`** (Seer's
-   CLAUDE.md), `web/node_modules` must be **hardlinked and not symlinked** (a symlink passes
-   vitest and tsc, then fails `next build` with a misleading "filesystem root" error), and
-   `pytest` needs `PYTHONPATH=engine/src` or it silently tests the main checkout instead of the
-   branch. The research store is not copied into worktrees — point `--store` at the main checkout.
+   each wave.** Cut it yourself, then spawn into it — `spawn` has no `--isolate` flag, and `--cwd`
+   is the mechanism:
+
+   ```bash
+   WT=~/.worktrees/<repo>/<slug>-p<N>
+   git worktree add -b "phase-<N>-<slug>" "$WT" "<integration branch>"
+   # provision $WT here — see below
+   python3 ~/.claude/skills/swarm/swarm.py spawn --slug <slug> --phase <N> --cwd "$WT"
+   ```
+
+   The phase's session then never sees a peer's uncommitted state, and its commits land on its
+   own branch.
+
+   **The provisioning is yours too, and three things must be right or the isolation is worse than
+   sharing**: the worktree needs its **own `engine/.venv`** (Seer's CLAUDE.md),
+   `web/node_modules` must be **hardlinked and not symlinked** (a symlink passes vitest and tsc,
+   then fails `next build` with a misleading "filesystem root" error), and `pytest` needs
+   `PYTHONPATH=engine/src` or it silently tests the main checkout instead of the branch. The
+   research store is not copied into worktrees — point `--store` at the main checkout. Where the
+   repo declares `.workflows/swarm.json`, its `suite.setup` is that list in the repo's own words;
+   `agents/integrator.md` step 4 carries the same ladder for the integration worktree, and is the
+   one place this knowledge is maintained.
 
    **Why the shared worktree was the old default, and what replaces the reason.** Phase N+1 needs
    phase N's code on disk to build against, so per-phase worktrees would once have meant each
@@ -454,8 +468,8 @@ Loop until `runnable_now` is empty:
    Within a wave, phases are independent by construction — that is what the wave means — and the
    write-set gate above is what proves it rather than assuming it.
 
-   The old shared-worktree default, for reference, and still what `spawn` does without
-   `--isolate`:
+   The old shared-worktree default, for reference, and still what `spawn` does when it is given
+   no `--cwd` — it falls back to the ledger's set-wide worktree (`swarm.py:852`):
 
    **Every phase in the wave runs in the SAME worktree — the one `/analyze` cut for the set — and
    that is deliberate.** Phase N+1 needs phase N's code on disk to build against, so one worktree
@@ -583,8 +597,8 @@ Loop until `runnable_now` is empty:
    pinned constant, a test that must not be edited, a fingerprint that must not move — re-run
    that check yourself here rather than quoting the phase's report of it. A phase verifying its
    own guardrail is the weaker witness, and these are cheap: one `grep`, one `git diff --numstat`.
-6. **Integrate the wave before the next one is cut** — only with `--isolate`, where each phase
-   landed on its own branch. Dispatch the **`integrator`** agent with the wave's branches and the
+6. **Integrate the wave before the next one is cut** — only where the wave ran isolated, each
+   phase in its own worktree and landing on its own branch. Dispatch the **`integrator`** agent with the wave's branches and the
    integration branch. It merges them in dependency order in a throwaway worktree, regenerates
    derived artifacts rather than merging them, runs the **full** suite, and only then moves the
    integration branch. It never pushes `main`.
