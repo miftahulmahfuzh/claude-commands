@@ -4,7 +4,7 @@
 
 **Package Code**: CL
 
-**Last Updated**: 2025-01-16 00:15:00
+**Last Updated**: 2026-10-27
 
 **Total Active Tasks**: 0
 
@@ -15,21 +15,66 @@
 - P3 Low: 0
 - P4 Backlog: 0
 - Blocked: 0
-- Completed Today: 14
-- Completed This Week: 14
-- Completed This Month: 15
+- Completed Today: 17
+- Completed This Week: 17
+- Completed This Month: 18
 
 ---
 
 ## Active Tasks
 
-*None identified - package is in excellent condition with no critical issues.*
+*No active tasks*
 
 ---
 
 ## Completed Tasks
 
 ### Recently Completed
+- [x] **P1-CL-A022** Phase 2: Per-repo artifact classes and test commands
+  - **Difficulty**: HARD
+  - **Type**: Refactor
+  - **Plan Set**: `SWARM_WRITE_SET_GATE_PLAN.md` (phase 2 of 3)
+  - **Satisfies**: R3, R1 (one README line) — R3: Make the generated/binary artifact list and the integrator's test commands per-repo; design and argue the mechanism; keep the seer values working as data. R1 (one line): the `README.md` Project Structure entry for the `skills/swarm/tests/` harness phase 1 ships.
+  - **Plan**: `.workflows/plan/P1-CL-A022.md`
+  - **Completed**: 2026-10-27 09:49
+  - **Method**: `/do P1-CL-A022` (swarm phase 2, wave 1, branch `swarm-wsg-p2`)
+  - **Files**: skills/swarm/plan_graph.py, skills/swarm/tests/test_plan_graph.py, agents/integrator.md, skills/swarm/SKILL.md, README.md
+  - **What landed**: R3 — the two hardcoded seer constants (`GENERATED`, `REGENERATED_TEXT`) are gone from `plan_graph.py`, replaced by a three-tier per-repo resolution: an explicit `.workflows/swarm.json` first, then the repo's own `.gitattributes` (`binary`/`-diff`/`linguist-generated` markers), then a project-agnostic suffix baseline. `classify()` is now four-argument and takes the resolved classes as data; `load_config`, `_norm`, `_match`, `gitattributes_classes`, `CONFIG_PATH` and `BASELINE_BINARY` are the new surface. The seer values survive as a worked example of the mechanism in `SKILL.md`, not as a built-in default, and `lab.xlsx` keeps its existing ORDER classification per the index's Decisions ("do not regress those plan sets"). `agents/integrator.md` steps 2 and 4 no longer name `pytest engine/tests`: the suite is derived from a repo ladder in the shape of `skills/task/DESIGN.md:239-242` (package.json scripts → Makefile → pytest → cargo → go test). `README.md` gained the `.workflows/swarm.json` references and the Project Structure `tests/` line (R1's one line, assigned here by reconciliation conflict 7).
+  - **Verified**: harness 13 → **25 cases**, all passing; phase 1's work intact — `build()`'s returned dict still carries `"root"`, `grep -c "no file is written by two phases"` = 1 and `grep -c "INCOMPLETE:"` = 2; no new merge class minted (`classify()` still returns only `read`/`binary`/`generated`/`create`/`modify`), so phase 1's `SEVERITY` needed no row; the R3 exit-criterion grep over `plan_graph.py` and `integrator.md` returns nothing; verified against the installed copy after `./sync.sh`.
+  - **Decided**: Step 3's `_match` docstring shipped `web/data/lab.json` as a path example, but the phase exit criterion requires the seer grep over `plan_graph.py` to return nothing → replaced with `data/snapshot.json` (identical length, alignment preserved; no test asserts on the docstring). Rung 2 (phase exit criteria) over rung 3 (the plan's code block); also satisfies the index's looser "nothing but documentation-of-the-example".
+  - **Decided**: `readme-updater` deliberately NOT run → the plan index's hand-declared write-set table is the authority while phase 3 runs concurrently, and it lists exactly 5 files with no `package_readme.md`. Creating one would add a 6th, unowned file to a concurrent wave. `README.md` documentation is already this phase's own Step 11. Rung 4 (the index's write-set table) + "never widen scope to settle an ambiguity".
+
+- [x] **P1-CL-A023** Phase 3: Make the gate a gate: enforce exits 1 and 2
+  - **Difficulty**: NORMAL
+  - **Type**: Feature
+  - **Plan Set**: `SWARM_WRITE_SET_GATE_PLAN.md` (phase 3 of 3)
+  - **Satisfies**: R2 — Make the gate enforcing: `/analyze-orchestrator` hard-stops on exit 1 and 2 with class-specific remediation, using the repo's existing escape-hatch convention.
+  - **Plan**: `.workflows/plan/P1-CL-A023.md`
+  - **Completed**: 2026-10-27 09:47
+  - **Method**: swarm phase session on isolated branch `swarm-wsg-p3` (`/implement -f SWARM_WRITE_SET_GATE_PLAN.md --phase 3`); coordinator `orch-swarm-write-set-gate` integrates the wave and lands the set
+  - **Files**: commands/analyze-orchestrator.md, skills/swarm/SKILL.md, .workflows/todos.md, SWARM_WRITE_SET_GATE_PLAN.md
+  - **What landed**: R2 — the write-set gate's exit codes were always correct and deliberate (`plan_graph.py` `main()`); what was missing was a caller that honoured them. `/analyze-orchestrator` Step 3b was advisory prose ("act on what it flags, by class") with no instruction to stop, so a coordinator could read exit 1 or 2 and spawn the wave anyway. Step 3b is now enforcing: an exit table (`0` → Step 4; `1` → stop; `2` → remediate, re-run once, stop only if that did not clear it) followed by a section per non-zero exit. **Exit 1** is a stop with no remediation — the analysis never ran — and must quote the two lines phase 1 added, `INCOMPLETE: no collision among the K of N phases …` and `resolved against root: <path>`, the latter being what distinguishes a genuinely absent plan file from a wrongly resolved root; it also forbids quoting the old all-clear sentence there and says to report a regression if it ever appears alongside exit 1. **Exit 2** is remediate-and-proceed by class — ISOLATE → one worktree per phase via `git worktree add` + `swarm.py spawn --cwd` (explicitly *not* `spawn --isolate`, which does not exist: `grep -c isolate skills/swarm/swarm.py` is 0), with the caveat that anchors within three lines of each other are ORDER in disguise; ORDER and BLOCK → a dependency edge, added mechanically in five numbered steps across **both** copies of the index, re-`init`'d, committed through `pusher` before anything spawns. One remediation round, then stop; a `waves` cycle stops too. **The stop is a stop, not a prompt** — a session that terminates with a report rather than ending a turn on a question, with the two termination blocks in Step 5's shape, and the observation that because nothing was spawned every phase is still `pending` and `--resume <slug>` picks the set up. **`--no-gate`** is added to the flag block and reuses `skills/task`'s flag, meaning and refusal-message shape (`skills/task/DESIGN.md:159`, `task_gh.py:2617`, `task_gh.py:1994-1999`): the gate still runs and still prints, only its refusal is lifted, and it must be passed on purpose. Because the flag was written for a human who is by construction asleep, the command never reaches for it and never waits for it — a gate that cannot run *at all* walks the `DESIGN.md:238-246` ladder instead (derive the write sets by hand from the phase plans' `## Files` tables, proceed under the flag, and **name what was checked instead** in the ledger note), falling through to the exit-1 stop only when nothing could be derived either. `skills/swarm/SKILL.md` gains the matching four paragraphs after its exit-code line (enforced not advisory; the stop never prompts; `--no-gate` and the ladder), touching nothing at or after the class table phase 2 owns.
+  - **Verified**: all 7 phase checks pass — flag spelling matches `skills/task`; all three exits enforced; no prompt primitive spelled anywhere in Step 3b (grep finds none); `SKILL.md` lines 55-58 byte-identical to `HEAD` with the edit landing as a single insert-only hunk; `skills/swarm/plan_graph.py` absent from the diff; the post-phase-1 quotes present with the old all-clear sentence appearing exactly once, inside the historical note; no `spawn --isolate` instruction. Check 8 — `python3 skills/swarm/plan_graph.py SWARM_WRITE_SET_GATE_PLAN.md` exits **2**, naming `skills/swarm/SKILL.md` as CONCURRENT/ISOLATE between phases 2 and 3, with no `INCOMPLETE:` line. Pre-sync safety check: phase 1's `rev-parse --show-toplevel` root finder still at `plan_graph.py:128`, the old `os.path.isdir(os.path.join(repo` walk gone. After `./sync.sh` both installed copies are byte-identical to the repo copies and the full three-way drift check is clean; phase 1's harness still passes 13/13.
+  - **Drift**: `commands/analyze-orchestrator.md` Step 3b's bash block had one line (`# exit 2 = a concurrent collision`) where the plan's carried-across text showed two; the plan replaces Step 3b wholesale, so the replacement text governs. No impact.
+  - **Decided**: Step 3b's prompt-disclaimer sentence named the prompt primitives literally in the plan's code block, but the phase's own exit criterion 3 forbids those spellings appearing anywhere in Step 3b and verification check 3 greps for them expecting no match → reworded the sentence to name no prompt primitive literally, with a parenthetical saying why (rung 2: exit criteria outrank a code block's wording; the intent, "no prompt primitive introduced inside Step 3b", is unchanged and now actually checkable).
+  - **Decided**: `skills/swarm/SKILL.md` keeps the plan's literal wording for those same primitives → no criterion forbids those tokens in SKILL.md, and deviating for cosmetic consistency with Step 3b would be scope creep (rung 3: the plan's code block governs where nothing outranks it).
+  - **Decided**: Skipped `readme-updater` → no `package_readme.md` exists anywhere in this repo, and the repo `README.md` is phase 2's sole-writer file; the phase's Files table and its "Does not touch" list name exactly two files (rung 2/3: exit criteria + the plan's Files table).
+  - **Decided**: git rendered the `SKILL.md` edit as an insertion after old line 35 rather than a replacement of 32-34, narrowing the reconciler's measured margin → re-ran the `git merge-file` check against phase 2's real replacement text (its plan Steps 9 and 10): rc=0, zero conflict markers, all three edits present. ISOLATE stands (rung 1: the phase plan's standing instruction to re-run that check if the margin is in question).
+  - **Rollback**: the deploy is a copy, so `git revert` of this commit must be followed by `./sync.sh`.
+
+- [x] **P1-CL-A021** Phase 1: Gate correctness: worktree root discovery + severity selection
+  - **Difficulty**: NORMAL
+  - **Type**: Bug
+  - **Plan Set**: `SWARM_WRITE_SET_GATE_PLAN.md` (phase 1 of 3)
+  - **Satisfies**: R1, R4 — R1: Fix `plan_graph.py`'s repo-root discovery so the gate works inside a git worktree; justify the root-finder; regression-test the worktree case (includes the false all-clear). R4: Remove the dead `kinds` comprehension, or implement its intent deliberately and test it.
+  - **Plan**: `.workflows/plan/P1-CL-A021.md`
+  - **Completed**: 2026-10-27 09:32
+  - **Method**: `/implement -f SWARM_WRITE_SET_GATE_PLAN.md --phase 1`
+  - **Files**: skills/swarm/plan_graph.py, skills/swarm/tests/test_plan_graph.py, .workflows/todos.md, .workflows/plan/P1-CL-A021.md, .workflows/plan/P1-CL-A022.md, .workflows/plan/P1-CL-A023.md, SWARM_WRITE_SET_GATE_PLAN.md
+  - **What landed**: R1 — `plan_graph.py`'s root walk looked for a `.git` **directory**, but in a linked worktree `.git` is a **file** (a `gitdir:` pointer), so the walk ran to `/` and fell back to `dirname(dirname(index))`, wrong for both index layouts `/analyze` produces. The gate therefore reported `0 files` for every phase of every standard plan set *and still printed* `no file is written by two phases.` Replaced by `find_root()`, which collects candidate roots in order of authority (`git rev-parse --show-toplevel` with cwd = the index's directory; an `os.path.exists` walk; the index's directory and its first three ancestors via new `_ancestors()`/`ROOT_LOOKUP_DEPTH`) and returns the first that actually resolves a phase-plan path the index names. `build()` now parses the index **before** finding the root, and returns a new `"root"` key. R1 (second half) — the all-clear is conditional: the exact old sentence prints only when every phase plan was read, otherwise `INCOMPLETE: no collision among the K of N phases whose plan could be read. …`, the tally gains `INCOMPLETE: computed over K of N phases. …`, and the missing-plans block names `resolved against root: <path>`. R4 — the dead `kinds` comprehension and the first-in-index-order `kind = next(...)` replaced by `SEVERITY`/`SEVERITY_UNKNOWN`/`most_severe()`; that was a live bug, not dead code, since a generated or binary path declared `modify` by a *lower-numbered* phase was reported ISOLATE instead of ORDER/BLOCK — the verdict was decided by phase numbering. Most-severe-wins now (invariant 6: BLOCK > ORDER > ISOLATE). New `skills/swarm/tests/test_plan_graph.py`: a stdlib-only, self-contained 13-case regression harness, no pytest, building real repos and real `git worktree add` worktrees under `tempfile.mkdtemp()`; it imports `plan_graph` from its own parent directory, so running the installed copy tests the installed copy. `swarm.py` untouched (one more name imported from it, `git`); no markdown outside bookkeeping.
+  - **Verified**: harness passes 13 cases, exit 0; the same harness against `git show HEAD:skills/swarm/plan_graph.py` fails with **33 assertions in 13 cases**, including both worktree cases, the severity case and the three false-all-clear cases — the plan's measured baseline reproduced exactly; a variant with the render guard stripped still fails 5, so the guard is independently load-bearing; `grep -c "no file is written by two phases" skills/swarm/plan_graph.py` = 1; `swarm.py selftest` passes with `git diff --stat skills/swarm/swarm.py` empty; after `./sync.sh` the harness passes against the installed `~/.claude/skills/swarm/plan_graph.py` and the three-way `diff -rq` drift check is silent; the installed gate run from `~` against this set's own index exits **2**, naming `skills/swarm/SKILL.md` as CONCURRENT/ISOLATE between phases 2 and 3 and the other two shared files sequential — agreeing exactly with the index's hand-declared Bootstrap-hazard write-set table. **That closes the bootstrap hazard: this set's own gate is now trustworthy.**
+  - **Rollback**: the deploy is a copy, so `git revert` of this commit must be followed by `./sync.sh` and `rm -rf ~/.claude/skills/swarm/tests`.
+
 - [x] **P2-CL-A018** Update postmortem.md with clear persistent file output documentation
   - **Completed**: 2025-01-30 13:00:00
   - **Method**: Enhanced postmortem.md with comprehensive documentation about persistent file creation requirements. Added new "Purpose" and "Persistent File Output" sections emphasizing that command MUST create physical markdown files, not just print analysis. Included specific file path examples like chatbot/processing/.workflows/postmortem/P0-PR-A001.md. Updated all success message templates to emphasize file creation and persistent documentation. Added best practices for verifying file creation and understanding persistent nature of postmortem files

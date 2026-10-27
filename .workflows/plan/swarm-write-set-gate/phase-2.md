@@ -1,0 +1,1633 @@
+# Phase 2: Per-repo artifact classes and test commands
+
+**Plan set:** `SWARM_WRITE_SET_GATE_PLAN.md`
+**Analysis:** `20261027-084829-ROCQ_code_analyzer.md`
+**Satisfies:** R3 — the generated/binary artifact list and the integrator's test commands become per-repo, so a global tool stops running one project's suite and one project's filenames against every repo on the machine. Also **R1 (one line only)**: the `README.md` Project Structure line that indexes `skills/swarm/tests/`, the harness phase 1 ships — assigned here by the reconciler because `README.md` is this phase's file and phase 1 edits no markdown. Nothing else in this phase serves R1.
+**Depends on:** Phase 1 (landed and synced before this starts)
+**Difficulty:** HARD
+**Package:** `skills/swarm`, `agents`
+
+---
+
+## Goal
+
+`skills/swarm/plan_graph.py` and `agents/integrator.md` stop carrying one project's paths and
+one project's test commands. After this phase the write-set gate resolves a path's merge class
+from three ordered sources — a repo-local `.workflows/swarm.json`, the repo's own
+`.gitattributes`, and a project-agnostic suffix baseline — and the `integrator` agent derives
+its suite by walking a ladder off the repo instead of naming `pytest engine/tests`. The seer
+values still produce exactly today's classifications, as a worked configuration rather than as
+a built-in default.
+
+---
+
+## The mechanism, and the argument for it
+
+The user left the design open and named three candidates. All three were weighed; the answer is
+**two of them, layered**, because the problem has two halves that are not the same problem.
+
+### What is actually being configured
+
+| Fact | Can the filesystem infer it? | Example |
+|---|---|---|
+| "a `.sqlite` has no text merge" | yes, from the suffix, in every repo | `.sqlite`, `.png`, `.zip` |
+| "this path does not text-merge **in this repo**" | yes — the repo already wrote it down | seer's `.gitattributes`: `web/data/lab.json -merge` |
+| "this JSON is a snapshot of that database, rebuilt by `lab stage`" | **no** | the regeneration recipe |
+| "the full suite here is four CI guards, a typecheck and a build" | partly, from `.github/workflows` | the integrator's step 4 |
+
+The first row is genuinely universal and belongs in code. The last two are irreducibly
+project-specific and cannot be inferred. The middle row is the interesting one: **the repo has
+already declared it, in the file git itself consults**, and seer's `.gitattributes` says so
+today with a comment explaining why. So the mechanism is a **baseline + per-repo override**
+split, in three tiers.
+
+### The three candidates, weighed
+
+**1. Convention-based detection — adopted, as tier 2, but not as the whole answer.**
+
+MEASURED in `~/seer`:
+
+```
+$ cat .gitattributes
+lab/lab.sqlite binary
+web/data/lab.json -merge
+$ git check-attr -z -a -- web/data/lab.json lab/lab.sqlite
+web/data/lab.json|merge|unset|lab/lab.sqlite|binary|set|lab/lab.sqlite|diff|unset|…
+```
+
+`binary` means "no textual form at all" → BLOCK. `-merge` means "conflict on purpose and leave
+our copy intact" → the signature of something regenerated rather than merged → ORDER. That is
+**precisely** the two classes the gate needs, written by the same person for the same reason,
+in a standard file that travels with the repo and that git already honours during the merge the
+integrator will perform. Reading it means seer reproduces today's `web/data/lab.json` and
+`lab/lab.sqlite` classification **with no configuration file at all**.
+
+It cannot be the whole answer, for two measured reasons:
+
+- `~/agentic` has **no `.gitattributes`** and commits `hugo_docs/resources/_gen/` (verified
+  present, and not gitignored — its `.gitignore` excludes only `hugo_docs/public/`). The exact
+  case the user named is invisible to this tier.
+- `.gitattributes` has no vocabulary for "rebuilt from X by command Y" or for a test suite.
+
+**2. A CLAUDE.md-declared block — rejected.**
+
+- `plan_graph.py` is a pure-Python gate that runs with no model in the loop. Parsing a fenced
+  block out of a prose document is a parser built on a human's formatting discipline, and the
+  gate's whole value is being trustworthy unattended.
+- CLAUDE.md exists at three levels in this ecosystem (repo root, package, `~/.claude/`) with no
+  defined precedence for configuration, where `.workflows/` already has exactly one location.
+- It mixes instruction-to-a-model with configuration-for-a-tool. A stale fenced block in a file
+  people edit for other reasons is a silent misclassification, which is the defect class being
+  fixed, not a new one.
+
+Adopted in spirit only: the chosen file is documented in `SKILL.md` and is plain JSON, so the
+`integrator` prose agent reads it with `cat` and needs no parser of its own.
+
+**3. A repo-local config file — adopted, as tier 1: `<repo>/.workflows/swarm.json`.**
+
+Why `.workflows/` rather than a new root dotfile: CLAUDE.md calls `.workflows/` "the persistence
+layer that ties commands together", and `swarm.py` already reads and writes
+`.workflows/orchestration/<slug>/ledger.json`. No new concept, no new root-level clutter.
+
+The gitignore hazard the phase brief raised was **checked and does not bite**. `swarm.py:1678
+cmd_track`'s docstring warns that "repos ignore `.workflows/` broadly", which would make a
+config file there invisible in exactly the repos that need it. MEASURED on this machine, across
+every repo with a `.git`:
+
+```
+$ for r in ~/seer ~/agentic ~/run-insights ~/daily-words ~/expense-tracking ~/jmtarot ~/nvim-config; do
+    (cd "$r" && git check-ignore -v .workflows/swarm.json || echo "  NOT ignored")
+  done
+  NOT ignored          (×7 — seer's .gitignore excludes only `.workflows/sera/`)
+```
+
+Seven of seven. The `track()` concern is about `.workflows/plan/`'s *volume* (one repo holds 218
+generated plans), not about the directory as a whole. Two further points make this safe:
+
+- The gate reads the file **from disk**, not from git. A repo that does ignore it still gets
+  correct classification locally; it merely does not travel to another machine.
+- The documented remedy already exists and is one line (`!.workflows/swarm.json` in
+  `.gitignore`). Teaching `swarm.py track` to re-include it would be the tidier fix, but
+  `swarm.py` is out of scope for this plan set — see **Handoffs**.
+
+Why JSON and not TOML or YAML: invariant 4 is stdlib-only. `tomllib` is Python 3.11+, and the
+floor is not stated anywhere in this repo; `json` is always present, and the ledger sitting
+beside it is JSON too.
+
+### Resolution order, and the one place a declaration lowers a severity
+
+```
+1. action `read*`                      -> read        (not a write at all)
+2. .workflows/swarm.json  "binary"     -> binary
+3. .workflows/swarm.json  "generated"  -> generated
+4. .gitattributes  binary / -diff      -> binary
+5. .gitattributes  -merge              -> generated
+6. BASELINE_BINARY suffix              -> binary
+7. action `regenerate*`                -> generated
+8. action `create*`                    -> create
+9.                                        modify
+```
+
+Two orderings in there are load-bearing and must not be "tidied":
+
+- **Tiers 2–3 (an explicit statement) beat tier 6 (an inference).** This is the only place a
+  declaration may *lower* a class, and it is what lets `.xlsx` sit in the universal BLOCK list —
+  correct for every repo that commits a spreadsheet — while the one repo that regenerates
+  `lab.xlsx` from a pipeline keeps it at ORDER by saying so. This is **not** a violation of
+  invariant 6: that invariant governs *two phases disagreeing about one path* (phase 1's
+  most-severe-wins loop), where there is no authority to prefer. Here there is one — the repo.
+- **Tier 6 comes before tier 7.** Today a `.sqlite` whose action cell says `regenerate`
+  classifies `binary`, because `GENERATED` is checked before `REGENERATED_TEXT`
+  (`plan_graph.py:41` before `:43`). Moving the action check earlier would silently downgrade
+  every regenerated database from BLOCK to ORDER. The order above preserves today's behaviour.
+
+### The seer discrepancy, carried across unchanged
+
+Per the index's `## Decisions` (rung 5), `lab.xlsx` keeps its ORDER classification even though
+an xlsx is a zip of XML with no text merge. It is carried in the seer worked example's
+`generated` list, and the discrepancy is written down in `SKILL.md` rather than silently fixed.
+
+**MEASURED, by running the new classifier against every existing seer plan set** (79 entries,
+267 `.md` files, **1,559 `## Files` rows**), with the seer config above and seer's real
+`.gitattributes`: **exactly one row changes class**, and it is an upgrade.
+
+```
+DIFF 'engine/data/models/<END>-strategy-b.pkl'  'create (generated), **pass only**'
+     create -> binary
+1559 rows across 267 plan files; attrs declared for 2 paths; 1 change
+```
+
+A pickled model has no text merge in any repo, so `binary` is the truer class and the direction
+is the safe one (invariant 6: never downgrade). It is also inert in practice — a path's class
+only changes a *verdict* when two phases share it, and this one has a single writer; the write
+set itself is identical either way, because `create` and `binary` are both writes.
+
+"attrs declared for 2 paths" is the tier-2 result: seer's `.gitattributes` answers for
+`web/data/lab.json` and `lab/lab.sqlite` and for nothing else, which is exactly the pair it was
+written for.
+
+The suffix census behind that: `.py` (813), `.ts` (219), `.md` (161), `.tsx` (98), `.txt` (72),
+`.json` (53), `.css` (50), `.sqlite` (43), `.csv` (34), `.yml` (28), `.sql` (15), `.svg` (5).
+No `.xlsx`, `.png`, `.pdf` or `.zip` row exists in any seer plan table.
+
+`.svg` is **deliberately absent** from the baseline: SVG is text and merges.
+
+### The suite: reuse of `DESIGN.md`'s ladder, with CI at the top
+
+`skills/task/DESIGN.md:239-242` already answers "how does an unattended session derive a gate
+from a repo it does not know": `package.json` scripts → `Makefile` → `pytest` → `cargo test` →
+`go test`. `skills/task/task_gh.py:1737 workflow_gate()` answers the harder half: read
+`.github/workflows/*.yml` and emit every `run:` step of every push/pull_request job, because
+"a hardcoded `npm test` waves through a repo whose CI is four bespoke guards plus a typecheck
+and a build".
+
+`integrator.md` reuses both, as one ladder. The **only** divergence is that CI sits *above*
+`package.json` rather than below it — and that is not really a divergence: DESIGN.md's ladder is
+explicitly the path for "a repo with no CI", and `workflow_gate` is what runs when there is one.
+Putting the repo's declared `suite.steps` above both is the same principle one rung further.
+
+The hard-won seer operational knowledge in step 4 (a worktree needs its own `engine/.venv`;
+`web/node_modules` must be **hardlinked**, not symlinked; `pytest` without
+`PYTHONPATH=engine/src` silently tests the main checkout) is **not deleted**. It moves to
+`suite.setup` / `suite.notes` in the worked example, and `integrator.md` keeps the *generalised*
+warning — per-checkout build artifacts, and a runner that resolves imports outside this tree —
+which is the transferable part.
+
+---
+
+## Interface Contract
+
+**Creates:**
+- `plan_graph.CONFIG_PATH` (`skills/swarm/plan_graph.py`) — `".workflows/swarm.json"`
+- `plan_graph.BASELINE_BINARY` (`skills/swarm/plan_graph.py`) — tuple of suffixes
+- `plan_graph.load_config(repo)` (`skills/swarm/plan_graph.py`)
+- `plan_graph._norm(path)` (`skills/swarm/plan_graph.py`)
+- `plan_graph._match(path, pattern)` (`skills/swarm/plan_graph.py`)
+- `plan_graph.gitattributes_classes(repo, paths)` (`skills/swarm/plan_graph.py`)
+- new key `"config"` in `build()`'s returned dict (`{path, found, generated, binary, regenerate}`)
+- new repo-level artifact **`<repo>/.workflows/swarm.json`** — a schema, not a file in this repo;
+  documented in `skills/swarm/SKILL.md` and indexed in `README.md`'s project tree
+- `skills/swarm/tests/test_plan_graph.py` — **new test functions appended** to the harness
+  phase 1 created (`_cfg`, `_git_repo` helpers if phase 1 has none equivalent)
+
+**Deletes:**
+- `plan_graph.REGENERATED_TEXT` (`skills/swarm/plan_graph.py:34`) — one project's filenames
+- `plan_graph.GENERATED` (`skills/swarm/plan_graph.py:33`) — **renamed**, see below
+
+**Renames:**
+- `plan_graph.GENERATED` -> `plan_graph.BASELINE_BINARY` (the old name said "generated" while
+  the constant held binary suffixes and the code returned `"binary"` from it)
+
+**Signature changes:**
+- `classify(path, action)` -> `classify(path, action, cfg=None, attr=None)` —
+  **backward compatible**: the two-argument call still works and yields the baseline-only
+  classification. Phase 1's harness, if it calls `classify`, is unaffected.
+
+**Requires (from earlier phases):** — reconciled against phase 1's final plan, 2026-10-27.
+
+- Phase 1 has landed `find_root(index_path, plans=())` and `repo = find_root(...)` inside
+  `build()`, plus `ROOT_LOOKUP_DEPTH` and `_ancestors()`. This phase **depends on `repo` being
+  correct** — tiers 1 and 2 both resolve relative to it, and a wrong root silently yields "no
+  configuration" rather than an error.
+- Phase 1 has landed `SEVERITY`, `SEVERITY_UNKNOWN = 25` and `most_severe(kinds, default="modify")`,
+  and `build()`'s collision loop now calls `most_severe([...])` through a `by_n` lookup. This
+  phase **mints no new class**, so neither needs a new row or branch — see Step 4's Impact.
+- Phase 1 has landed a `"root"` key on `build()`'s returned dict and three `render()` changes
+  that read it. **Step 5 must carry `"root"` across** — see the warning there.
+- Phase 1 has **already added `git` to the `from swarm import …` line** — confirmed: phase 1's
+  Step 1 sets it to `from swarm import git, parse_index, waves  # noqa: E402`
+  (`plan_graph.py:27`). Step 1 below is therefore a **verification**, not an edit: the only thing
+  this phase actually adds to the import block is `import fnmatch`.
+- Phase 1 has created `skills/swarm/tests/test_plan_graph.py` with a `@case` registry and `eq`/`ok`
+  collectors. Step 12's additions are written against **those** conventions, not against bare
+  `assert`.
+- Phase 1 has run `./sync.sh`.
+
+**Leaves alone (owned by others):**
+- `plan_graph.py`: `find_root`/`_ancestors`/`ROOT_LOOKUP_DEPTH`, `SEVERITY`/`SEVERITY_UNKNOWN`/
+  `most_severe`, `build()`'s `parse_index`-first ordering and root discovery, `build()`'s
+  collision loop, and `render()`'s missing-plans block, conditional all-clear and two
+  `INCOMPLETE:` lines — **all Phase 1's.** This phase edits exactly three regions of that file's
+  `build()`/`render()`: the file loop (Step 4), the `return` statement (Step 5, keeping `"root"`),
+  and `render()`'s opening `out = [...]` statement (Step 5).
+- `skills/swarm/SKILL.md` lines ~31-34, the exit-code paragraph — **Phase 3, running
+  concurrently in wave 1.** Every SKILL.md edit below is at line ≥ 39.
+- `commands/analyze-orchestrator.md` — Phase 3 (it still carries seer paths at :197 and :199;
+  see Handoffs).
+- `skills/swarm/swarm.py` — out of scope for the whole set.
+
+---
+
+## Files
+
+| File | Action | What changes |
+|---|---|---|
+| `skills/swarm/plan_graph.py` | modify | de-seer the docstring example; `fnmatch` import; `GENERATED`/`REGENERATED_TEXT` → `BASELINE_BINARY` + `CONFIG_PATH`; new `load_config`, `_norm`, `_match`, `gitattributes_classes`; `classify()` gains `cfg`/`attr`; `build()`'s file loop becomes two passes; `build()` returns `config`; `render()` prints one config line |
+| `agents/integrator.md` | modify | step 2 (the regeneration recipe) reads `.workflows/swarm.json` + `.gitattributes`; step 4 (the suite) walks the repo ladder; report block records the rung; closing line generalised |
+| `skills/swarm/SKILL.md` | modify | ISOLATE/ORDER/BLOCK table de-seered; **new** `### Per-repo artifact classes — .workflows/swarm.json` section with the worked example |
+| `skills/swarm/tests/test_plan_graph.py` | modify | append **12** `@case` functions to phase 1's harness (13 → 25): baseline, no-project-paths, config tiers, `.gitattributes` tier, degradation, pattern matching, the seer equivalence table, and an end-to-end verdict flip that also re-asserts phase 1's `root` key; add `import json` |
+| `README.md` | modify | one line in the `### swarm` section, one line in the project `.workflows/` tree, one line in the Project Structure tree for phase 1's `tests/` (R1) |
+
+---
+
+## Implementation Steps
+
+> **Line numbers below are from `origin/main`.** Phase 1 lands first and edits
+> `plan_graph.py:27`, `:77-85` and `:114-116`, so numbers will have shifted. **Every edit below
+> is anchored on exact text**, not on a line number. Read the file as phase 1 left it before
+> starting.
+
+### Step 1: Confirm the `swarm` import carries `git`
+
+**File:** `skills/swarm/plan_graph.py:20-27`
+**Change:** This phase needs `git()` for `gitattributes_classes()`. **Phase 1 has already added
+it** — its Step 1 sets the line to `from swarm import git, parse_index, waves  # noqa: E402`
+(reconciler-verified against phase 1's final plan, 2026-10-27). So this step **verifies, and the
+only thing it adds is `import fnmatch`.** Do not re-add `git`; a duplicated name in that import
+list is a diff phase 1 will see as a revert of its own line.
+
+**Code** — the complete import block after this step:
+
+```python
+import argparse
+import fnmatch
+import json
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from swarm import git, parse_index, waves  # noqa: E402
+```
+
+**Impact:** None on behaviour. If phase 1 chose a different spelling for the import line, keep
+its spelling and only ensure `git` is among the names.
+
+---
+
+### Step 2: De-seer the module docstring's measured example
+
+**File:** `skills/swarm/plan_graph.py:8` and `:16`
+**Change:** The docstring's `journal-versioning` measurement is worth keeping; the seer path in
+it is not — and the phase's exit criterion greps this file for `seer`. Keep the measurement,
+drop the identity. Add one line for the new mechanism.
+
+**Code** — the complete docstring, replacing lines 2-18:
+
+```python
+"""The file-level dependency graph of a plan set, computed before anything is spawned.
+
+`swarm.py waves` schedules from the `Depends on` column alone. That column records what a
+phase needs to *exist* before it starts; it says nothing about what two phases in the same
+wave will both *write*. Those are different questions, and the second one is what produces
+the collisions: on `journal-versioning`, phases 2, 3 and 4 were correctly placed in one wave
+by their dependencies and all three wrote the same command module.
+
+This reads each phase plan's `## Files` table -- the write set the planner declared, which is
+also what `/implement` hands `pusher` as its allowlist -- and reports:
+
+  * every file written by more than one phase, and whether those phases are concurrent
+  * the fix per collision: isolate (separate worktrees, disjoint regions merge) or serialize
+  * generated and binary artifacts separately, because those never textually merge
+
+Which paths those are is a property of the REPO, not of this file. See "artifact classes"
+below, and `skills/swarm/SKILL.md`'s "Per-repo artifact classes" for the configuration.
+
+Read-only. It spawns nothing and writes nothing.
+"""
+```
+
+**Impact:** `grep -n "seer" skills/swarm/plan_graph.py` now returns nothing.
+
+---
+
+### Step 3: Replace the hardcoded constants with the three-tier machinery
+
+**File:** `skills/swarm/plan_graph.py:29-47` (the `GENERATED`/`REGENERATED_TEXT` block and
+`classify()`)
+**Change:** Delete both constants and the old `classify()`. Insert the complete block below in
+their place.
+
+**Code** — complete replacement for lines 29-47:
+
+```python
+# ----------------------------------------------------------------- artifact classes
+#
+# Three tiers, most specific first. The configuration format and a worked example are in
+# `skills/swarm/SKILL.md`, "Per-repo artifact classes".
+#
+#   1. `<repo>/.workflows/swarm.json` -- the only tier that can state something the
+#      filesystem cannot infer: "this JSON is a snapshot of that database", and the
+#      command that rebuilds it.
+#   2. `.gitattributes`, read through `git check-attr` -- the repo has ALREADY declared
+#      which of its paths do not text-merge, in the file git itself consults during the
+#      merge the integrator is about to perform. `binary` (or `-diff`) means there is no
+#      textual form at all; `-merge` means the merge conflicts on purpose and leaves our
+#      copy intact, which is the signature of something regenerated rather than merged.
+#   3. BASELINE_BINARY -- the suffixes that have no text merge in ANY repo.
+#
+# NO PROJECT'S PATHS LIVE IN TIER 3. They used to: two literal filenames from one repo
+# were shipped to every repo on the machine, so another project's hand-written file of
+# the same name classified as generated, and a Hugo site's committed `resources/_gen/`
+# classified as an ordinary source file. Tiers 1 and 2 are where a project's paths go.
+
+CONFIG_PATH = os.path.join(".workflows", "swarm.json")
+
+# Suffixes with no text merge anywhere. `.svg` is DELIBERATELY ABSENT -- SVG is text and
+# merges. `.xlsx` IS here, because a spreadsheet is a zip of XML in every repo; the one
+# repo that regenerates an xlsx from a pipeline overrides it in tier 1, which is exactly
+# what tier 1 is for.
+BASELINE_BINARY = (
+    ".sqlite", ".sqlite3", ".db",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp", ".tif", ".tiff",
+    ".pdf", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".jar",
+    ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
+    ".parquet", ".pkl", ".npy", ".npz", ".h5", ".feather",
+    ".bin", ".so", ".dylib", ".dll", ".exe", ".wasm", ".class",
+    ".mp3", ".mp4", ".wav", ".mov", ".webm", ".ogg",
+)
+
+
+def _norm(path):
+    """A path from a `## Files` table, made comparable: no `./`, no leading slash."""
+    p = (path or "").strip().replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    return p.strip("/")
+
+
+def _match(path, pattern):
+    """Does a repo-relative `path` match one configured pattern?
+
+    Three spellings, because all three are things a planner actually writes:
+
+      * `.xlsx`              a leading dot with no slash is a SUFFIX: any file so named
+      * `resources/_gen/`    a trailing slash (or `/**`) is a DIRECTORY: everything under
+        or `resources/_gen/**`   it, at any depth, anchored at the root or found anywhere
+                               in the tree (a Hugo site's tree may sit under `hugo_docs/`)
+      * `web/data/lab.json`  anything else is a PATH: an exact match, or a match at a
+        or `data/*.csv`        directory boundary anywhere in the tree, or an fnmatch when
+                               it carries `*`, `?` or `[`
+
+    The unanchored forms matter because the index's `## Files` tables are written relative
+    to the repo root but a package's plan may quote a path relative to the package.
+    """
+    p = _norm(path)
+    pat = (pattern or "").strip().replace("\\", "/")
+    if not p or not pat:
+        return False
+    if pat.endswith("/**"):
+        pat = pat[:-2]                                   # "a/b/**" -> "a/b/"
+    directory = pat.endswith("/")
+    bare_suffix = pat.startswith(".") and "/" not in pat
+    pat = _norm(pat)
+    if not pat:
+        return False
+    if directory:
+        return p == pat or p.startswith(pat + "/") or ("/" + pat + "/") in ("/" + p)
+    if bare_suffix:
+        return p.endswith(pat)
+    if any(ch in pat for ch in "*?["):
+        return fnmatch.fnmatch(p, pat) or fnmatch.fnmatch(os.path.basename(p), pat)
+    return p == pat or p.endswith("/" + pat)
+
+
+def load_config(repo):
+    """The repo's declared artifact classes, or the empty config.
+
+    Absent, unreadable and malformed all mean the same thing here: no declaration, fall
+    through to `.gitattributes` and the baseline. This module is a pre-spawn check, not a
+    validator -- refusing to run because a config file has a stray comma would turn a
+    missing declaration into a stopped swarm, which is strictly worse than the classless
+    behaviour it replaces.
+
+    `suite` is parsed by the `integrator` agent, not here: it is not a graph fact.
+    """
+    empty = {"generated": (), "binary": (), "regenerate": {}}
+    if not repo:
+        return empty
+    try:
+        with open(os.path.join(repo, CONFIG_PATH), encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except (OSError, ValueError):
+        return empty
+    if not isinstance(raw, dict):
+        return empty
+
+    def patterns(key):
+        value = raw.get(key)
+        if not isinstance(value, list):
+            return ()
+        return tuple(x for x in value if isinstance(x, str) and x.strip())
+
+    regenerate = raw.get("regenerate")
+    regenerate = regenerate if isinstance(regenerate, dict) else {}
+    # A path with a regeneration recipe IS regenerated. Requiring it in `generated` too
+    # is a way to get the config half right, and the half that is missing is the one that
+    # silently downgrades ORDER to ISOLATE.
+    generated = patterns("generated") + tuple(
+        k for k in regenerate if isinstance(k, str) and k.strip()
+    )
+    return {"generated": generated, "binary": patterns("binary"), "regenerate": regenerate}
+
+
+def gitattributes_classes(repo, paths):
+    """What the repo has already told GIT about these paths: {path: "binary"|"generated"}.
+
+    `.gitattributes` predates this gate and is maintained for its own sake, so a repo that
+    merges carefully has already done this work. `binary` and `-diff` mean no textual form
+    at all -> BLOCK. `-merge` means the merge conflicts deliberately and leaves our copy
+    intact rather than stitching two versions into one matching neither source -> the
+    resolution is a regeneration, which is ORDER.
+
+    One `git check-attr -z -a` for every path at once, so the cost scales with the repo
+    and not with the size of the plan set. Output is NUL-separated (path, attr, value)
+    triples. If git is missing, or this is not a repo, `swarm.py`'s `git()` returns None
+    and every path falls through to the baseline -- invariant 4: no git, no crash.
+    """
+    wanted = sorted({_norm(p) for p in (paths or []) if _norm(p)})
+    if not repo or not wanted:
+        return {}
+    out = git("check-attr", "-z", "-a", "--", *wanted, cwd=repo)
+    if not out:
+        return {}
+    fields = [f for f in out.split("\0") if f != ""]
+    attrs = {}
+    for i in range(0, len(fields) - 2, 3):
+        attrs.setdefault(fields[i], {})[fields[i + 1]] = fields[i + 2]
+    classes = {}
+    for path, a in attrs.items():
+        if a.get("binary") == "set" or a.get("diff") == "unset":
+            classes[path] = "binary"
+        elif a.get("merge") in ("unset", "binary"):
+            classes[path] = "generated"
+    return classes
+
+
+def classify(path, action, cfg=None, attr=None):
+    """One path's merge class, from the planner's action plus the repo's declarations.
+
+    Resolution order -- two of these orderings are load-bearing and must not be tidied:
+
+      1. action `read*`                     -> read       (not a write at all)
+      2. config `binary`                    -> binary
+      3. config `generated`                 -> generated
+      4. `.gitattributes` binary / -diff    -> binary
+      5. `.gitattributes` -merge            -> generated
+      6. BASELINE_BINARY suffix             -> binary
+      7. action `regenerate*`               -> generated
+      8. action `create*`                   -> create
+      9.                                       modify
+
+    (a) An explicit declaration (2-5) beats an inference (6). This is the ONE place a
+        declaration may LOWER a class, and it is what lets `.xlsx` sit in the universal
+        BLOCK list while the one repo that regenerates an xlsx keeps it at ORDER by saying
+        so. It is not a breach of the most-severe-wins invariant, which governs two PHASES
+        disagreeing about one path -- there, no source has authority; here, the repo does.
+    (b) 6 before 7. The old code checked the binary suffixes before the `regenerate`
+        action, so a `.sqlite` with action `regenerate` classified `binary`. Moving the
+        action check up would downgrade every regenerated database from BLOCK to ORDER.
+
+    Called with two arguments it returns the baseline-only classification, which is what a
+    caller outside `build()` wants.
+    """
+    a = (action or "").replace("*", "").strip().lower()
+    if a.startswith("read"):
+        return "read"
+    cfg = cfg or {}
+    if any(_match(path, pat) for pat in cfg.get("binary", ())):
+        return "binary"
+    if any(_match(path, pat) for pat in cfg.get("generated", ())):
+        return "generated"
+    if attr in ("binary", "generated"):
+        return attr
+    if _norm(path).endswith(BASELINE_BINARY):
+        return "binary"
+    if a.startswith("regenerate"):
+        return "generated"
+    if a.startswith("create"):
+        return "create"
+    return "modify"
+```
+
+**Impact:** `GENERATED` and `REGENERATED_TEXT` are gone; any caller of either breaks loudly
+(there are none outside this file — verified against the analysis's reference list and
+re-grep in Verification). `classify()`'s two-argument form is unchanged in behaviour except
+that the baseline is wider and no longer carries `web/data/lab.json` or `lab.xlsx`.
+
+---
+
+### Step 4: Add the per-path attribute lookup and config to `build()`'s file loop
+
+**File:** `skills/swarm/plan_graph.py` — the file loop inside `build()`. **Line numbers are
+useless here: phase 1 replaced the whole of `build()`.** The boundary is stated below at line
+granularity against the function **as phase 1 leaves it**, because this is the one function two
+phases edit and an executor reading only line numbers would revert phase 1's work.
+
+**`build()` after phase 1, with ownership marked.** Read the real file first and confirm it
+matches; if it does not, phase 1 did not land in this tree and you must stop (see Verification).
+
+```python
+def build(index_path):
+    meta, phases = parse_index(open(index_path, encoding="utf-8").read())      # PHASE 1 — leave
+    if not phases:                                                             # PHASE 1 — leave
+        return {"error": f"{index_path} has no phase table"}                   # PHASE 1 — leave
+
+    # The plan paths in the index are repo-relative, so the root has to be found before
+    # any of them can be opened -- and it is found FROM them, which is why the index is
+    # parsed first now.
+    repo = find_root(index_path, [p.get("plan") or "" for p in phases])        # PHASE 1 — leave
+
+    writes, missing = {}, []                        # ─┐
+    for p in phases:                                #  │
+        p["files"] = {}                             #  │
+        plan = p.get("plan") or ""                  #  │
+        full = plan if os.path.isabs(plan) else os.path.join(repo, plan)
+        if not plan or not os.path.exists(full):    #  │  PHASE 2 OWNS THIS BLOCK
+            missing.append({"phase": p["n"], "plan": plan or "(none)"})
+            continue                                #  │  — and only this block
+        for path, action in parse_files(open(full, encoding="utf-8").read()):
+            kind = classify(path, action)           #  │
+            p["files"][path] = kind                 #  │
+            if kind != "read":                      #  │
+                writes.setdefault(path, []).append(p["n"])   # ─┘  (last owned line)
+
+    dep_waves = waves({"phases": phases})                                      # PHASE 1 — leave
+    wave_of = {}                                                               # PHASE 1 — leave
+    for w in dep_waves:                                                        # PHASE 1 — leave
+        for n in w.get("phases", []):                                          # PHASE 1 — leave
+            wave_of[n] = w["wave"]                                             # PHASE 1 — leave
+
+    by_n = {p["n"]: p for p in phases}                                         # PHASE 1 — leave
+    collisions = []                                                            # PHASE 1 — leave
+    for path, owners in sorted(writes.items()):                                # PHASE 1 — leave
+        ...                                                                    # PHASE 1 — leave
+        kind = most_severe([by_n[owner]["files"].get(path) for owner in owners])   # PHASE 1
+        ...                                                                    # PHASE 1 — leave
+    return { ... }                                   # Step 5 below edits ONLY this statement
+```
+
+**The owned block begins at the line `writes, missing = {}, []` and ends at the line
+`writes.setdefault(path, []).append(p["n"])`.** Everything above it (`parse_index`, the no-phase-
+table guard, `repo = find_root(...)`) and everything below it (`waves`, `wave_of`, `by_n`, the
+collision loop, `most_severe`, `_verdict`) is phase 1's and is **not** edited by this phase —
+except `build()`'s `return` statement, which Step 5 edits and which keeps phase 1's `"root"` key.
+
+**Change:** Split that one pass into two, so `git check-attr` runs once for the whole plan set
+instead of once per path. Load the config from the `repo` phase 1's discovery produced — note the
+dependency: `load_config(repo)` must come **after** `repo = find_root(...)`, which is why it is
+the first line of the owned block rather than the top of the function.
+
+**Code** — complete replacement for the owned block:
+
+```python
+    cfg = load_config(repo)
+
+    declared, missing = [], []
+    for p in phases:
+        p["files"] = {}
+        plan = p.get("plan") or ""
+        full = plan if os.path.isabs(plan) else os.path.join(repo, plan)
+        if not plan or not os.path.exists(full):
+            missing.append({"phase": p["n"], "plan": plan or "(none)"})
+            continue
+        declared.append((p, parse_files(open(full, encoding="utf-8").read())))
+
+    # One subprocess for every declared path, not one per path: the attributes are a
+    # property of the repo, and a `git` per row would make a pre-spawn check's cost scale
+    # with the size of the plan set.
+    attrs = gitattributes_classes(
+        repo, [path for _, rows in declared for path, _ in rows]
+    )
+
+    writes = {}
+    for p, rows in declared:
+        for path, action in rows:
+            kind = classify(path, action, cfg, attrs.get(_norm(path)))
+            p["files"][path] = kind
+            if kind != "read":
+                writes.setdefault(path, []).append(p["n"])
+```
+
+**Impact:** `missing` keeps its phase order. `p["files"]` is still keyed by the path exactly as
+the plan table spelled it — only the attribute *lookup* is normalised, so nothing downstream
+(`render`, the `writes` list, the collision loop phase 1 owns) sees a changed key.
+
+**And the values are still the five classes phase 1's `SEVERITY` table knows.** The new
+`classify()` returns `read`, `binary`, `generated`, `create` or `modify` and **mints no new class**
+— verified against every `return` in Step 3's block. So phase 1's handoff condition ("a class
+phase 2 mints that `SEVERITY` has never heard of needs a `SEVERITY` row *and* a `_verdict`
+branch") **does not fire**: `SEVERITY` needs no new row, `SEVERITY_UNKNOWN` is never reached from
+`build()`, and `_verdict()` needs no new branch. If a later edit to this phase adds a sixth class,
+both of those become mandatory.
+
+---
+
+### Step 5: Report what configuration was found
+
+**File:** `skills/swarm/plan_graph.py:131-141` (`build()`'s return) and `:157-159`
+(`render()`'s header)
+**Change:** "An unconfigured repo classifies sensibly from the baseline" is only checkable if
+the operator can see which tier answered. One key in the dict, one line in the render.
+
+**Code** — complete replacement for `build()`'s return statement. **Anchor on the text, not the
+line number: phase 1 rewrote the whole of `build()` and added a `"root"` key to this dict.** The
+statement to replace is the one beginning `return {` and containing `"slug": meta.get("slug")`.
+
+> **`"root"` is phase 1's and must survive this edit.** Phase 1's `render()` prints
+> `  resolved against root: {g.get('root')}` in the missing-plans block, and phase 1's harness
+> asserts `g["root"]` is the worktree in four cases. Dropping the key does not raise — `.get()`
+> returns `None` — it silently prints `resolved against root: None` and fails phase 1's tests.
+> The block below carries it. (Reconciled 2026-10-27: phase 2's draft return omitted it.)
+
+```python
+    return {
+        "slug": meta.get("slug"),
+        "index": index_path,
+        "root": repo,                       # phase 1's — render() and its tests read this
+        "config": {
+            "path": os.path.join(repo, CONFIG_PATH) if repo else None,
+            "found": bool(cfg["generated"] or cfg["binary"] or cfg["regenerate"]),
+            "generated": list(cfg["generated"]),
+            "binary": list(cfg["binary"]),
+            "regenerate": cfg["regenerate"],
+        },
+        "phases": [{"n": p["n"], "title": p["title"], "depends_on": p["depends_on"],
+                    "wave": wave_of.get(p["n"]),
+                    "writes": sorted(f for f, k in p["files"].items() if k != "read")}
+                   for p in phases],
+        "dep_waves": [w.get("phases", w.get("cycle", [])) for w in dep_waves],
+        "collisions": collisions,
+        "missing_plans": missing,
+    }
+```
+
+**Code** — replacement for the **first statement of `render()` after the `error` guard**, and
+nothing else in that function. **Phase 1 rewrote `render()` end to end**; the opening statement is
+byte-identical to today's, so the anchor below still matches, but everything after it is phase 1's
+and must be left exactly as phase 1 left it.
+
+**Find** (the whole `out = [...]` assignment, three source lines):
+
+```python
+    out = [f"plan set: {g['slug']}   phases: {len(g['phases'])}",
+           f"dependency waves: {' -> '.join('[' + ', '.join(map(str, w)) + ']' for w in g['dep_waves'])}",
+           ""]
+```
+
+**Replace with:**
+
+```python
+    cfg = g.get("config") or {}
+    out = [f"plan set: {g['slug']}   phases: {len(g['phases'])}",
+           f"dependency waves: {' -> '.join('[' + ', '.join(map(str, w)) + ']' for w in g['dep_waves'])}",
+           "artifact classes: " + ("declared in " + CONFIG_PATH if cfg.get("found")
+                                   else f"baseline + .gitattributes (no {CONFIG_PATH})"),
+           ""]
+```
+
+**Do not touch the rest of `render()`.** Phase 1 owns three regions further down and this phase
+must leave all three byte-identical:
+
+1. the missing-plans block's `out.append(f"  resolved against root: {g.get('root')}")`;
+2. the conditional all-clear — `no file is written by two phases.` only when `missing_plans` is
+   empty, and the `INCOMPLETE: no collision among the K of N phases …` form otherwise;
+3. the `INCOMPLETE: computed over K of N phases. …` caveat under the concurrency tally.
+
+**Impact:** One extra line of output, at the **top** of the render. `--json` gains a `config`
+object. No exit code changes — invariant 5 holds, and phase 3's enforcement reads exit codes and
+the two `INCOMPLETE:` lines, not this header.
+
+**Known, accepted consequence for phase 1's contract.** Phase 1's plan says its clean path is
+"byte-for-byte unchanged"; after this phase the clean path gains this one header line. Phase 1's
+pins still hold by construction and must keep passing:
+`test_clean_set_keeps_the_exact_old_sentence` asserts `text.endswith("no file is written by two
+phases.")` and `"INCOMPLETE" not in text` — a line prepended to the header breaks neither. Phase
+1's plan has been amended to scope its claim to the verdict and the final sentence. If any clean-
+path assertion in the harness fails after this step, the header line has landed in the wrong
+place; it belongs before the `""` that closes the opening list, not after the write sets.
+
+---
+
+### Step 6: `agents/integrator.md` step 2 — derive the regeneration recipe from the repo
+
+**File:** `agents/integrator.md:31-49`
+**Change:** Replace the whole of step 2 (from `**2. Derived artifacts are regenerated…` through
+the paragraph ending `…flags exactly that before spawn.`).
+
+**Code** — complete replacement:
+
+```markdown
+**2. Derived artifacts are regenerated, never merged.** Before resolving anything, ask whether
+the conflicted path is derived from something else in the tree. Two sources answer that, and
+neither of them is a guess:
+
+```bash
+cat "$LAND/.workflows/swarm.json" 2>/dev/null          # "generated" and "regenerate"
+git -C "$LAND" check-attr -a -- <conflicted path>      # `-merge` or `binary` on that path
+```
+
+`.workflows/swarm.json` is the repo's own declaration — the same file `plan_graph.py` reads to
+class a write set before spawn (`skills/swarm/SKILL.md`, "Per-repo artifact classes"). A path
+listed under `regenerate` names the source it is derived from and the command that rebuilds it:
+
+```json
+"regenerate": { "<derived path>": { "from": "<source path>", "run": "<command>" } }
+```
+
+Take the source side and rebuild; never merge the derived file:
+
+```bash
+git -C "$LAND" checkout --theirs -- <source path>    # only if exactly ONE side changed it
+git -C "$LAND" add -- <source path>
+(cd "$LAND" && <the recipe's `run` command>)         # rewrites the derived path
+git -C "$LAND" add -- <derived path>
+```
+
+A repo with no `swarm.json` entry still gets this right if its `.gitattributes` says so: a path
+marked `-merge` conflicts on purpose and leaves our copy intact rather than stitching two
+versions into one that matches neither source, and a path marked `binary` has no textual form at
+all. If neither source names the path, it is an ordinary text conflict — step 3.
+
+**If both sides changed the SOURCE of a derived artifact — a database, an archive, anything
+`plan_graph.py` classes BLOCK — stop and report.** Such a file has no merge, only a choice of
+side, and picking one destroys whatever records the other held. The recovery — take the side
+that holds more, re-apply the other's missing records, prove it with two digests and a count per
+table — is a judgement call about a permanent record, and it is the one thing here you escalate
+rather than decide. The cheaper fix is upstream: a phase that writes such a file should never
+share a wave with another that does, and `plan_graph.py` flags exactly that before spawn.
+```
+
+**Impact:** The agent no longer names `web/data/lab.json`, `lab/lab.sqlite` or `seer_engine`. It
+asks the repo instead. In seer the answer is identical, because seer's `.gitattributes` already
+marks both paths (measured above) and its `swarm.json` carries the `lab stage` recipe.
+
+---
+
+### Step 7: `agents/integrator.md` step 4 — derive the suite from the repo
+
+**File:** `agents/integrator.md:55-67`
+**Change:** Replace the whole of step 4 (from `**4. Then run the FULL suite…` through the
+paragraph ending `…which is the worst possible failure for an integration gate: green, and about
+the wrong code.`).
+
+**Code** — complete replacement:
+
+```markdown
+**4. Then run the FULL suite, not the touched files.** This is the one place the whole set is
+assembled, and the only place an interaction between two phases can show up.
+
+**Which suite is the repo's answer, never this agent's.** A hardcoded `npm test` waves through a
+repo whose CI is four bespoke guards plus a typecheck and a build — the finding behind
+`skills/task/task_gh.py:1737 workflow_gate()`. Walk this ladder, the one
+`skills/task/DESIGN.md:239-242` established for a session landing its own work with the repo's
+own CI put at the top of it, and stop at the first rung that yields something to run:
+
+1. `.workflows/swarm.json` → `suite.steps`, in order. The repo saying it outright.
+2. `.github/workflows/*.yml` → every `run:` step of every job triggered by `push` or
+   `pull_request`, in order, with that job's `env:`. This is what CI would do.
+3. `package.json` scripts — `test`, `typecheck`, `build`, `lint` — or a `Makefile` `test` target.
+4. The language default: `pytest` for a Python tree, `cargo test`, `go test ./...`, `mvn test`.
+5. Nothing exists to run. Report `suite: none` and say plainly that the wave merged unverified.
+   That is recoverable and recorded; a wave parked until morning is a night thrown away.
+
+**An integration worktree is not the main checkout, and a suite that silently tests the wrong
+tree is the worst possible green.** Before running, read `suite.setup` and `suite.notes` from
+`.workflows/swarm.json` and do exactly what they say — that is where a repo keeps the knowledge
+that already cost it one bad night. With no such entry, check the two things that bite most
+often, and say in the report which of them you did:
+
+- **Per-checkout build artifacts a fresh worktree does not have** — a virtualenv, `node_modules`,
+  a `target/` or `vendor/` tree. Create them, or **hardlink** them (`cp -al`): a *symlinked*
+  `node_modules` can pass a type-check and a unit run and then fail the build step with a
+  misleading error about the filesystem root.
+- **The runner's path resolution.** A test runner that resolves imports from an installed package
+  or an ambient source root will happily test the MAIN checkout from inside the worktree — green,
+  and about the wrong code. Pin it to this tree (`PYTHONPATH`, `uv run`, `--project`, a
+  `-C`/`--dir` flag, whatever that runner uses) before you believe a pass.
+
+Everything runs from the merged tree:
+
+```bash
+cd "$LAND" && <each suite.setup step, in order>
+cd "$LAND" && <each suite step, in order>
+```
+```
+
+**Impact:** No project's suite is named. The seer knowledge survives in two places: generalised
+here (per-checkout artifacts; runner path resolution) and verbatim in the `suite.setup` /
+`suite.notes` worked example in `SKILL.md`.
+
+---
+
+### Step 8: `agents/integrator.md` — record the rung in the report
+
+**File:** `agents/integrator.md:82-93` (the report block and the closing paragraph)
+**Change:** The report must say which rung of the ladder produced the suite, otherwise "suite:
+green" is unfalsifiable. And the closing line's `PYTHONPATH` reference is one repo's spelling of
+a general rule.
+
+**Code** — complete replacement for lines 82-93:
+
+```markdown
+```
+WAVE <N> — INTEGRATED | BLOCKED
+  merged, in dependency order: <branch> (phase N), …
+  conflicts resolved: <path> → <side> (<rung>)           [one line each, or "none"]
+  regenerated: <path> (from <source>, via <recipe>)       [or "none"]
+  suite: <ladder rung 1-5> — <command(s)> → <result>      [or "none — merged unverified"]
+  worktree setup: <what you created or hardlinked, and how you pinned the runner>
+  integration branch: <before sha> → <after sha>          [or "unmoved"]
+  escalated: <what needs a human or the coordinator, and why>
+```
+
+Facts only. Never claim a suite ran that you did not run, never report a rung you did not reach,
+and never report green from a run you did not pin to this worktree.
+```
+
+**Impact:** The report gains two fields. Nothing parses this block mechanically (verified: the
+only caller is `commands/analyze-orchestrator.md:384`, which dispatches the agent and reads the
+report as prose), so adding fields is safe.
+
+---
+
+### Step 9: `skills/swarm/SKILL.md` — de-seer the class table
+
+**File:** `skills/swarm/SKILL.md:39-44`
+**Change:** Replace the table. **Do not touch lines 31-34** (the exit-code paragraph) — phase 3
+owns those and is editing this file concurrently.
+
+**Code** — complete replacement for lines 39-44:
+
+```markdown
+| Class | Meaning | Fix |
+|---|---|---|
+| ISOLATE | ordinary source file, concurrent writers | one worktree per phase; disjoint regions then merge. Check the regions — "same file" is not "same lines" |
+| ORDER | regenerated, not merged — a snapshot, a bundle, a committed `resources/_gen/` tree | add an edge so one phase publishes last, and regenerate on the way in rather than merging |
+| BLOCK | a binary with no textual form — a database, an image, an archive | serialize, always. A binary merge is a choice of side, and the other side is gone |
+| sequential | written in different waves | nothing to do |
+```
+
+**Impact:** No project's filenames in the table. Lines 46-49 (the four-plan-set measurement) are
+left untouched — they are measured evidence and contain no seer identifier.
+
+---
+
+### Step 10: `skills/swarm/SKILL.md` — the new per-repo configuration section
+
+**File:** `skills/swarm/SKILL.md` — insert at line 50, i.e. after the measurement paragraph
+ending `…has no phase table and exits 1.` (line 49) and **before** `## Nobody in a swarm waits
+for a human` (line 51).
+**Change:** Insert the complete section below, followed by a blank line.
+
+**Code** — the complete insertion:
+
+````markdown
+### Per-repo artifact classes — `.workflows/swarm.json`
+
+Which paths are generated and which are binary is a fact about the REPO, and for two of the
+three tiers the repo has already stated it. The gate reads three sources, most specific first:
+
+| Tier | Source | What it can say | Who writes it |
+|---|---|---|---|
+| 1 | `<repo>/.workflows/swarm.json` | anything, including "this JSON is a snapshot of that database, rebuilt by this command" | you, once per repo |
+| 2 | `.gitattributes`, via `git check-attr` | `binary` or `-diff` → BLOCK; `-merge` → ORDER | already there, in any repo that merges carefully |
+| 3 | a built-in suffix list | `.sqlite`, `.db`, images, archives, fonts, office documents → BLOCK | nobody; it is the same in every repo |
+
+**Tier 3 holds no project's paths.** It used to: two literal filenames from one project were
+shipped to every repo on the machine, so a Hugo site's committed `resources/_gen/` classified as
+an ordinary source file (ISOLATE, when it is ORDER) and another project's hand-written file of
+the same name classified as generated. Tiers 1 and 2 are where a project's paths belong.
+`.svg` is deliberately not in tier 3 — SVG is text and merges.
+
+**Tier 2 is free.** A repo that already marks a generated file `-merge` — because it learned the
+hard way that git will happily line-merge 11 MB of generated JSON into a file matching neither
+source database — has already told the gate everything it needs, and the gate reads the same
+declaration the merge itself will honour. Nothing to write.
+
+#### The file
+
+`<repo>/.workflows/swarm.json`. JSON, because every Python 3 reads it with no dependency
+(`tomllib` is 3.11+) and the ledger beside it is JSON too. It sits in `.workflows/` because that
+is this ecosystem's persistence layer, next to `orchestration/<slug>/ledger.json`.
+
+```json
+{
+  "generated": ["resources/_gen/", "web/data/lab.json", "lab.xlsx"],
+  "binary":    ["fixtures/*.golden.bin"],
+  "regenerate": {
+    "web/data/lab.json": {
+      "from": "lab/lab.sqlite",
+      "run":  "python -m seer_engine lab stage"
+    }
+  },
+  "suite": {
+    "setup": [
+      "python3 -m venv engine/.venv && engine/.venv/bin/pip install -e engine",
+      "cp -al ../../web/node_modules web/node_modules"
+    ],
+    "steps": [
+      "PYTHONPATH=engine/src engine/.venv/bin/python -m pytest engine/tests",
+      "cd web && npx tsc --noEmit && npm test"
+    ],
+    "notes": "node_modules must be HARDLINKED (cp -al), never symlinked: a symlink passes vitest and tsc and then fails `next build` with a misleading \"filesystem root\" error. pytest without PYTHONPATH=engine/src silently tests the MAIN checkout instead of the branch — green, and about the wrong code."
+  }
+}
+```
+
+That example is the real configuration for the project whose two filenames used to be compiled
+into the tool. It reproduces that project's classifications exactly — as data.
+
+- **`generated`** → ORDER. **`binary`** → BLOCK. Patterns match three ways: a leading dot with no
+  slash is a **suffix** (`.xlsx`); a trailing `/` or `/**` is a **directory** and everything under
+  it at any depth, anchored at the root or found anywhere in the tree (`resources/_gen/` matches
+  `hugo_docs/resources/_gen/style.css`); anything else is a **path** — exact, matched at a
+  directory boundary anywhere in the tree, or an `fnmatch` glob when it carries `*`, `?` or `[`.
+- **`regenerate`** is read by the `integrator` agent when a merge conflicts on that path: it takes
+  the `from` side and runs `run` instead of resolving the conflict. Its keys also count as
+  `generated`, so a path with a recipe is never declared twice — the half you forget is the half
+  that silently downgrades ORDER to ISOLATE.
+- **`suite`** is read by the `integrator` agent, not by the gate. See below.
+- A missing, unreadable or malformed file means "no declaration", never an error. A pre-spawn
+  check that refused to run over a stray comma would turn a missing declaration into a stopped
+  swarm.
+- Inside tier 1, `binary` is checked before `generated`: a path listed in both has been described
+  twice, and BLOCK is the side whose cost is unrecoverable rows.
+- **Tier 1 beats tier 3, and that is the one place a declaration may lower a severity.** Where two
+  *phases* classify one path differently the most severe still wins — there no source has
+  authority. Here one does: the repo.
+- **Noted discrepancy.** `lab.xlsx` is carried in `generated` (→ ORDER) above, though an xlsx is a
+  zip of XML and `.xlsx` is in tier 3's BLOCK list for every other repo. BLOCK is arguably the
+  truer class even there. It stays ORDER because that is what the tool did before this file
+  existed, and a severity *upgrade* is still a behaviour change to plan sets already written
+  against the old classification. Changing it should be a deliberate act, not a side effect of
+  moving the value into configuration.
+- If a repo's `.gitignore` excludes `.workflows/` broadly, the file still works — the gate reads
+  it from disk, not from git — it simply does not travel to another machine. Add
+  `!.workflows/swarm.json` to re-include it. (Measured across seven repos on one machine: none of
+  them ignored it.)
+
+See what a plan set resolved to:
+
+```bash
+python3 ~/.claude/skills/swarm/plan_graph.py <PLAN.md> --json \
+  | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["config"], indent=2))'
+```
+
+The human form prints one line for it too: `artifact classes: declared in
+.workflows/swarm.json`, or `baseline + .gitattributes (no .workflows/swarm.json)`.
+
+#### The suite is the repo's, not the tool's
+
+`integrator` runs the FULL suite after merging a wave, and which suite that is cannot be baked
+into a global agent: a hardcoded `npm test` waves through a repo whose CI is four bespoke guards
+plus a typecheck and a build (`skills/task/task_gh.py:1737 workflow_gate()`). It walks a ladder —
+the one `skills/task/DESIGN.md:239-242` already established for a session landing its own work,
+with the repo's own CI put at the top:
+
+1. `.workflows/swarm.json` → `suite.steps` — the repo saying it outright
+2. `.github/workflows/*.yml` → every `run:` step of every push/pull_request job, in order
+3. `package.json` scripts (`test`, `typecheck`, `build`, `lint`) or a `Makefile` `test` target
+4. the language default — `pytest`, `cargo test`, `go test ./...`
+5. nothing — report `suite: none` and say in the report that the wave merged unverified
+
+`suite.setup` and `suite.notes` are where a repo's hard-won worktree knowledge goes, because an
+integration worktree is not the main checkout and a suite that silently tests the wrong tree is
+the worst possible green. The two that bite most often are per-checkout build artifacts a fresh
+worktree lacks (hardlink them; a symlinked `node_modules` passes vitest and tsc and then fails
+the build) and a runner that resolves imports outside this tree. The example above carries both.
+````
+
+**Impact:** The section lands entirely below line 49, disjoint from phase 3's lines 31-34.
+
+---
+
+### Step 11: `README.md` — index the new repo-level artifact
+
+**File:** `README.md:499` (end of the `### swarm` code block), `README.md:866` (the project
+`.workflows/` tree) and `README.md:841` (the Project Structure tree's `swarm/` line)
+**Change:** `.workflows/swarm.json` is a new file in the `.workflows/` contract, so the
+user-facing index names it.
+
+**Plus one line that is phase 1's work, assigned here.** Phase 1 ships a genuinely new asset —
+`skills/swarm/tests/test_plan_graph.py` — and CLAUDE.md's "Adding a new skill" rule says the
+Project Structure tree names a skill's supporting assets. Phase 1 edits no markdown at all (its
+exit criterion 6 asserts that, and it is what keeps `README.md` a single-writer file in this
+set), so the reconciler assigned the one tree line here, where `README.md` is already owned.
+That is why this phase's **Satisfies** line carries a slice of R1.
+
+**Code** — complete replacement for the `### swarm` code block (lines 494-500 inclusive of its
+fences):
+
+```markdown
+```bash
+python3 ~/.claude/skills/swarm/swarm.py track            # once per repo
+python3 ~/.claude/skills/swarm/swarm.py waves  --slug <slug>
+python3 ~/.claude/skills/swarm/swarm.py verify --slug <slug> --apply
+python3 ~/.claude/skills/swarm/swarm.py reap   --slug <slug>       # close finished windows
+python3 ~/.claude/skills/swarm/swarm.py selftest
+python3 ~/.claude/skills/swarm/plan_graph.py <PLAN.md>   # the write-set gate, before spawning
+```
+
+Which of a repo's paths are generated or binary — and which suite the `integrator` runs after
+merging a wave — is per-repo, not baked into the tool: an optional `<repo>/.workflows/swarm.json`
+declares them, on top of what the repo's `.gitattributes` already says and a universal suffix
+baseline. See `skills/swarm/SKILL.md`, "Per-repo artifact classes".
+```
+
+**Code** — complete replacement for the project tree (lines 858-869):
+
+```markdown
+```
+your-project/
+├── chatbot/bowl/.workflows/
+│   ├── todos.md              # tasks, with TaskIDs
+│   ├── package_readme.md     # technical docs
+│   ├── analysis_report.md    # quality analysis
+│   ├── plan/{TaskID}.md
+│   └── postmortem/{TaskID}.md
+├── .workflows/plan/<slug>/phase-N.md      # repo root, one per phase
+├── .workflows/swarm.json                  # repo root, optional — this repo's generated
+│                                          #   and binary paths, and its full suite
+├── 20250108-164512-A3F7_code_analyzer.md  # repo root
+└── PURGE_..._PLAN.md                      # repo root, the plan index
+```
+```
+
+**Code** — one line in the Project Structure tree. **Find** (line 841, exactly):
+
+```
+│   ├── swarm/                # + swarm.py — the orchestrator's mechanics
+```
+
+**Replace with:**
+
+```
+│   ├── swarm/                # + swarm.py, plan_graph.py, tests/ — the orchestrator's mechanics
+```
+
+**Impact:** Documentation only. The tree line is the one place a reader learns the swarm skill
+ships a runnable harness at `~/.claude/skills/swarm/tests/test_plan_graph.py` — which is the
+spelling invariant 2 requires every phase's final verification to use.
+
+---
+
+### Step 12: Extend phase 1's test harness
+
+**File:** `skills/swarm/tests/test_plan_graph.py` — **append**, do not restructure.
+
+**Reconciled against phase 1's harness, 2026-10-27 — the adaptation note is gone and the code
+below is final.** Phase 1's plan is now settled, so this phase no longer guesses at its
+internals. The harness phase 1 ships has, at module level:
+
+| name | signature | what it is |
+|---|---|---|
+| `plan_graph` | — | imported from the harness's **parent** directory |
+| `GATE` | — | the `plan_graph.py` beside the harness, run as a subprocess |
+| `write` | `write(path, text)` | `makedirs` + write, UTF-8 |
+| `phase_plan` | `phase_plan(n, title, files)` | one phase plan from `[(path, action)]` |
+| `plan_set` | `plan_set(root, index_rel, *phases, deps=None)` | an **N**-phase set; returns the absolute index path. `phases` is one `[(path, action)]` list per phase; `deps` is one `Depends on` cell string per phase, defaulting to `—` (every phase in wave 0) |
+| `git` | `git(*args, cwd=None)` | `subprocess.run`, config-isolated via `GIT_ENV`, returns the `CompletedProcess` |
+| `have_git` | `have_git()` | git is on PATH |
+| `make_repo` | `make_repo(root)` | an initialised repo with one commit |
+| `add_worktree` | `add_worktree(repo, path, branch="feat")` | a real **linked** worktree |
+| `eq` / `ok` | `eq(label, got, want)` / `ok(label, cond)` | collect into `FAILURES`; they do **not** raise |
+| `case` | `@case` | registers a function in `RUN`; **the driver runs `RUN`, nothing else** |
+| `gate_exit` | `gate_exit(index, cwd=None)` | the CLI's exit code |
+| `collision` | `collision(graph, path)` | one collision dict by path, or `None` |
+
+Three consequences, and all three are why the draft of this step could not simply be pasted:
+
+1. **`@case` is mandatory.** A bare `def test_…()` is never called — the driver iterates `RUN`,
+   not the module namespace. Every function below carries the decorator.
+2. **`eq`/`ok`, not bare `assert`.** They collect, so one wrong expectation reports every other
+   assertion in the same case instead of aborting at the first. (A raising case is caught by the
+   driver and recorded, so an `assert` would not lose the run — it would just lose the rest of
+   its own case and the `got … want …` line.)
+3. **Phase 1's fixtures replace the draft's.** `_git_repo`, `_index` and `_phase_plan` are
+   **deleted**: `make_repo` + `write` + `git` do the first, and `plan_set` + `phase_plan` do the
+   other two. Keeping both sets would be two spellings of one fixture in one file.
+
+**Import block:** phase 1's harness imports `os`, `shutil`, `subprocess`, `sys`, `tempfile`.
+**Add `json`** — it is the only import this phase needs and phase 1 does not have. Put it in
+alphabetical position, between `import os` and `import shutil`.
+
+**Code** — complete additions, appended after phase 1's last `@case` and before the
+`# ---- driver` section:
+
+```python
+# --------------------------------------------------------------- phase 2: artifact classes
+
+def _cfg(generated=(), binary=(), regenerate=None):
+    """A config dict in the shape `load_config` returns, without touching disk."""
+    return {"generated": tuple(generated), "binary": tuple(binary),
+            "regenerate": regenerate or {}}
+
+
+def _write_cfg(repo, data):
+    """Write `<repo>/.workflows/swarm.json`. `data` is an object, or raw text."""
+    dest = os.path.join(repo, plan_graph.CONFIG_PATH)
+    write(dest, data if isinstance(data, str) else json.dumps(data))
+    return dest
+
+
+# ------------------------------------------------------------------- tier 3, the baseline
+
+@case
+def test_baseline_is_project_agnostic():
+    """Tier 3 classifies by suffix only, and holds NO project's paths."""
+    c = plan_graph.classify
+    eq("baseline: a sqlite is binary", c("db/store.sqlite", "modify"), "binary")
+    eq("baseline: a png is binary", c("assets/logo.png", "modify"), "binary")
+    eq("baseline: an xlsx is binary", c("reports/q3.xlsx", "modify"), "binary")
+    # text formats must stay mergeable
+    eq("baseline: svg is text and merges", c("assets/icon.svg", "modify"), "modify")
+    eq("baseline: python is modify", c("src/main.py", "modify"), "modify")
+    eq("baseline: create survives", c("src/main.py", "create"), "create")
+    eq("baseline: read survives", c("src/main.py", "read"), "read")
+    # R3's core assertion: one project's filenames are gone from the global tool
+    eq("de-seered: web/data/lab.json is an ordinary file now",
+       c("web/data/lab.json", "modify"), "modify")
+    eq("de-seered: lab.xlsx is binary by SUFFIX, not by name",
+       c("lab.xlsx", "modify"), "binary")
+
+
+@case
+def test_binary_suffix_still_beats_a_regenerate_action():
+    """Preserved from the old code: the binary suffixes were checked first.
+
+    A regenerated database is still a database. Downgrading it to ORDER is the direction
+    whose cost is unrecoverable rows (invariant 6).
+    """
+    eq("a regenerated sqlite is still BLOCK",
+       plan_graph.classify("lab/lab.sqlite", "regenerate"), "binary")
+    eq("a regenerated json is ORDER",
+       plan_graph.classify("web/data/snapshot.json", "regenerate"), "generated")
+
+
+# -------------------------------------------------------------------- tier 1, the config
+
+@case
+def test_config_declares_generated_hugo_case():
+    """The case the user named: a Hugo site commits resources/_gen/."""
+    cfg = _cfg(generated=["resources/_gen/"])
+    for path in ("resources/_gen/style.css",
+                 "hugo_docs/resources/_gen/images/x_hu123.png",
+                 "resources/_gen"):
+        eq(f"hugo: {path} is generated once declared",
+           plan_graph.classify(path, "modify", cfg), "generated")
+    ok("hugo: generated renders ORDER",
+       plan_graph._verdict("generated", [[1, 2]]).startswith("ORDER"))
+    eq("hugo: and it is NOT generated undeclared",
+       plan_graph.classify("resources/_gen/style.css", "modify"), "modify")
+
+
+@case
+def test_config_binary_beats_config_generated():
+    cfg = _cfg(generated=["data/x.json"], binary=["data/x.json"])
+    eq("declared twice: BLOCK is the side whose cost is rows",
+       plan_graph.classify("data/x.json", "modify", cfg), "binary")
+
+
+@case
+def test_config_generated_beats_the_baseline():
+    """The one place a declaration lowers a class: the repo has authority over a guess."""
+    eq("undeclared .xlsx is binary", plan_graph.classify("lab.xlsx", "modify"), "binary")
+    eq("declared .xlsx is generated",
+       plan_graph.classify("lab.xlsx", "modify", _cfg(generated=[".xlsx"])), "generated")
+
+
+@case
+def test_regenerate_keys_count_as_generated():
+    eq("no repo, no config", plan_graph.load_config(None)["generated"], ())
+    tmp = tempfile.mkdtemp(prefix="pg-cfg-")
+    try:
+        _write_cfg(tmp, {"regenerate": {"web/data/lab.json":
+                                        {"from": "lab/lab.sqlite", "run": "make stage"}}})
+        cfg = plan_graph.load_config(tmp)
+        ok("a recipe key counts as generated", "web/data/lab.json" in cfg["generated"])
+        eq("and classifies as such",
+           plan_graph.classify("web/data/lab.json", "modify", cfg), "generated")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@case
+def test_malformed_config_is_no_config_not_an_error():
+    """A pre-spawn gate must not grow a failure mode of its own over a stray comma."""
+    tmp = tempfile.mkdtemp(prefix="pg-bad-")
+    try:
+        for text in ("{ this is not json", "[]", "null", '{"generated": "notalist"}'):
+            _write_cfg(tmp, text)
+            cfg = plan_graph.load_config(tmp)
+            eq(f"malformed ({text[:12]!r}): generated empty", cfg["generated"], ())
+            eq(f"malformed ({text[:12]!r}): binary empty", cfg["binary"], ())
+            eq(f"malformed ({text[:12]!r}): regenerate empty", cfg["regenerate"], {})
+        eq("a missing directory is no config",
+           plan_graph.load_config(os.path.join(tmp, "nope"))["generated"], ())
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@case
+def test_match_the_three_pattern_spellings():
+    m = plan_graph._match
+    ok("suffix matches", m("a/b/report.xlsx", ".xlsx"))
+    ok("suffix does not over-match", not m("a/b/report.csv", ".xlsx"))
+    ok("directory matches anywhere in the tree", m("w/resources/_gen/a/b.css", "resources/_gen/"))
+    ok("/** is the same as a trailing slash", m("resources/_gen/a.css", "resources/_gen/**"))
+    ok("directory matches at a boundary, not a prefix",
+       not m("resources/_generated/a.css", "resources/_gen/"))
+    ok("exact path matches", m("web/data/lab.json", "web/data/lab.json"))
+    ok("path matches at a directory boundary", m("sub/web/data/lab.json", "web/data/lab.json"))
+    ok("path is not a bare endswith", not m("web/data/notlab.json", "lab.json"))
+    ok("glob matches", m("data/rows.csv", "data/*.csv"))
+    ok("glob matches a basename", m("deep/data/rows.csv", "*.csv"))
+    ok("empty path never matches", not m("", ".xlsx"))
+    ok("empty pattern never matches", not m("a.py", ""))
+
+
+# ------------------------------------------------------- tier 2, the repo's .gitattributes
+
+@case
+def test_gitattributes_tier_reads_the_repos_own_declaration():
+    tmp = tempfile.mkdtemp(prefix="pg-attr-")
+    try:
+        repo = make_repo(os.path.join(tmp, "repo"))
+        write(os.path.join(repo, ".gitattributes"),
+              "store/rows.db binary\ndata/snapshot.json -merge\n")
+        write(os.path.join(repo, "data/snapshot.json"), "{}\n")
+        write(os.path.join(repo, "src/main.py"), "x = 1\n")
+        got = plan_graph.gitattributes_classes(
+            repo, ["store/rows.db", "data/snapshot.json", "src/main.py"])
+        eq("gitattributes: `binary` is BLOCK", got.get("store/rows.db"), "binary")
+        eq("gitattributes: `-merge` is ORDER", got.get("data/snapshot.json"), "generated")
+        ok("gitattributes: an undeclared path is absent", "src/main.py" not in got)
+        # and it flows through classify
+        eq("gitattributes: the attr reaches classify",
+           plan_graph.classify("data/snapshot.json", "modify", None, "generated"), "generated")
+        eq("gitattributes: no attr, no change",
+           plan_graph.classify("data/snapshot.json", "modify", None, None), "modify")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@case
+def test_gitattributes_degrades_instead_of_raising():
+    """Invariant 4: no git, or no repo, must be an empty answer and never an exception."""
+    eq("no repo", plan_graph.gitattributes_classes(None, ["a.py"]), {})
+    eq("a path that is not a repo",
+       plan_graph.gitattributes_classes("/nonexistent-" + os.urandom(4).hex(), ["a.py"]), {})
+    tmp = tempfile.mkdtemp(prefix="pg-noattr-")
+    try:
+        eq("no paths asked about", plan_graph.gitattributes_classes(tmp, []), {})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ------------------------------------------------------------- "do not regress those sets"
+
+@case
+def test_seer_values_reproduce_the_old_behaviour_as_config():
+    """R3's "do not regress": the old constants, driven by configuration instead.
+
+    `old()` is the classifier as it stood before this phase, inlined so the equivalence is
+    asserted rather than asserted-about.
+    """
+    OLD_GENERATED = (".sqlite", ".sqlite3", ".db")
+    OLD_REGENERATED_TEXT = ("web/data/lab.json", "lab.xlsx")
+
+    def old(path, action):
+        a = action.replace("*", "").strip().lower()
+        if a.startswith("read"):
+            return "read"
+        if path.endswith(OLD_GENERATED):
+            return "binary"
+        if any(path.endswith(s) for s in OLD_REGENERATED_TEXT) or a.startswith("regenerate"):
+            return "generated"
+        if a.startswith("create"):
+            return "create"
+        return "modify"
+
+    cfg = _cfg(generated=["web/data/lab.json", "lab.xlsx"],
+               regenerate={"web/data/lab.json": {"from": "lab/lab.sqlite",
+                                                 "run": "python -m seer_engine lab stage"}})
+    attrs = {"web/data/lab.json": "generated", "lab/lab.sqlite": "binary"}
+    cases = [
+        ("web/data/lab.json", "modify"), ("web/data/lab.json", "regenerate"),
+        ("web/data/lab.json", "read"),   ("lab.xlsx", "modify"),
+        ("lab/lab.sqlite", "modify"),    ("lab/lab.sqlite", "regenerate"),
+        ("engine/src/pkg/commands/lab.py", "modify"),
+        ("web/src/view.tsx", "create"),  ("engine/tests/test_lab.py", "create"),
+        ("docs/notes.md", "read"),       ("db/warm.sqlite3", "modify"),
+    ]
+    for path, action in cases:
+        eq(f"as-config equivalence: {path} ({action})",
+           plan_graph.classify(path, action, cfg, attrs.get(path)), old(path, action))
+
+
+# ------------------------------------------------------------------------- end to end
+
+@case
+def test_end_to_end_config_flips_the_verdict():
+    """Two concurrent phases writing one generated tree: ISOLATE bare, ORDER declared.
+
+    Exercises build() end to end -- phase 1's root discovery and `root` key, load_config,
+    the batched check-attr, phase 1's most_severe, and the verdict -- in a real worktree,
+    which is also the layout `/analyze` always produces.
+    """
+    tmp = tempfile.mkdtemp(prefix="pg-e2e-")
+    try:
+        repo = make_repo(os.path.join(tmp, "repo"))
+        wt = add_worktree(repo, os.path.join(tmp, "wt"))
+        index = plan_set(
+            wt, "DEMO_PLAN.md",
+            [("resources/_gen/style.css", "modify"), ("src/one.py", "modify")],
+            [("resources/_gen/style.css", "modify"), ("src/two.py", "modify")],
+        )
+
+        g = plan_graph.build(index)
+        eq("e2e: no plan went missing", g["missing_plans"], [])
+        eq("e2e: phase 1's root key survived this phase", _real(g.get("root")),
+           os.path.realpath(wt))
+        eq("e2e: no config is found", g["config"]["found"], False)
+        hit = collision(g, "resources/_gen/style.css")
+        ok("e2e: the shared tree is reported", hit is not None)
+        if hit:
+            eq("e2e: concurrent", hit["concurrent"], [[1, 2]])
+            eq("e2e: undeclared, so an ordinary file", hit["kind"], "modify")
+            ok("e2e: verdict ISOLATE", hit["verdict"].startswith("ISOLATE"))
+        eq("e2e: exits 2", gate_exit(index), 2)
+
+        _write_cfg(wt, {"generated": ["resources/_gen/"]})
+
+        g = plan_graph.build(index)
+        eq("e2e: the config is now found", g["config"]["found"], True)
+        hit = collision(g, "resources/_gen/style.css")
+        ok("e2e: still reported", hit is not None)
+        if hit:
+            eq("e2e: declared, so generated", hit["kind"], "generated")
+            ok("e2e: verdict flipped to ORDER", hit["verdict"].startswith("ORDER"))
+        eq("e2e: still exits 2 — a collision is a collision", gate_exit(index), 2)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+```
+
+**Impact:** **Twelve** new cases, bringing the harness to **25**. (The draft said eleven and
+listed twelve; corrected.) Every one is registered with `@case`, so the driver's final line
+becomes `all assertions passed (25 cases)` — phase 1's exit criterion 1 says 13 and is correct
+*for phase 1*; this phase's is 25.
+
+`test_seer_values_reproduce_the_old_behaviour_as_config` is the "do not regress" proof and will
+fail loudly if any resolution-order rule in Step 3 is reordered.
+`test_end_to_end_config_flips_the_verdict` is also the **regression test for Step 5's `"root"`
+key**: it asserts phase 1's root survives this phase's rewrite of `build()`'s return.
+
+---
+
+## Verification
+
+**Build:** there is nothing to compile; the gate must import and run.
+
+```bash
+cd ~/.worktrees/claude-commands/swarm-write-set-gate
+python3 -c "import sys; sys.path.insert(0,'skills/swarm'); import plan_graph; print('ok')"
+python3 skills/swarm/plan_graph.py --help >/dev/null && echo "cli ok"
+```
+
+**Tests:**
+
+```bash
+python3 skills/swarm/tests/test_plan_graph.py        # phase 1's cases must still pass too
+```
+
+**The de-seering, as the exit criterion spells it:**
+
+```bash
+grep -rn "seer\|lab\.json\|lab\.sqlite\|lab\.xlsx" skills/swarm/plan_graph.py agents/integrator.md
+# expected: NO output at all from plan_graph.py.
+# integrator.md: no output either — step 2 and step 4 name no project.
+grep -rn "GENERATED\|REGENERATED_TEXT" skills/swarm/ commands/ agents/
+# expected: no hits outside this phase's own BASELINE_BINARY comment
+```
+
+**The unconfigured repo still classifies sensibly** (a throwaway, no `swarm.json`, no
+`.gitattributes`):
+
+```bash
+python3 - <<'PY'
+import sys; sys.path.insert(0, "skills/swarm")
+import plan_graph as pg
+for p, a in [("db/x.sqlite","modify"), ("a/logo.png","modify"), ("a/icon.svg","modify"),
+             ("src/x.py","modify"), ("web/data/lab.json","modify")]:
+    print(f"{p:28} {a:8} -> {pg.classify(p, a)}")
+PY
+# expected: binary, binary, modify, modify, modify
+```
+
+**The Hugo case, declared:**
+
+```bash
+python3 - <<'PY'
+import sys; sys.path.insert(0, "skills/swarm")
+import plan_graph as pg
+cfg = {"generated": ("resources/_gen/",), "binary": (), "regenerate": {}}
+print(pg.classify("hugo_docs/resources/_gen/style.css", "modify", cfg))   # generated
+print(pg._verdict("generated", [[1, 2]]))                                 # ORDER: ...
+PY
+```
+
+**No regression on the real plan sets that produced the seer values** — run the new classifier
+against every `## Files` row of all 79 sets in `~/seer/.workflows/plan/` and diff it against the
+old one:
+
+```bash
+python3 - <<'PY'
+import sys, glob, os
+sys.path.insert(0, os.path.expanduser("~/.worktrees/claude-commands/swarm-write-set-gate/skills/swarm"))
+import plan_graph as pg
+
+GENERATED = (".sqlite", ".sqlite3", ".db")
+REGENERATED_TEXT = ("web/data/lab.json", "lab.xlsx")
+def old(path, action):
+    a = action.replace("*", "").strip().lower()
+    if a.startswith("read"): return "read"
+    if path.endswith(GENERATED): return "binary"
+    if any(path.endswith(s) for s in REGENERATED_TEXT) or a.startswith("regenerate"):
+        return "generated"
+    if a.startswith("create"): return "create"
+    return "modify"
+
+cfg = {"generated": ("web/data/lab.json", "lab.xlsx"), "binary": (), "regenerate": {}}
+attrs = pg.gitattributes_classes(os.path.expanduser("~/seer"), [])  # populated below
+rows, diffs = 0, 0
+paths = set()
+plans = glob.glob(os.path.expanduser("~/seer/.workflows/plan/**/*.md"), recursive=True)
+parsed = []
+for f in plans:
+    try: rs = pg.parse_files(open(f, encoding="utf-8", errors="replace").read())
+    except OSError: continue
+    parsed.append(rs); paths.update(p for p, _ in rs)
+attrs = pg.gitattributes_classes(os.path.expanduser("~/seer"), sorted(paths))
+for rs in parsed:
+    for p, a in rs:
+        rows += 1
+        new = pg.classify(p, a, cfg, attrs.get(pg._norm(p)))
+        if new != old(p, a):
+            diffs += 1; print("DIFF", p, a, old(p, a), "->", new)
+print(f"{rows} rows across {len(plans)} plan files, {diffs} classification changes")
+PY
+# MEASURED while planning: 1559 rows across 267 plan files, 1 change — and exactly one:
+#   DIFF 'engine/data/models/<END>-strategy-b.pkl' 'create (generated), **pass only**'
+#        create -> binary
+# A pickle has no text merge anywhere, so this is an UPGRADE in the safe direction and the
+# path has a single writer, so no verdict moves. Any OTHER diff, or any downgrade, is a
+# regression: stop and fix the resolution order in classify() rather than the baseline.
+```
+
+**Then deploy, and verify against the INSTALLED copies** — nothing is live until `sync.sh` runs,
+and `sync.sh` COPIES rather than symlinks (`sync.sh:68,74,81`). Never edit `~/.claude/` directly.
+
+```bash
+cd ~/claude-commands && ./sync.sh
+
+# the installed gate carries the new machinery
+python3 -c "
+import sys; sys.path.insert(0, '$HOME/.claude/skills/swarm'); import plan_graph as pg
+assert not hasattr(pg, 'REGENERATED_TEXT'), 'installed copy still has the seer constant'
+assert hasattr(pg, 'BASELINE_BINARY') and hasattr(pg, 'load_config')
+assert pg.classify('web/data/lab.json', 'modify') == 'modify'
+assert pg.classify('x/y.sqlite', 'modify') == 'binary'
+print('installed plan_graph.py ok')"
+
+grep -c "seer\|lab\.json\|lab\.sqlite\|lab\.xlsx" ~/.claude/skills/swarm/plan_graph.py \
+  ~/.claude/agents/integrator.md
+# expected: both 0
+
+python3 ~/.claude/skills/swarm/tests/test_plan_graph.py && echo "installed harness ok"
+
+# and the two trees must agree
+for d in skills agents commands; do diff -rq --exclude=__pycache__ --exclude='.*' "$d" ~/.claude/"$d"; done
+# expected: no output
+```
+
+**Manual check:** run the installed gate against a real plan set in a worktree (phase 1's fix
+makes this resolve) and read the new `artifact classes:` line — it should say `baseline +
+.gitattributes (no .workflows/swarm.json)` for a repo with no config, and name the file for one
+that has it.
+
+**Exit criteria**
+
+- `grep -rn "seer\|lab\.json\|lab\.sqlite\|lab\.xlsx" skills/swarm/plan_graph.py agents/integrator.md`
+  returns **nothing**, in the repo and in `~/.claude/`.
+- An unconfigured repo classifies from the baseline: `.sqlite`/`.png`/`.xlsx` → BLOCK,
+  `.svg`/`.py`/`.json` → ISOLATE, and `web/data/lab.json` is an ordinary file.
+- The Hugo `resources/_gen/` case classifies ORDER once declared, and ISOLATE when not.
+- The seer values reproduce today's classification, driven by configuration — proved twice: by
+  `test_seer_values_reproduce_the_old_behaviour_as_config` (exact equivalence over a case table),
+  and by the sweep over all 1,559 `## Files` rows of seer's 267 plan files, which must yield
+  **exactly the one known upgrade** (`…-strategy-b.pkl`, `create` → `binary`) and no other diff
+  and no downgrade.
+- `integrator.md` names no project's paths and no project's suite; it walks the repo ladder, and
+  the seer worktree knowledge survives as `suite.setup`/`suite.notes` in `SKILL.md`'s worked
+  example plus a generalised warning in the agent.
+- `python3 skills/swarm/tests/test_plan_graph.py` passes and reports **25 cases** — phase 1's 13
+  plus this phase's 12. A run reporting 13 means the `@case` decorators were dropped; a run
+  reporting fewer than 13 means phase 1's cases were restructured, which this phase must not do.
+- **Phase 1's `"root"` key survives.** `python3 -c "import sys; sys.path.insert(0,'skills/swarm');
+  import plan_graph; print('root' in plan_graph.build('SWARM_WRITE_SET_GATE_PLAN.md'))"` prints
+  `True`, and the gate's missing-plans block never prints `resolved against root: None`.
+- **Phase 1's render guard survives.** `grep -c "no file is written by two phases"
+  skills/swarm/plan_graph.py` returns **1**, and `grep -c "INCOMPLETE:" skills/swarm/plan_graph.py`
+  returns **2**. This phase adds a header line to `render()`; it removes nothing from it.
+- `README.md` names `.workflows/swarm.json` in both the `### swarm` section and the project tree,
+  **and** its Project Structure tree line for `swarm/` names `tests/` (the R1 slice).
+- `./sync.sh` has run and the three-way `diff -rq` is clean.
+
+---
+
+## Handoffs
+
+- **`commands/analyze-orchestrator.md:197,199` still name seer paths** (`engine/src/seer_engine/
+  commands/lab.py`, `lab/lab.sqlite`, `web/data/lab.json`) in Step 3b's worked example, and
+  `:396` names `lab/lab.sqlite` again. That file is **Phase 3's** (R2).
+  **RECONCILED 2026-10-27 — decided, not left open.** Phase 3 carries those lines across
+  **verbatim** in its Step 3b rewrite, deliberately: they are a *measurement* of a real plan set
+  (`journal-versioning`, six files shared, one concurrent), not a hardcoded tool value, and
+  phase 3 has no licence to re-measure them. R3 is about a global tool *behaving* as though every
+  repo were one project — a named example in prose does not. Accordingly **R3's exit-criterion
+  grep is scoped to `skills/swarm/plan_graph.py` and `agents/integrator.md`**, which is where the
+  behaviour lives, and `analyze-orchestrator.md` is **not** a gap. Nothing here is left to a
+  follow-up.
+- **`skills/swarm/swarm.py:547` names seer** in a MEASURED comment, and `cmd_track()` re-includes
+  only `.workflows/orchestration/`, not `.workflows/swarm.json`. `swarm.py` is **out of scope for
+  the whole plan set** (index `## Scope`). Teaching `track` to re-include the config file is a
+  small, genuinely useful follow-up; the manual `!.workflows/swarm.json` remedy is documented in
+  `SKILL.md` in the meantime, and measurement shows no repo on this machine needs it today.
+- **Writing `~/seer/.workflows/swarm.json` itself** is a change to a different repository and is
+  not this phase's to make. The file's exact contents are in `SKILL.md`'s worked example,
+  copy-pasteable. Until it is dropped in, seer's `web/data/lab.json` and `lab/lab.sqlite` still
+  classify correctly from its existing `.gitattributes` (measured); only `lab.xlsx` would move
+  from ORDER to BLOCK, and it appears in **zero** of seer's 79 plan sets.
+- **A `swarm.json` schema validator / `plan_graph.py --check-config`** would be a kindness — a
+  typo'd key is silently ignored by design. Deliberately not built here: a pre-spawn gate must not
+  grow a failure mode of its own.
+
+---
+
+## Rollback
+
+This phase is one commit on `feature/swarm-write-set-gate`. `git revert <sha>` restores
+`GENERATED`, `REGENERATED_TEXT`, the two-argument `classify()`, and `integrator.md`'s seer steps.
+
+Three things to know:
+
+1. **Phase 1 must not be reverted first.** Both phases touch `plan_graph.py`; reverting 1 before
+   2 conflicts. Revert in reverse order of landing.
+2. **A revert is not live until `./sync.sh` runs.** The deploy is a copy. A revert that skips the
+   sync leaves the new code installed in `~/.claude/` and the old code in the repo — the exact
+   drift CLAUDE.md warns about. Finish with the three-way `diff -rq`.
+3. **A repo that has grown a `.workflows/swarm.json` keeps it** — the reverted gate simply ignores
+   the file. Nothing to clean up in any other repository; this phase writes no file outside
+   `~/claude-commands`.

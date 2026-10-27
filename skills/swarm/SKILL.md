@@ -33,20 +33,154 @@ Exit codes: **0** clean, **2** a file is written by concurrent phases, **1** the
 read (no phase table, or a phase plan missing). 1 is deliberately not 0 — a caller that reads 0 as
 "nothing collides" would spawn a wave on the strength of an analysis that never ran.
 
+**The exit code is enforced, not advisory.** `/analyze-orchestrator` Step 3b spawns nothing on a
+non-zero exit. On **1** it stops outright: there is no collision report to act on, only the
+`INCOMPLETE:` line and the `resolved against root:` path the gate prints in that state, and both
+belong in the stop. On **2** it remediates by class where it can — per-phase worktrees for ISOLATE
+(`git worktree add` plus `swarm.py spawn --cwd`), a dependency edge for ORDER and BLOCK — re-runs
+the gate once, and stops only if that did not clear it. A gate that stopped on something the
+coordinator could have fixed itself would be the no-waiting rule failing in a new costume.
+
+**A stop here terminates with a report; it never prompts.** No `AskUserQuestion`, no `[y/N]`, no
+turn ending on a question — a coordinator that asks stalls the whole set. Nothing is spawned, so
+every phase stays `pending` and `--resume <slug>` picks the set up once the cause is fixed.
+
+**`--no-gate` is the escape hatch**, the same flag and meaning `skills/task` uses
+(`skills/task/DESIGN.md:159`, `skills/task/task_gh.py:2617`): the gate still runs and still prints,
+its exit just stops refusing. It has to be passed on purpose. A session that cannot run the gate at
+all does not reach for the flag and does not wait for someone to type it — it derives the write
+sets by hand from the phase plans' `## Files` tables, proceeds, and **names what it checked
+instead** in the ledger note, which is the ladder at `skills/task/DESIGN.md:238-246` applied to
+this gate.
+
 It reads each phase plan's `## Files` table, the same write set `/implement` hands `pusher`, and
 classifies every shared path:
 
 | Class | Meaning | Fix |
 |---|---|---|
 | ISOLATE | ordinary source file, concurrent writers | one worktree per phase; disjoint regions then merge. Check the regions — "same file" is not "same lines" |
-| ORDER | generated artifact (`web/data/lab.json`) | regenerated, not merged; add an edge so one phase publishes last |
-| BLOCK | binary (`lab/lab.sqlite`) | serialize, always. A database merge is a choice of side and the other side's rows are gone |
+| ORDER | regenerated, not merged — a snapshot, a bundle, a committed `resources/_gen/` tree | add an edge so one phase publishes last, and regenerate on the way in rather than merging |
+| BLOCK | a binary with no textual form — a database, an image, an archive | serialize, always. A binary merge is a choice of side, and the other side is gone |
 | sequential | written in different waves | nothing to do |
 
 Measured against four real plan sets: `journal-versioning` 6 files shared, 1 concurrent
 (`commands/lab.py`, phases 2+3+4 in one wave — the collision that was reported by hand);
 `sean-gotrade-tracker` 12 shared, 0 concurrent; `strategy-b-ranker` none shared;
 `journal-unseen-badges` has no phase table and exits 1.
+
+### Per-repo artifact classes — `.workflows/swarm.json`
+
+Which paths are generated and which are binary is a fact about the REPO, and for two of the
+three tiers the repo has already stated it. The gate reads three sources, most specific first:
+
+| Tier | Source | What it can say | Who writes it |
+|---|---|---|---|
+| 1 | `<repo>/.workflows/swarm.json` | anything, including "this JSON is a snapshot of that database, rebuilt by this command" | you, once per repo |
+| 2 | `.gitattributes`, via `git check-attr` | `binary` or `-diff` → BLOCK; `-merge` → ORDER | already there, in any repo that merges carefully |
+| 3 | a built-in suffix list | `.sqlite`, `.db`, images, archives, fonts, office documents → BLOCK | nobody; it is the same in every repo |
+
+**Tier 3 holds no project's paths.** It used to: two literal filenames from one project were
+shipped to every repo on the machine, so a Hugo site's committed `resources/_gen/` classified as
+an ordinary source file (ISOLATE, when it is ORDER) and another project's hand-written file of
+the same name classified as generated. Tiers 1 and 2 are where a project's paths belong.
+`.svg` is deliberately not in tier 3 — SVG is text and merges.
+
+**Tier 2 is free.** A repo that already marks a generated file `-merge` — because it learned the
+hard way that git will happily line-merge 11 MB of generated JSON into a file matching neither
+source database — has already told the gate everything it needs, and the gate reads the same
+declaration the merge itself will honour. Nothing to write.
+
+#### The file
+
+`<repo>/.workflows/swarm.json`. JSON, because every Python 3 reads it with no dependency
+(`tomllib` is 3.11+) and the ledger beside it is JSON too. It sits in `.workflows/` because that
+is this ecosystem's persistence layer, next to `orchestration/<slug>/ledger.json`.
+
+```json
+{
+  "generated": ["resources/_gen/", "web/data/lab.json", "lab.xlsx"],
+  "binary":    ["fixtures/*.golden.bin"],
+  "regenerate": {
+    "web/data/lab.json": {
+      "from": "lab/lab.sqlite",
+      "run":  "python -m seer_engine lab stage"
+    }
+  },
+  "suite": {
+    "setup": [
+      "python3 -m venv engine/.venv && engine/.venv/bin/pip install -e engine",
+      "cp -al ../../web/node_modules web/node_modules"
+    ],
+    "steps": [
+      "PYTHONPATH=engine/src engine/.venv/bin/python -m pytest engine/tests",
+      "cd web && npx tsc --noEmit && npm test"
+    ],
+    "notes": "node_modules must be HARDLINKED (cp -al), never symlinked: a symlink passes vitest and tsc and then fails `next build` with a misleading \"filesystem root\" error. pytest without PYTHONPATH=engine/src silently tests the MAIN checkout instead of the branch — green, and about the wrong code."
+  }
+}
+```
+
+That example is the real configuration for the project whose two filenames used to be compiled
+into the tool. It reproduces that project's classifications exactly — as data.
+
+- **`generated`** → ORDER. **`binary`** → BLOCK. Patterns match three ways: a leading dot with no
+  slash is a **suffix** (`.xlsx`); a trailing `/` or `/**` is a **directory** and everything under
+  it at any depth, anchored at the root or found anywhere in the tree (`resources/_gen/` matches
+  `hugo_docs/resources/_gen/style.css`); anything else is a **path** — exact, matched at a
+  directory boundary anywhere in the tree, or an `fnmatch` glob when it carries `*`, `?` or `[`.
+- **`regenerate`** is read by the `integrator` agent when a merge conflicts on that path: it takes
+  the `from` side and runs `run` instead of resolving the conflict. Its keys also count as
+  `generated`, so a path with a recipe is never declared twice — the half you forget is the half
+  that silently downgrades ORDER to ISOLATE.
+- **`suite`** is read by the `integrator` agent, not by the gate. See below.
+- A missing, unreadable or malformed file means "no declaration", never an error. A pre-spawn
+  check that refused to run over a stray comma would turn a missing declaration into a stopped
+  swarm.
+- Inside tier 1, `binary` is checked before `generated`: a path listed in both has been described
+  twice, and BLOCK is the side whose cost is unrecoverable rows.
+- **Tier 1 beats tier 3, and that is the one place a declaration may lower a severity.** Where two
+  *phases* classify one path differently the most severe still wins — there no source has
+  authority. Here one does: the repo.
+- **Noted discrepancy.** `lab.xlsx` is carried in `generated` (→ ORDER) above, though an xlsx is a
+  zip of XML and `.xlsx` is in tier 3's BLOCK list for every other repo. BLOCK is arguably the
+  truer class even there. It stays ORDER because that is what the tool did before this file
+  existed, and a severity *upgrade* is still a behaviour change to plan sets already written
+  against the old classification. Changing it should be a deliberate act, not a side effect of
+  moving the value into configuration.
+- If a repo's `.gitignore` excludes `.workflows/` broadly, the file still works — the gate reads
+  it from disk, not from git — it simply does not travel to another machine. Add
+  `!.workflows/swarm.json` to re-include it. (Measured across seven repos on one machine: none of
+  them ignored it.)
+
+See what a plan set resolved to:
+
+```bash
+python3 ~/.claude/skills/swarm/plan_graph.py <PLAN.md> --json \
+  | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["config"], indent=2))'
+```
+
+The human form prints one line for it too: `artifact classes: declared in
+.workflows/swarm.json`, or `baseline + .gitattributes (no .workflows/swarm.json)`.
+
+#### The suite is the repo's, not the tool's
+
+`integrator` runs the FULL suite after merging a wave, and which suite that is cannot be baked
+into a global agent: a hardcoded `npm test` waves through a repo whose CI is four bespoke guards
+plus a typecheck and a build (`skills/task/task_gh.py:1737 workflow_gate()`). It walks a ladder —
+the one `skills/task/DESIGN.md:239-242` already established for a session landing its own work,
+with the repo's own CI put at the top:
+
+1. `.workflows/swarm.json` → `suite.steps` — the repo saying it outright
+2. `.github/workflows/*.yml` → every `run:` step of every push/pull_request job, in order
+3. `package.json` scripts (`test`, `typecheck`, `build`, `lint`) or a `Makefile` `test` target
+4. the language default — `pytest`, `cargo test`, `go test ./...`
+5. nothing — report `suite: none` and say in the report that the wave merged unverified
+
+`suite.setup` and `suite.notes` are where a repo's hard-won worktree knowledge goes, because an
+integration worktree is not the main checkout and a suite that silently tests the wrong tree is
+the worst possible green. The two that bite most often are per-checkout build artifacts a fresh
+worktree lacks (hardlink them; a symlinked `node_modules` passes vitest and tsc and then fails
+the build) and a runner that resolves imports outside this tree. The example above carries both.
 
 ## Nobody in a swarm waits for a human
 
