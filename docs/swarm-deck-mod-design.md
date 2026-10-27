@@ -270,6 +270,41 @@ breaks ordinary interactive work, not just swarms.
    first, and the design changed rather than the assumption being quietly kept
 5. ~~the coordinator's deck~~ — **shipped**; see *Identity and discovery are not the same
    lookup* below
+6. ~~the status vocabulary~~ — **shipped**; see *QUIET meant three different things* below
+
+## QUIET meant three different things
+
+Found by looking at a real deck with nothing running: every row of a finished set read
+`QUIET` in yellow and the band stayed lit, for a run that had ended days earlier. `QUIET`
+was defined as nothing more than "no heartbeat for 60 seconds", which cannot tell apart:
+
+- a phase wedged mid-run — **the thing the deck exists to catch**
+- a phase that finished and exited cleanly
+- a row left over from last week, since rows are never deleted from the store
+
+So the mod was committing the failure it was built to prevent: a band that is always lit,
+which is how the one night it matters gets scrolled past.
+
+The fix adds a status the session reports (`starting` → `working` → `finalizing` → `done`)
+and lets the deck override it with the clock only where the clock knows better. `done`
+comes from `session.end`, skipping `clear` and `resume`, which end a conversation rather
+than a session. `finalizing` comes from `agent.spawn` matched on `completion-handler`, and
+is sticky, because the handler's own turns would otherwise drag the phase back to
+`working`. An unexplained silence is `QUIET` for two hours and `stale` after that.
+
+**A tmux window closed by `swarm.py reap` reads `done`, not QUIET** — closing it sends
+`SIGHUP` and Claude Code exits cleanly. That was checked live, and it is what makes `QUIET`
+worth a colour: it now means a hard kill, a crash, or a machine that went away.
+
+### What `claude plugin test` cannot reach
+
+The kit cannot fire `agent.spawn` or `session.end` through its `$`: both answer "no
+implementation" with a stub registered, in either result shape, and with no other stub in
+the file. They are mods API call paths, and a test cannot fire one.
+
+So those two hooks are verified in a live session, and the suite tests where the logic
+actually lives — `shown()`, driven by seeded rows. That is also closer to the real case: a
+coordinator reads rows other sessions wrote.
 
 ## Identity and discovery are not the same lookup
 

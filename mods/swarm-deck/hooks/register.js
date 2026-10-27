@@ -20,8 +20,21 @@ let swarm = null
 // What the heartbeat reports. Module-level so the hooks share it the way the engine
 // intends: one hook records, another publishes.
 let lastTool = null
-let working = false
+let turns = 0
 let decided = []
+
+/**
+ * What this phase says it is doing. The deck may override it with what the clock says
+ * (see `shown`), but only a session can report these.
+ *
+ *   starting    booted, no turn yet
+ *   working     a turn is running
+ *   idle        between turns
+ *   finalizing  completion-handler is running -- the endgame, and STICKY: a phase does
+ *               not go back to idle once it has started handing off
+ *   done        the session ended on purpose
+ */
+let phaseState = 'starting'
 let sent = []
 let undelivered = 0
 
@@ -73,7 +86,8 @@ async function publish($) {
       slug: swarm.slug,
       phase: swarm.phase,
       coordinator: swarm.coordinator || null,
-      status: working ? 'working' : 'idle',
+      status: phaseState,
+      turns: turns,
       lastTool: lastTool,
       contextPct: contextPct,
       decided: decided.length,
@@ -201,6 +215,37 @@ async function mirror($, e, result) {
   await publish($)
 }
 
+/**
+ * Write the row one last time, as `done`.
+ *
+ * Lean on purpose: every session.end hook on the machine shares a 1.5 second budget, so
+ * this does a single store.set and skips the $.session.usage() call publish() makes.
+ * The last heartbeat's context figure is a second or two old, which is close enough for
+ * a row nobody will watch change again.
+ */
+async function finish($) {
+  if (swarm === null) return
+  phaseState = 'done'
+  try {
+    await $.store.set(rowKey(), {
+      slug: swarm.slug,
+      phase: swarm.phase,
+      coordinator: swarm.coordinator || null,
+      status: 'done',
+      turns: turns,
+      lastTool: lastTool,
+      contextPct: null,
+      decided: decided.length,
+      sent: sent.length,
+      undelivered: undelivered,
+      updatedAt: await $.clock.now(),
+    })
+  } catch (err) {
+    // The row stays at its last heartbeat and ages into `stale`, which is wrong but not
+    // alarming -- the failure mode errs towards silence, which is correct for an exit.
+  }
+}
+
 // ------------------------------------------------------- guard 2: interactive shells
 
 /**
@@ -280,8 +325,41 @@ let reports = []
 let fleetSlug = null
 let deckTimer = null
 
-/** A row older than this has stopped heartbeating -- the thing the deck exists to spot. */
+/** No heartbeat for this long and the session is not live. */
 const STALE_MS = 60000
+
+/**
+ * Past this, a silent row is history rather than an emergency.
+ *
+ * MEASURED by looking at a real deck: with nothing running, every row of a finished set
+ * read QUIET in yellow and the band stayed lit -- for a set that had ended days earlier.
+ * Rows are never deleted from the store, so without this the deck alarms forever about a
+ * night that is already over: exactly the "a band that is always lit is noise" failure
+ * this mod exists to avoid, committed by the mod itself.
+ */
+const ABANDONED_MS = 2 * 60 * 60 * 1000
+
+/**
+ * What the deck shows for a row: the session's own word, or the clock's.
+ *
+ * QUIET is deliberately narrow now. It used to mean only "no heartbeat for 60s", which
+ * lumped together three unrelated situations -- a phase wedged mid-run, a phase that
+ * finished and exited cleanly, and a row left over from last week. Only the first of
+ * those is worth a colour.
+ */
+function shown(row, now) {
+  const age = missing(row.updatedAt) ? Infinity : now - row.updatedAt
+  // A session that said goodbye is never quiet, however long ago it said it.
+  if (row.status === 'done') return { label: 'done', dim: true, alarm: false }
+  if (age > ABANDONED_MS) return { label: 'stale', dim: true, alarm: false }
+  // Stale beats working: a row that says "working" and stopped updating is the exact
+  // picture of the stall this mod removes, and it must not read as healthy.
+  if (age > STALE_MS) return { label: 'QUIET', color: 'yellow', alarm: true }
+  if (row.status === 'working') return { label: 'working', color: 'green', alarm: false }
+  if (row.status === 'finalizing') return { label: 'finalizing', color: 'cyan', alarm: false }
+  if (row.status === 'starting') return { label: 'starting', dim: true, alarm: false }
+  return { label: 'idle', dim: true, alarm: false }
+}
 
 /**
  * Find the set this session should watch, for a session that is not itself a phase.
@@ -400,19 +478,14 @@ async function draw($, e) {
     // A row with no timestamp at all is QUIET too. "I cannot tell when this last
     // reported" is not evidence that it is healthy, and on a deck built to spot
     // sessions that went quiet, the unknown case must fall on the safe side.
-    const stale = missing(row.updatedAt) || (now - row.updatedAt) > STALE_MS
-    // Stale beats working: a row that says "working" and stopped updating an hour ago is
-    // the exact picture of the stall this whole mod exists to remove, and it must not
-    // read as healthy.
-    const state = stale ? 'QUIET' : (row.status === 'working' ? 'working' : 'idle')
+    const view = shown(row, now)
     children.push(Box({
       flexDirection: 'row',
       columnGap: 2,
       children: [
         Text({ children: ['p' + String(row.phase).padEnd(3)] }),
-        Text({ color: stale ? 'yellow' : (row.status === 'working' ? 'green' : undefined),
-               dimColor: !stale && row.status !== 'working',
-               children: [state.padEnd(8)] }),
+        Text({ color: view.color, dimColor: view.dim === true,
+               children: [view.label.padEnd(10)] }),
         Text({ dimColor: true, children: [bar(row.contextPct)] }),
         Text({ dimColor: true, children: [String(row.lastTool || '--').padEnd(10)] }),
         Text({ dimColor: true, children: [ago(now, row.updatedAt)] }),
@@ -463,8 +536,11 @@ function alarm(now) {
   const quiet = []
   const lost = []
   for (const row of fleet) {
-    if (missing(row.updatedAt) || (now - row.updatedAt) > STALE_MS) quiet.push(row)
-    if (row.undelivered > 0) lost.push(row)
+    const view = shown(row, now)
+    if (view.alarm) quiet.push(row)
+    // An undelivered report from a run that is over is history, not an action. Gate it
+    // on the same recency, or a finished set lights the band for good.
+    if (row.undelivered > 0 && view.label !== 'done' && view.label !== 'stale') lost.push(row)
   }
   if (lost.length > 0) {
     return 'phase ' + lost.map(r => r.phase).join(', ') +
@@ -607,7 +683,10 @@ export function register(on) {
 
   on('turn.start', async ($, e, next) => {
     if (swarm !== null) {
-      working = true
+      turns += 1
+      // `finalizing` is sticky: completion-handler's own turns must not drag the phase
+      // back to `working`, or the endgame flickers and the deck stops meaning anything.
+      if (phaseState !== 'finalizing') phaseState = 'working'
       await publish($)
     }
     return next(e)
@@ -617,9 +696,31 @@ export function register(on) {
     // A subagent finishing is not the phase finishing, and reporting it as idle makes a
     // busy session look parked -- which is the one misreading that matters on a deck
     // built to spot sessions that have gone quiet.
-    if (swarm !== null && e.agentId === undefined) {
-      working = false
+    if (swarm !== null && e.agentId === undefined && phaseState !== 'finalizing') {
+      phaseState = 'idle'
       await publish($)
+    }
+    return next(e)
+  })
+
+  // The endgame has a name in this repo: /do and /implement both hand off to
+  // completion-handler when the code is written. A phase that has spawned it is not
+  // going to start anything new, which is exactly what you want to know when deciding
+  // whether a wave is nearly through.
+  on('agent.spawn', { subagentType: 'completion-handler' }, async ($, e, next) => {
+    if (swarm !== null) {
+      phaseState = 'finalizing'
+      await publish($)
+    }
+    return next(e)
+  })
+
+  on('session.end', async ($, e, next) => {
+    // /clear and /resume END A CONVERSATION, not a session: the process goes on. Marking
+    // those `done` would retire a phase that is still working, and the deck would stop
+    // watching the session most likely to need it.
+    if (swarm !== null && e.reason !== 'clear' && e.reason !== 'resume') {
+      await finish($)
     }
     return next(e)
   })

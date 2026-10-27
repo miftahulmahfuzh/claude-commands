@@ -47,20 +47,84 @@ Outside a swarm it is **dormant**: an ordinary interactive session is untouched.
 The dialog never renders. The phase reads the ladder as the tool's result and decides on the
 highest rung that settles the question.
 
+### What each status means
+
+| Status | What it means | Colour |
+| :- | :- | :- |
+| `starting` | booted, no turn yet | dim |
+| `working` | a turn is running | green |
+| `finalizing` | `completion-handler` has been spawned — the endgame. **Sticky**: the handler's own turns don't drag the phase back to `working` | cyan |
+| `idle` | between turns, still reporting | dim |
+| `done` | the session ended on purpose — including a tmux window `swarm.py reap` closed | dim |
+| `QUIET` | stopped reporting and never said goodbye, within the last two hours | **yellow** |
+| `stale` | the same, but hours old: history, not an emergency | dim |
+
+`QUIET` is the only one that lights the band, and it is deliberately narrow. It used to
+mean nothing more than "no heartbeat for 60 seconds", which lumped together three
+unrelated things: a phase wedged mid-run, a phase that finished cleanly, and a row left
+over from last week. Rows are never deleted, so a finished set lit the band **forever** —
+the mod committing the exact "a band that is always lit is noise" failure it exists to
+prevent.
+
+Worth knowing: closing a tmux window sends `SIGHUP`, Claude Code exits cleanly, and the
+row reads `done`. So reaped phases are `done`, and `QUIET` is reserved for what actually
+alarms — a hard kill, a crash, a machine that went away.
+
 ### A phase that stops
 
-![The deck showing phase 3 as QUIET, with the band lit below the transcript](../../docs/img/fleet-quiet.png)
+Phase 4's session was killed with `SIGKILL`, so it never got to say goodbye. Seventy
+seconds later its row reads `QUIET` rather than the `working` it last claimed, and the band
+lights under the transcript — naming phase 4 and nothing else, even though three other
+phases have also stopped reporting. They said goodbye; it didn't.
 
-Phase 3's session was killed mid-run. Sixty seconds later its row reads `QUIET` rather than
-the `working` it last claimed — staleness overrides what a row says about itself — and the
-band lights under the transcript. Nothing else lights it: a band that is always on is noise.
+![The deck as phase 2 hands off to completion-handler and exits](../../docs/img/fleet-statuses.gif)
 
-![The deck updating as a phase goes quiet](../../docs/img/fleet-quiet.gif)
+*Phase 2 moving `finalizing` → `done` while phase 4 stays `QUIET`.*
 
 > These are a demonstration set — three real sessions carrying real `SWARM_*` identities and
 > writing real rows, not a production run and not mocked output. Regenerate them with
 > [`tools/termshot.py`](tools/termshot.py), which renders a tmux pane straight to PNG or GIF;
 > a screenshot nobody can re-shoot rots the first time the layout changes.
+
+## What each piece is for
+
+Each of these exists because of a specific way an unattended run goes wrong.
+
+**`/fleet` — the deck.** *Six sessions in six tmux windows and no way to see them at
+once.* Checking meant tabbing through windows, or asking the coordinator — which costs a
+turn and tokens. Registered `immediate: true`, so it opens **while Claude is working**: a
+dashboard you can only open between turns is unavailable exactly when you are worried.
+
+**The band.** *A dashboard only helps if you are looking at it, and at 3am you are not.*
+The band appears above the prompt in whatever session you are in, so a problem finds you
+rather than waiting to be found. It draws nothing otherwise — the moment it becomes
+routine it stops working.
+
+**The `AskUserQuestion` guard.** *The eight-hour night.* A phase asked a question into an
+empty room, and the answer was rung 1 of a ladder it had already been given. The rule
+against it existed — in a prompt, and a prompt is advice. This makes the call impossible
+rather than discouraged, and hands back the ladder so the phase decides instead of
+stopping.
+
+**The Bash guard.** *The same stall, sneakier.* `vim`, `less`, `git rebase -i` hold the
+Bash tool open with **nothing on screen**, so the session looks busy rather than stuck. No
+dialog, no clue — the hardest kind to notice.
+
+**The heartbeat.** *Knowing what a session is doing normally means asking it, and asking
+costs a turn and tokens* — times six sessions, times all night. `$.clock.every` runs
+outside any turn, so sessions report themselves for free. This is the one thing here that
+a settings hook, a skill, or an MCP server cannot do at all.
+
+**The decision log.** *You wake up to six commits and no idea what was decided without
+you.* The "Decided without asking" review used to be reconstructed at the end of a run, so
+a coordinator that died took it with it. Each fork is now written down as it is settled,
+under its own key.
+
+**The report mirror.** *A report can be held for approval and never arrive, silently.*
+`swarm.py spawn` warns about it and cannot act on it. Detecting it turned out to be
+impossible — `isDelivered: true` means "reached the inbox", which a held message has — so
+every report is also written to the store, which no approval gate sits in front of. The
+report cannot go missing; at worst it arrives slowly.
 
 ## Two design points worth the words
 

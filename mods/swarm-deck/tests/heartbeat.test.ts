@@ -47,7 +47,10 @@ test('the row follows the phase: working, what it last touched, then idle', asyn
   on('turn.complete', () => ({ text: '' }))
 
   await $.session.start(START)
-  expect((saved.get(ROW) as any).status).toBe('idle')
+  // A session that has booted but not begun is `starting`, not `idle`. The two used to
+  // be indistinguishable, which made a phase that had just launched look like one that
+  // had finished.
+  expect((saved.get(ROW) as any).status).toBe('starting')
 
   await $.turn.start({ turnId: 't1' })
   expect((saved.get(ROW) as any).status).toBe('working')

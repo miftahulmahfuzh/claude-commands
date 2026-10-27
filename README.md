@@ -913,10 +913,15 @@ It **fails closed**: a mod hook that throws is normally *skipped*, which here wo
 render and stall the night, so the guard carries a `.catch` that re-issues the refusal. A test
 forces the throw and asserts the refusal survives it.
 
-A phase that stops reporting reads `QUIET` rather than the `working` it last claimed, and the
-band lights under the transcript — nothing else lights it:
+Each row carries the phase's own status — `starting`, `working`, `finalizing` (its
+`completion-handler` is running), `idle`, `done` — and the deck overrides it with the clock
+where the clock knows better. A phase that stops reporting and never said goodbye reads
+`QUIET` and lights the band; one that exited cleanly reads `done` and never does, however
+long ago it finished. After a couple of hours an unexplained silence becomes `stale`:
+history, not an emergency. Full table in the
+[mod's README](mods/swarm-deck/README.md#what-each-status-means).
 
-![Phase 3 QUIET, with the band lit](docs/img/fleet-quiet.png)
+![Phase 2 handing off to completion-handler while phase 4 stays QUIET](docs/img/fleet-statuses.gif)
 
 ```bash
 cd mods/swarm-deck
