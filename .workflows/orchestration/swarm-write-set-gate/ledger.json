@@ -6,20 +6,20 @@
   "phases": [
     {
       "card": null,
-      "commit": null,
+      "commit": "2773a34680426710c4fdd52696b70103eced1097",
       "depends_on": [],
       "difficulty": "NORMAL",
       "n": 1,
-      "note": null,
+      "note": "Gate fixed and verified: find_root() resolves the worktree root, most_severe() ends the phase-numbering downgrade, render()'s all-clear is conditional. 13-case harness at skills/swarm/tests/; fails 33 assertions against HEAD. No decisions needed (plan code blocks complete). Per-phase ./sync.sh run and verified against the installed copy per exit criterion 4 - transient, as your ledger note says; the authoritative sync is yours at landing. Installed gate now exits 2 on this set's own index and matches the hand-declared write-set table, so the bootstrap hazard is closed and wave 1 can trust the gate.",
       "package": "skills/swarm",
       "plan": ".workflows/plan/swarm-write-set-gate/phase-1.md",
-      "reported_at": null,
+      "reported_at": "2026-10-27T02:39:02+00:00",
       "satisfies": [
         "R1",
         "R4"
       ],
-      "status": "pending",
-      "task_id": null,
+      "status": "done",
+      "task_id": "P1-CL-A021",
       "title": "Gate correctness: worktree root discovery + severity selection"
     },
     {
@@ -30,15 +30,15 @@
       ],
       "difficulty": "HARD",
       "n": 2,
-      "note": null,
+      "note": "WAVE-1 ISOLATION (coordinator decision, rung 1: plan invariant 2 + the hand-declared write-set table). Phases 2 and 3 both write skills/swarm/SKILL.md concurrently -> ISOLATE. Each gets its own worktree cut from feature/swarm-write-set-gate after phase 1 lands; spawn --cwd <wt> (spawn --isolate does NOT exist: grep -c isolate swarm.py = 0). SYNC.SH CONCURRENCY: ./sync.sh deploys the WHOLE worktree tree to ~/.claude, so two isolated worktrees each running it would overwrite each other's work in the installed copy. Per-phase sync+verify is therefore TRANSIENT and satisfies each phase's own exit criterion; the AUTHORITATIVE ./sync.sh is the coordinator's, run from merged main at landing. Rung 1: invariant 2 requires the two trees to agree AT THE END.",
       "package": "skills/swarm`, `agents",
       "plan": ".workflows/plan/swarm-write-set-gate/phase-2.md",
-      "reported_at": null,
+      "reported_at": "2026-10-27T02:28:51+00:00",
       "satisfies": [
         "R3",
         "R1"
       ],
-      "status": "pending",
+      "status": "spawned",
       "task_id": null,
       "title": "Per-repo artifact classes and test commands"
     },
@@ -50,14 +50,14 @@
       ],
       "difficulty": "NORMAL",
       "n": 3,
-      "note": null,
+      "note": "WAVE-1 ISOLATION (coordinator decision, rung 1: plan invariant 2 + the hand-declared write-set table). Phases 2 and 3 both write skills/swarm/SKILL.md concurrently -> ISOLATE. Each gets its own worktree cut from feature/swarm-write-set-gate after phase 1 lands; spawn --cwd <wt> (spawn --isolate does NOT exist: grep -c isolate swarm.py = 0). SYNC.SH CONCURRENCY: ./sync.sh deploys the WHOLE worktree tree to ~/.claude, so two isolated worktrees each running it would overwrite each other's work in the installed copy. Per-phase sync+verify is therefore TRANSIENT and satisfies each phase's own exit criterion; the AUTHORITATIVE ./sync.sh is the coordinator's, run from merged main at landing. Rung 1: invariant 2 requires the two trees to agree AT THE END.",
       "package": "commands`, `skills/swarm",
       "plan": ".workflows/plan/swarm-write-set-gate/phase-3.md",
-      "reported_at": null,
+      "reported_at": "2026-10-27T02:28:51+00:00",
       "satisfies": [
         "R2"
       ],
-      "status": "pending",
+      "status": "spawned",
       "task_id": null,
       "title": "Make the gate a gate: enforce exits 1 and 2"
     }
@@ -65,6 +65,6 @@
   "plan": "/home/miftah/claude-commands/.workflows/orchestration/swarm-write-set-gate/PLAN.md",
   "repo": "/home/miftah/claude-commands",
   "slug": "swarm-write-set-gate",
-  "updated": "2026-10-27T02:27:00+00:00",
+  "updated": "2026-10-27T02:41:31+00:00",
   "worktree": "/home/miftah/.worktrees/claude-commands/swarm-write-set-gate"
 }
