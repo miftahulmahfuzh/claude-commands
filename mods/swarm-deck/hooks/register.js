@@ -115,7 +115,9 @@ function denyText(where) {
  */
 async function guard($, e, next) {
   if (swarm === null) return next(e)
-  await $.ui.log('swarm-deck: refused AskUserQuestion in phase ' + swarm.phase +
+  // No name prefix: the engine already renders `● swarm-deck: ` in front of a log line,
+  // and repeating it reads as a bug to anyone watching the transcript.
+  await $.ui.log('refused AskUserQuestion in phase ' + swarm.phase +
     ' -- deciding on the ladder instead')
   await record($, e)
   // Republish, or the row keeps a stale count and the deck under-reports the one thing
@@ -154,6 +156,129 @@ async function failClosed($, e, next) {
   return { deny: denyText(swarm) }
 }
 
+// ---------------------------------------------------------------- the deck
+
+// Rows read out of the store, newest read wins. Rendering must not await the store:
+// a ui.render hook runs on every redraw, and redraws are throttled at 30/s.
+let fleet = []
+let fleetSlug = null
+let paneOpen = false
+let paneTimer = null
+
+/** A row older than this has stopped heartbeating -- the thing the deck exists to spot. */
+const STALE_MS = 60000
+
+/**
+ * Re-read every phase row of one set and ask for a redraw.
+ *
+ * Enumerating keys is what the per-phase layout buys: no reader ever has to agree with a
+ * writer about a document's shape, and a phase that has not started yet is simply a key
+ * that is not there.
+ */
+async function refresh($) {
+  let keys = []
+  try {
+    keys = await $.store.keys()
+  } catch (err) {
+    return
+  }
+  const prefix = 'swarm/' + fleetSlug + '/phase/'
+  const rows = []
+  for (const key of keys) {
+    if (!key.startsWith(prefix)) continue
+    try {
+      const row = await $.store.get(key)
+      if (row) rows.push(row)
+    } catch (err) {
+      // One unreadable row must not blank the whole deck.
+    }
+  }
+  rows.sort((a, b) => Number(a.phase) - Number(b.phase))
+  fleet = rows
+  $.ui.invalidate('ui.render')
+}
+
+/** `working 41%  Bash   12s ago`, or the reason there is nothing to say. */
+function bar(pct) {
+  if (pct === null || pct === undefined) return '      '
+  const filled = Math.max(0, Math.min(6, Math.round(pct / 100 * 6)))
+  return '\u2588'.repeat(filled) + '\u2591'.repeat(6 - filled)
+}
+
+/** Missing is not the same as zero: `!then` would call epoch 0 "unknown". */
+function missing(v) {
+  return v === null || v === undefined
+}
+
+function ago(now, then) {
+  if (missing(then)) return '--'
+  const sec = Math.max(0, Math.round((now - then) / 1000))
+  if (sec < 90) return sec + 's'
+  if (sec < 5400) return Math.round(sec / 60) + 'm'
+  return (sec / 3600).toFixed(1) + 'h'
+}
+
+/** Stop refreshing once the pane is gone. */
+async function closePane($, e, next) {
+  if (e.id === 'fleet') {
+    paneOpen = false
+    if (paneTimer !== null) {
+      paneTimer.cancel()
+      paneTimer = null
+    }
+  }
+  return next(e)
+}
+
+/** The pane's tree. Box and Text only: it has to draw the same in tmux, Desktop and VS Code. */
+async function draw($, e) {
+  const el = $.ui.resolve(e)
+  const Box = el.Box
+  const Text = el.Text
+  const now = await $.clock.now()
+  const children = []
+
+  children.push(Text({ dimColor: true, children: ['set ' + (fleetSlug || '--')] }))
+
+  if (fleet.length === 0) {
+    children.push(Text({ children: ['No phase has reported yet.'] }))
+    children.push(Text({ dimColor: true, children: ['Rows appear as sessions start.'] }))
+  }
+
+  for (const row of fleet) {
+    // A row with no timestamp at all is QUIET too. "I cannot tell when this last
+    // reported" is not evidence that it is healthy, and on a deck built to spot
+    // sessions that went quiet, the unknown case must fall on the safe side.
+    const stale = missing(row.updatedAt) || (now - row.updatedAt) > STALE_MS
+    // Stale beats working: a row that says "working" and stopped updating an hour ago is
+    // the exact picture of the stall this whole mod exists to remove, and it must not
+    // read as healthy.
+    const state = stale ? 'QUIET' : (row.status === 'working' ? 'working' : 'idle')
+    children.push(Box({
+      flexDirection: 'row',
+      columnGap: 2,
+      children: [
+        Text({ children: ['p' + String(row.phase).padEnd(3)] }),
+        Text({ color: stale ? 'yellow' : (row.status === 'working' ? 'green' : undefined),
+               dimColor: !stale && row.status !== 'working',
+               children: [state.padEnd(8)] }),
+        Text({ dimColor: true, children: [bar(row.contextPct)] }),
+        Text({ dimColor: true, children: [String(row.lastTool || '--').padEnd(10)] }),
+        Text({ dimColor: true, children: [ago(now, row.updatedAt)] }),
+      ],
+    }))
+  }
+
+  const decided = fleet.reduce((n, row) => n + (row.decided || 0), 0)
+  if (decided > 0) {
+    children.push(Text({ children: [' '] }))
+    children.push(Text({ children: ['Decided without asking: ' + decided] }))
+    children.push(Text({ dimColor: true, children: ['Review before the set lands.'] }))
+  }
+
+  return Box({ flexDirection: 'column', children: children })
+}
+
 export function register(on) {
   on('session.start', async ($, e, next) => {
     const slug = await $.env.get('SWARM_SLUG')
@@ -174,7 +299,55 @@ export function register(on) {
       })
       await publish($)
     }
+    // The deck reads whichever set this session belongs to. A coordinator that is not
+    // itself a phase still gets /fleet: it names the set as an argument.
+    if (slug) fleetSlug = slug
+    // Registered last in this hook: $.command.register throws on a taken name, and a
+    // hook that throws is skipped -- which would take the heartbeat down with it.
+    try {
+      await $.command.register({
+        name: 'fleet',
+        description: 'Show every phase of the running set',
+        argumentHint: '[slug]',
+        // Runs WHILE Claude is working. A deck you can only open between turns is a deck
+        // you cannot open at the moment you need it.
+        immediate: true,
+      })
+    } catch (err) {
+      // Someone else owns /fleet in this session; the guard and heartbeat are unaffected.
+    }
     return next(e)
+  })
+
+  on('command.run', { command: 'fleet' }, async ($, e) => {
+    if (e.args) fleetSlug = e.args.trim()
+    if (fleetSlug === null) {
+      return { text: 'swarm-deck: no set in this session. Try /fleet <slug>.' }
+    }
+    await refresh($)
+    await $.ui.open({ id: 'fleet', title: 'swarm ' + fleetSlug, focus: true, closeOnEscape: true })
+    paneOpen = true
+    if (paneTimer === null) {
+      // Only while the pane is open, and slower than the heartbeat: the rows cannot
+      // change faster than the sessions write them.
+      paneTimer = $.clock.every(5000, async () => {
+        if (paneOpen) await refresh($)
+      })
+    }
+    return {}
+  })
+
+  // Fails open like the watcher: closing a pane must always succeed. The cleanup is
+  // repeated in the handler so a throw mid-way cannot leak the refresh timer.
+  on('ui.close', closePane).catch(async ($, e, next) => {
+    paneOpen = false
+    return next(e)
+  })
+
+  on('ui.render', { component: 'Pane' }, async ($, e, next) => {
+    // Every other pane on screen belongs to someone else, built-in /diff included.
+    if (e.requestId !== 'fleet') return next(e)
+    return draw($, e)
   })
 
   on('tool.call', { tool: 'AskUserQuestion' }, guard).catch(failClosed)

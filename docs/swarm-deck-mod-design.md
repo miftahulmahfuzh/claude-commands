@@ -187,6 +187,15 @@ section that fills in live — CLAUDE.md calls that the morning's review queue, 
 reconstructed at termination. Here it writes itself as decisions happen, and survives a
 coordinator that dies.
 
+### QUIET beats working
+
+A row that still says `working` and stopped heartbeating an hour ago is the exact picture of
+the stall this mod exists to remove, so staleness overrides reported status. A row with **no**
+timestamp at all is QUIET too: "I cannot tell when this last reported" is not evidence of
+health, and on a deck built to spot quiet sessions the unknown case has to fall on the safe
+side. (A truthiness check — `row.updatedAt && ...` — gets this wrong twice over, treating both
+epoch 0 and a missing field as fresh. A test caught it.)
+
 ### Band
 
 `AbovePrompt` draws **nothing** unless something needs a human: an undelivered report, a guard
@@ -231,7 +240,7 @@ breaks ordinary interactive work, not just swarms.
 
 1. ~~`role` detection + guard 1 + tests 1–3~~ — **shipped**, closes the eight-hour bug
 2. ~~heartbeat + `$.store`~~ — **shipped**, 8 tests
-3. `/fleet` pane
+3. ~~`/fleet` pane~~ — **shipped**, 12 tests, verified live in tmux
 4. band + guards 2 and 3, after verifying guard 3's `isDelivered` assumption
 
 ## Distribution

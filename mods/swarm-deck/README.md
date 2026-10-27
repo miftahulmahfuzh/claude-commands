@@ -85,7 +85,19 @@ Refused forks are written down as they happen, under their own per-phase key. Th
 coordinator's "Decided without asking" review is reconstructed at the end of a run today,
 which means a coordinator that dies takes the record with it; this makes it durable.
 
-Next: a `/fleet` pane that draws the DAG live from those rows, and a band that lights only
-when something genuinely needs a human.
+`/fleet` draws those rows as a docked pane, registered with `immediate: true` so it opens
+**while Claude is working** — a deck you can only open between turns is a deck you cannot open
+at the moment you need it. Staleness overrides reported status: a row that says `working` and
+stopped heartbeating reads `QUIET`, and so does a row with no timestamp at all, because "I
+cannot tell when this last reported" is not evidence of health.
+
+`Box` and `Text` only, verified mounting in terminal, desktop and vscode — which is why the
+deck refuses `Raster` and `Image`, both terminal-only and both a minefield inside tmux.
+
+Verified end to end in a live tmux session: a forced `AskUserQuestion` came back refused with
+the ladder, and the fork appeared on the deck as `Decided without asking: 1` seconds later.
+
+Next: a band above the prompt that lights only when something genuinely needs a human, plus
+the interactive-command guard and the undelivered-report detector.
 
 MIT.
