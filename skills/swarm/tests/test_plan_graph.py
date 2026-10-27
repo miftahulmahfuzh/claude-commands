@@ -23,6 +23,7 @@ Each test builds its tree under tempfile.mkdtemp() and removes it; nothing is wr
 anywhere else. The module under test stays read-only (invariant 3).
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -463,6 +464,263 @@ def test_no_phase_table_exits_1():
         g = plan_graph.build(index)
         ok("no phase table: an error", bool(g.get("error")))
         eq("no phase table: exits 1", gate_exit(index), 1)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --------------------------------------------------------------- phase 2: artifact classes
+
+def _cfg(generated=(), binary=(), regenerate=None):
+    """A config dict in the shape `load_config` returns, without touching disk."""
+    return {"generated": tuple(generated), "binary": tuple(binary),
+            "regenerate": regenerate or {}}
+
+
+def _write_cfg(repo, data):
+    """Write `<repo>/.workflows/swarm.json`. `data` is an object, or raw text."""
+    dest = os.path.join(repo, plan_graph.CONFIG_PATH)
+    write(dest, data if isinstance(data, str) else json.dumps(data))
+    return dest
+
+
+# ------------------------------------------------------------------- tier 3, the baseline
+
+@case
+def test_baseline_is_project_agnostic():
+    """Tier 3 classifies by suffix only, and holds NO project's paths."""
+    c = plan_graph.classify
+    eq("baseline: a sqlite is binary", c("db/store.sqlite", "modify"), "binary")
+    eq("baseline: a png is binary", c("assets/logo.png", "modify"), "binary")
+    eq("baseline: an xlsx is binary", c("reports/q3.xlsx", "modify"), "binary")
+    # text formats must stay mergeable
+    eq("baseline: svg is text and merges", c("assets/icon.svg", "modify"), "modify")
+    eq("baseline: python is modify", c("src/main.py", "modify"), "modify")
+    eq("baseline: create survives", c("src/main.py", "create"), "create")
+    eq("baseline: read survives", c("src/main.py", "read"), "read")
+    # R3's core assertion: one project's filenames are gone from the global tool
+    eq("de-seered: web/data/lab.json is an ordinary file now",
+       c("web/data/lab.json", "modify"), "modify")
+    eq("de-seered: lab.xlsx is binary by SUFFIX, not by name",
+       c("lab.xlsx", "modify"), "binary")
+
+
+@case
+def test_binary_suffix_still_beats_a_regenerate_action():
+    """Preserved from the old code: the binary suffixes were checked first.
+
+    A regenerated database is still a database. Downgrading it to ORDER is the direction
+    whose cost is unrecoverable rows (invariant 6).
+    """
+    eq("a regenerated sqlite is still BLOCK",
+       plan_graph.classify("lab/lab.sqlite", "regenerate"), "binary")
+    eq("a regenerated json is ORDER",
+       plan_graph.classify("web/data/snapshot.json", "regenerate"), "generated")
+
+
+# -------------------------------------------------------------------- tier 1, the config
+
+@case
+def test_config_declares_generated_hugo_case():
+    """The case the user named: a Hugo site commits resources/_gen/."""
+    cfg = _cfg(generated=["resources/_gen/"])
+    for path in ("resources/_gen/style.css",
+                 "hugo_docs/resources/_gen/images/x_hu123.png",
+                 "resources/_gen"):
+        eq(f"hugo: {path} is generated once declared",
+           plan_graph.classify(path, "modify", cfg), "generated")
+    ok("hugo: generated renders ORDER",
+       plan_graph._verdict("generated", [[1, 2]]).startswith("ORDER"))
+    eq("hugo: and it is NOT generated undeclared",
+       plan_graph.classify("resources/_gen/style.css", "modify"), "modify")
+
+
+@case
+def test_config_binary_beats_config_generated():
+    cfg = _cfg(generated=["data/x.json"], binary=["data/x.json"])
+    eq("declared twice: BLOCK is the side whose cost is rows",
+       plan_graph.classify("data/x.json", "modify", cfg), "binary")
+
+
+@case
+def test_config_generated_beats_the_baseline():
+    """The one place a declaration lowers a class: the repo has authority over a guess."""
+    eq("undeclared .xlsx is binary", plan_graph.classify("lab.xlsx", "modify"), "binary")
+    eq("declared .xlsx is generated",
+       plan_graph.classify("lab.xlsx", "modify", _cfg(generated=[".xlsx"])), "generated")
+
+
+@case
+def test_regenerate_keys_count_as_generated():
+    eq("no repo, no config", plan_graph.load_config(None)["generated"], ())
+    tmp = tempfile.mkdtemp(prefix="pg-cfg-")
+    try:
+        _write_cfg(tmp, {"regenerate": {"web/data/lab.json":
+                                        {"from": "lab/lab.sqlite", "run": "make stage"}}})
+        cfg = plan_graph.load_config(tmp)
+        ok("a recipe key counts as generated", "web/data/lab.json" in cfg["generated"])
+        eq("and classifies as such",
+           plan_graph.classify("web/data/lab.json", "modify", cfg), "generated")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@case
+def test_malformed_config_is_no_config_not_an_error():
+    """A pre-spawn gate must not grow a failure mode of its own over a stray comma."""
+    tmp = tempfile.mkdtemp(prefix="pg-bad-")
+    try:
+        for text in ("{ this is not json", "[]", "null", '{"generated": "notalist"}'):
+            _write_cfg(tmp, text)
+            cfg = plan_graph.load_config(tmp)
+            eq(f"malformed ({text[:12]!r}): generated empty", cfg["generated"], ())
+            eq(f"malformed ({text[:12]!r}): binary empty", cfg["binary"], ())
+            eq(f"malformed ({text[:12]!r}): regenerate empty", cfg["regenerate"], {})
+        eq("a missing directory is no config",
+           plan_graph.load_config(os.path.join(tmp, "nope"))["generated"], ())
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@case
+def test_match_the_three_pattern_spellings():
+    m = plan_graph._match
+    ok("suffix matches", m("a/b/report.xlsx", ".xlsx"))
+    ok("suffix does not over-match", not m("a/b/report.csv", ".xlsx"))
+    ok("directory matches anywhere in the tree", m("w/resources/_gen/a/b.css", "resources/_gen/"))
+    ok("/** is the same as a trailing slash", m("resources/_gen/a.css", "resources/_gen/**"))
+    ok("directory matches at a boundary, not a prefix",
+       not m("resources/_generated/a.css", "resources/_gen/"))
+    ok("exact path matches", m("web/data/lab.json", "web/data/lab.json"))
+    ok("path matches at a directory boundary", m("sub/web/data/lab.json", "web/data/lab.json"))
+    ok("path is not a bare endswith", not m("web/data/notlab.json", "lab.json"))
+    ok("glob matches", m("data/rows.csv", "data/*.csv"))
+    ok("glob matches a basename", m("deep/data/rows.csv", "*.csv"))
+    ok("empty path never matches", not m("", ".xlsx"))
+    ok("empty pattern never matches", not m("a.py", ""))
+
+
+# ------------------------------------------------------- tier 2, the repo's .gitattributes
+
+@case
+def test_gitattributes_tier_reads_the_repos_own_declaration():
+    tmp = tempfile.mkdtemp(prefix="pg-attr-")
+    try:
+        repo = make_repo(os.path.join(tmp, "repo"))
+        write(os.path.join(repo, ".gitattributes"),
+              "store/rows.db binary\ndata/snapshot.json -merge\n")
+        write(os.path.join(repo, "data/snapshot.json"), "{}\n")
+        write(os.path.join(repo, "src/main.py"), "x = 1\n")
+        got = plan_graph.gitattributes_classes(
+            repo, ["store/rows.db", "data/snapshot.json", "src/main.py"])
+        eq("gitattributes: `binary` is BLOCK", got.get("store/rows.db"), "binary")
+        eq("gitattributes: `-merge` is ORDER", got.get("data/snapshot.json"), "generated")
+        ok("gitattributes: an undeclared path is absent", "src/main.py" not in got)
+        # and it flows through classify
+        eq("gitattributes: the attr reaches classify",
+           plan_graph.classify("data/snapshot.json", "modify", None, "generated"), "generated")
+        eq("gitattributes: no attr, no change",
+           plan_graph.classify("data/snapshot.json", "modify", None, None), "modify")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@case
+def test_gitattributes_degrades_instead_of_raising():
+    """Invariant 4: no git, or no repo, must be an empty answer and never an exception."""
+    eq("no repo", plan_graph.gitattributes_classes(None, ["a.py"]), {})
+    eq("a path that is not a repo",
+       plan_graph.gitattributes_classes("/nonexistent-" + os.urandom(4).hex(), ["a.py"]), {})
+    tmp = tempfile.mkdtemp(prefix="pg-noattr-")
+    try:
+        eq("no paths asked about", plan_graph.gitattributes_classes(tmp, []), {})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ------------------------------------------------------------- "do not regress those sets"
+
+@case
+def test_seer_values_reproduce_the_old_behaviour_as_config():
+    """R3's "do not regress": the old constants, driven by configuration instead.
+
+    `old()` is the classifier as it stood before this phase, inlined so the equivalence is
+    asserted rather than asserted-about.
+    """
+    OLD_GENERATED = (".sqlite", ".sqlite3", ".db")
+    OLD_REGENERATED_TEXT = ("web/data/lab.json", "lab.xlsx")
+
+    def old(path, action):
+        a = action.replace("*", "").strip().lower()
+        if a.startswith("read"):
+            return "read"
+        if path.endswith(OLD_GENERATED):
+            return "binary"
+        if any(path.endswith(s) for s in OLD_REGENERATED_TEXT) or a.startswith("regenerate"):
+            return "generated"
+        if a.startswith("create"):
+            return "create"
+        return "modify"
+
+    cfg = _cfg(generated=["web/data/lab.json", "lab.xlsx"],
+               regenerate={"web/data/lab.json": {"from": "lab/lab.sqlite",
+                                                 "run": "python -m seer_engine lab stage"}})
+    attrs = {"web/data/lab.json": "generated", "lab/lab.sqlite": "binary"}
+    cases = [
+        ("web/data/lab.json", "modify"), ("web/data/lab.json", "regenerate"),
+        ("web/data/lab.json", "read"),   ("lab.xlsx", "modify"),
+        ("lab/lab.sqlite", "modify"),    ("lab/lab.sqlite", "regenerate"),
+        ("engine/src/pkg/commands/lab.py", "modify"),
+        ("web/src/view.tsx", "create"),  ("engine/tests/test_lab.py", "create"),
+        ("docs/notes.md", "read"),       ("db/warm.sqlite3", "modify"),
+    ]
+    for path, action in cases:
+        eq(f"as-config equivalence: {path} ({action})",
+           plan_graph.classify(path, action, cfg, attrs.get(path)), old(path, action))
+
+
+# ------------------------------------------------------------------------- end to end
+
+@case
+def test_end_to_end_config_flips_the_verdict():
+    """Two concurrent phases writing one generated tree: ISOLATE bare, ORDER declared.
+
+    Exercises build() end to end -- phase 1's root discovery and `root` key, load_config,
+    the batched check-attr, phase 1's most_severe, and the verdict -- in a real worktree,
+    which is also the layout `/analyze` always produces.
+    """
+    tmp = tempfile.mkdtemp(prefix="pg-e2e-")
+    try:
+        repo = make_repo(os.path.join(tmp, "repo"))
+        wt = add_worktree(repo, os.path.join(tmp, "wt"))
+        index = plan_set(
+            wt, "DEMO_PLAN.md",
+            [("resources/_gen/style.css", "modify"), ("src/one.py", "modify")],
+            [("resources/_gen/style.css", "modify"), ("src/two.py", "modify")],
+        )
+
+        g = plan_graph.build(index)
+        eq("e2e: no plan went missing", g["missing_plans"], [])
+        eq("e2e: phase 1's root key survived this phase", _real(g.get("root")),
+           os.path.realpath(wt))
+        eq("e2e: no config is found", g["config"]["found"], False)
+        hit = collision(g, "resources/_gen/style.css")
+        ok("e2e: the shared tree is reported", hit is not None)
+        if hit:
+            eq("e2e: concurrent", hit["concurrent"], [[1, 2]])
+            eq("e2e: undeclared, so an ordinary file", hit["kind"], "modify")
+            ok("e2e: verdict ISOLATE", hit["verdict"].startswith("ISOLATE"))
+        eq("e2e: exits 2", gate_exit(index), 2)
+
+        _write_cfg(wt, {"generated": ["resources/_gen/"]})
+
+        g = plan_graph.build(index)
+        eq("e2e: the config is now found", g["config"]["found"], True)
+        hit = collision(g, "resources/_gen/style.css")
+        ok("e2e: still reported", hit is not None)
+        if hit:
+            eq("e2e: declared, so generated", hit["kind"], "generated")
+            ok("e2e: verdict flipped to ORDER", hit["verdict"].startswith("ORDER"))
+        eq("e2e: still exits 2 — a collision is a collision", gate_exit(index), 2)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

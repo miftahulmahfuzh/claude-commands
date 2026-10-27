@@ -5,7 +5,7 @@
 phase needs to *exist* before it starts; it says nothing about what two phases in the same
 wave will both *write*. Those are different questions, and the second one is what produces
 the collisions: on `journal-versioning`, phases 2, 3 and 4 were correctly placed in one wave
-by their dependencies and all three wrote `engine/src/seer_engine/commands/lab.py`.
+by their dependencies and all three wrote the same command module.
 
 This reads each phase plan's `## Files` table -- the write set the planner declared, which is
 also what `/implement` hands `pusher` as its allowlist -- and reports:
@@ -14,10 +14,14 @@ also what `/implement` hands `pusher` as its allowlist -- and reports:
   * the fix per collision: isolate (separate worktrees, disjoint regions merge) or serialize
   * generated and binary artifacts separately, because those never textually merge
 
+Which paths those are is a property of the REPO, not of this file. See "artifact classes"
+below, and `skills/swarm/SKILL.md`'s "Per-repo artifact classes" for the configuration.
+
 Read-only. It spawns nothing and writes nothing.
 """
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -26,21 +30,200 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from swarm import git, parse_index, waves  # noqa: E402
 
-# A path whose merge is a regeneration, not a three-way text merge. Two phases writing one of
-# these are not in conflict over content -- they are in conflict over WHO REGENERATES LAST,
-# which is an ordering edge, not a file split. The `4 -> 6` edge on journal-versioning is
-# exactly this, and its planner found it by hand.
-GENERATED = (".sqlite", ".sqlite3", ".db")
-REGENERATED_TEXT = ("web/data/lab.json", "lab.xlsx")
+# ----------------------------------------------------------------- artifact classes
+#
+# Three tiers, most specific first. The configuration format and a worked example are in
+# `skills/swarm/SKILL.md`, "Per-repo artifact classes".
+#
+#   1. `<repo>/.workflows/swarm.json` -- the only tier that can state something the
+#      filesystem cannot infer: "this JSON is a snapshot of that database", and the
+#      command that rebuilds it.
+#   2. `.gitattributes`, read through `git check-attr` -- the repo has ALREADY declared
+#      which of its paths do not text-merge, in the file git itself consults during the
+#      merge the integrator is about to perform. `binary` (or `-diff`) means there is no
+#      textual form at all; `-merge` means the merge conflicts on purpose and leaves our
+#      copy intact, which is the signature of something regenerated rather than merged.
+#   3. BASELINE_BINARY -- the suffixes that have no text merge in ANY repo.
+#
+# NO PROJECT'S PATHS LIVE IN TIER 3. They used to: two literal filenames from one repo
+# were shipped to every repo on the machine, so another project's hand-written file of
+# the same name classified as generated, and a Hugo site's committed `resources/_gen/`
+# classified as an ordinary source file. Tiers 1 and 2 are where a project's paths go.
+
+CONFIG_PATH = os.path.join(".workflows", "swarm.json")
+
+# Suffixes with no text merge anywhere. `.svg` is DELIBERATELY ABSENT -- SVG is text and
+# merges. `.xlsx` IS here, because a spreadsheet is a zip of XML in every repo; the one
+# repo that regenerates an xlsx from a pipeline overrides it in tier 1, which is exactly
+# what tier 1 is for.
+BASELINE_BINARY = (
+    ".sqlite", ".sqlite3", ".db",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp", ".tif", ".tiff",
+    ".pdf", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".jar",
+    ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
+    ".parquet", ".pkl", ".npy", ".npz", ".h5", ".feather",
+    ".bin", ".so", ".dylib", ".dll", ".exe", ".wasm", ".class",
+    ".mp3", ".mp4", ".wav", ".mov", ".webm", ".ogg",
+)
 
 
-def classify(path, action):
-    a = action.replace("*", "").strip().lower()
+def _norm(path):
+    """A path from a `## Files` table, made comparable: no `./`, no leading slash."""
+    p = (path or "").strip().replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    return p.strip("/")
+
+
+def _match(path, pattern):
+    """Does a repo-relative `path` match one configured pattern?
+
+    Three spellings, because all three are things a planner actually writes:
+
+      * `.xlsx`              a leading dot with no slash is a SUFFIX: any file so named
+      * `resources/_gen/`    a trailing slash (or `/**`) is a DIRECTORY: everything under
+        or `resources/_gen/**`   it, at any depth, anchored at the root or found anywhere
+                               in the tree (a Hugo site's tree may sit under `hugo_docs/`)
+      * `data/snapshot.json` anything else is a PATH: an exact match, or a match at a
+        or `data/*.csv`        directory boundary anywhere in the tree, or an fnmatch when
+                               it carries `*`, `?` or `[`
+
+    The unanchored forms matter because the index's `## Files` tables are written relative
+    to the repo root but a package's plan may quote a path relative to the package.
+    """
+    p = _norm(path)
+    pat = (pattern or "").strip().replace("\\", "/")
+    if not p or not pat:
+        return False
+    if pat.endswith("/**"):
+        pat = pat[:-2]                                   # "a/b/**" -> "a/b/"
+    directory = pat.endswith("/")
+    bare_suffix = pat.startswith(".") and "/" not in pat
+    pat = _norm(pat)
+    if not pat:
+        return False
+    if directory:
+        return p == pat or p.startswith(pat + "/") or ("/" + pat + "/") in ("/" + p)
+    if bare_suffix:
+        return p.endswith(pat)
+    if any(ch in pat for ch in "*?["):
+        return fnmatch.fnmatch(p, pat) or fnmatch.fnmatch(os.path.basename(p), pat)
+    return p == pat or p.endswith("/" + pat)
+
+
+def load_config(repo):
+    """The repo's declared artifact classes, or the empty config.
+
+    Absent, unreadable and malformed all mean the same thing here: no declaration, fall
+    through to `.gitattributes` and the baseline. This module is a pre-spawn check, not a
+    validator -- refusing to run because a config file has a stray comma would turn a
+    missing declaration into a stopped swarm, which is strictly worse than the classless
+    behaviour it replaces.
+
+    `suite` is parsed by the `integrator` agent, not here: it is not a graph fact.
+    """
+    empty = {"generated": (), "binary": (), "regenerate": {}}
+    if not repo:
+        return empty
+    try:
+        with open(os.path.join(repo, CONFIG_PATH), encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except (OSError, ValueError):
+        return empty
+    if not isinstance(raw, dict):
+        return empty
+
+    def patterns(key):
+        value = raw.get(key)
+        if not isinstance(value, list):
+            return ()
+        return tuple(x for x in value if isinstance(x, str) and x.strip())
+
+    regenerate = raw.get("regenerate")
+    regenerate = regenerate if isinstance(regenerate, dict) else {}
+    # A path with a regeneration recipe IS regenerated. Requiring it in `generated` too
+    # is a way to get the config half right, and the half that is missing is the one that
+    # silently downgrades ORDER to ISOLATE.
+    generated = patterns("generated") + tuple(
+        k for k in regenerate if isinstance(k, str) and k.strip()
+    )
+    return {"generated": generated, "binary": patterns("binary"), "regenerate": regenerate}
+
+
+def gitattributes_classes(repo, paths):
+    """What the repo has already told GIT about these paths: {path: "binary"|"generated"}.
+
+    `.gitattributes` predates this gate and is maintained for its own sake, so a repo that
+    merges carefully has already done this work. `binary` and `-diff` mean no textual form
+    at all -> BLOCK. `-merge` means the merge conflicts deliberately and leaves our copy
+    intact rather than stitching two versions into one matching neither source -> the
+    resolution is a regeneration, which is ORDER.
+
+    One `git check-attr -z -a` for every path at once, so the cost scales with the repo
+    and not with the size of the plan set. Output is NUL-separated (path, attr, value)
+    triples. If git is missing, or this is not a repo, `swarm.py`'s `git()` returns None
+    and every path falls through to the baseline -- invariant 4: no git, no crash.
+    """
+    wanted = sorted({_norm(p) for p in (paths or []) if _norm(p)})
+    if not repo or not wanted:
+        return {}
+    out = git("check-attr", "-z", "-a", "--", *wanted, cwd=repo)
+    if not out:
+        return {}
+    fields = [f for f in out.split("\0") if f != ""]
+    attrs = {}
+    for i in range(0, len(fields) - 2, 3):
+        attrs.setdefault(fields[i], {})[fields[i + 1]] = fields[i + 2]
+    classes = {}
+    for path, a in attrs.items():
+        if a.get("binary") == "set" or a.get("diff") == "unset":
+            classes[path] = "binary"
+        elif a.get("merge") in ("unset", "binary"):
+            classes[path] = "generated"
+    return classes
+
+
+def classify(path, action, cfg=None, attr=None):
+    """One path's merge class, from the planner's action plus the repo's declarations.
+
+    Resolution order -- two of these orderings are load-bearing and must not be tidied:
+
+      1. action `read*`                     -> read       (not a write at all)
+      2. config `binary`                    -> binary
+      3. config `generated`                 -> generated
+      4. `.gitattributes` binary / -diff    -> binary
+      5. `.gitattributes` -merge            -> generated
+      6. BASELINE_BINARY suffix             -> binary
+      7. action `regenerate*`               -> generated
+      8. action `create*`                   -> create
+      9.                                       modify
+
+    (a) An explicit declaration (2-5) beats an inference (6). This is the ONE place a
+        declaration may LOWER a class, and it is what lets `.xlsx` sit in the universal
+        BLOCK list while the one repo that regenerates an xlsx keeps it at ORDER by saying
+        so. It is not a breach of the most-severe-wins invariant, which governs two PHASES
+        disagreeing about one path -- there, no source has authority; here, the repo does.
+    (b) 6 before 7. The old code checked the binary suffixes before the `regenerate`
+        action, so a `.sqlite` with action `regenerate` classified `binary`. Moving the
+        action check up would downgrade every regenerated database from BLOCK to ORDER.
+
+    Called with two arguments it returns the baseline-only classification, which is what a
+    caller outside `build()` wants.
+    """
+    a = (action or "").replace("*", "").strip().lower()
     if a.startswith("read"):
         return "read"
-    if path.endswith(GENERATED):
+    cfg = cfg or {}
+    if any(_match(path, pat) for pat in cfg.get("binary", ())):
         return "binary"
-    if any(path.endswith(s) for s in REGENERATED_TEXT) or a.startswith("regenerate"):
+    if any(_match(path, pat) for pat in cfg.get("generated", ())):
+        return "generated"
+    if attr in ("binary", "generated"):
+        return attr
+    if _norm(path).endswith(BASELINE_BINARY):
+        return "binary"
+    if a.startswith("regenerate"):
         return "generated"
     if a.startswith("create"):
         return "create"
@@ -193,7 +376,9 @@ def build(index_path):
     # parsed first now.
     repo = find_root(index_path, [p.get("plan") or "" for p in phases])
 
-    writes, missing = {}, []
+    cfg = load_config(repo)
+
+    declared, missing = [], []
     for p in phases:
         p["files"] = {}
         plan = p.get("plan") or ""
@@ -201,8 +386,19 @@ def build(index_path):
         if not plan or not os.path.exists(full):
             missing.append({"phase": p["n"], "plan": plan or "(none)"})
             continue
-        for path, action in parse_files(open(full, encoding="utf-8").read()):
-            kind = classify(path, action)
+        declared.append((p, parse_files(open(full, encoding="utf-8").read())))
+
+    # One subprocess for every declared path, not one per path: the attributes are a
+    # property of the repo, and a `git` per row would make a pre-spawn check's cost scale
+    # with the size of the plan set.
+    attrs = gitattributes_classes(
+        repo, [path for _, rows in declared for path, _ in rows]
+    )
+
+    writes = {}
+    for p, rows in declared:
+        for path, action in rows:
+            kind = classify(path, action, cfg, attrs.get(_norm(path)))
             p["files"][path] = kind
             if kind != "read":
                 writes.setdefault(path, []).append(p["n"])
@@ -238,7 +434,14 @@ def build(index_path):
     return {
         "slug": meta.get("slug"),
         "index": index_path,
-        "root": repo,
+        "root": repo,                       # phase 1's -- render() and its tests read this
+        "config": {
+            "path": os.path.join(repo, CONFIG_PATH) if repo else None,
+            "found": bool(cfg["generated"] or cfg["binary"] or cfg["regenerate"]),
+            "generated": list(cfg["generated"]),
+            "binary": list(cfg["binary"]),
+            "regenerate": cfg["regenerate"],
+        },
         "phases": [{"n": p["n"], "title": p["title"], "depends_on": p["depends_on"],
                     "wave": wave_of.get(p["n"]),
                     "writes": sorted(f for f, k in p["files"].items() if k != "read")}
@@ -262,8 +465,11 @@ def _verdict(kind, concurrent):
 def render(g):
     if g.get("error"):
         return g["error"]
+    cfg = g.get("config") or {}
     out = [f"plan set: {g['slug']}   phases: {len(g['phases'])}",
            f"dependency waves: {' -> '.join('[' + ', '.join(map(str, w)) + ']' for w in g['dep_waves'])}",
+           "artifact classes: " + ("declared in " + CONFIG_PATH if cfg.get("found")
+                                   else f"baseline + .gitattributes (no {CONFIG_PATH})"),
            ""]
     out.append("write sets")
     for p in g["phases"]:
