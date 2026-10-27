@@ -7,7 +7,182 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-10-27
+
+The release that makes an unattended run actually finish. Everything below serves one
+shape: a plan set that plans itself, runs its phases concurrently, lands on `main`, and
+is still correct in the morning — with the failures that shape produced, each measured on
+a real run rather than imagined.
+
+### Breaking Changes
+- **A plan set now reaches `main` on its own.** `/analyze-orchestrator` Step 5 merges the
+  set, applies and *verifies* the production migrations, pushes, and deletes the worktree
+  and branch — where it previously stopped and reported, leaving every phase committed to
+  a branch nobody had merged
+  - The old shape was a dead night wearing a success report: a thirty-second decision left
+    for the morning, at the end of a run where it is least visible
+  - `swarm.py land` is four steps (`check`, `merge`, `push`, `cleanup`) rather than one,
+    because the two that need judgement — resolving a conflict, deciding a migration is
+    safe — sit *between* them, and a helper that guessed at either would be guessing about
+    production
+  - **Migrations apply before the push**, since production deploys from `main` and code
+    arriving ahead of its schema is a runtime error. A migration that will not apply stops
+    the landing with `main` untouched and the branch intact
+  - `cleanup` refuses unless `git merge-base --is-ancestor` proves the branch is already in
+    the base, so a stop anywhere earlier leaves the branch standing by construction rather
+    than by remembering to
+
+- **`/do` escalates a HARD task with no plan instead of printing a command and stopping.**
+  It runs `/analyze` itself, which plans and — launching execution being its default — runs
+  it
+  - `--no-escalate` restores the old print-and-stop
+  - The refusal previously lived inside `plan-generator`, costing two opus calls after the
+    haiku locator already knew the task was HARD with no plan
+
+- **`/implement` and `/do` land the last phase themselves** rather than printing a
+  `git merge` for a human. When the phase just finished was the plan set's last and no
+  swarm coordinator owns it, Step 5a merges into `main` in a throwaway worktree, pushes,
+  then deletes the plan's worktree and branch
+  - This closes the gap a single-phase plan set otherwise falls into: one commit still has
+    to reach `main`, and for `N=1` there is no orchestrator coming to do it
+
+- **The write-set gate refuses instead of advising.** `/analyze-orchestrator` Step 3b now
+  hard-stops on exit `1` (the analysis never ran) and exit `2` (a real concurrent
+  collision), each naming the class-specific remedy from the ISOLATE/ORDER/BLOCK table
+  - A swarm that previously proceeded over a collision now stops. `--no-gate` is the escape
+    hatch, spelled to match the existing convention at `skills/task/DESIGN.md:159`
+  - A coordinator reaching for `--no-gate` must say what it checked instead, because the
+    flag "was written to be typed by a human who is, by construction, asleep"
+  - The refusal is a **stop, not a block** — it reports and ends, and never prompts
+
+- **Commands are unattended end to end: they decide, and never ask.** `/do`, `/implement`
+  and `/analyze-orchestrator` each carry an **Autonomy** section and a precedence ladder —
+  stated invariant → exit criteria → the plan's code blocks → the index's Why/Requirements
+  → task text → surrounding convention
+  - Stopping is allowed; blocking is not. The only stop is an undecidable fork where every
+    branch is irreversible, and it exits with a report rather than a prompt
+  - Decisions are recorded, not merely made: `completion_report.decisions` flows into
+    `todos.md`, the commit body, and the swarm ledger's `--note`
+  - MEASURED on `nina-character-tuning`: a phase-2 session held an `AskUserQuestion` for
+    **eight hours** over a fork that was rung 1 of that ladder. Phases 3 and 4 both depended
+    on it, so a six-phase set built nothing overnight — and the coordinator sat idle beside
+    it reporting "a genuine serial stretch, not idle time I can fill", which was true of the
+    DAG and false of the reason
+
+### Added
+- **The write-set gate** (`skills/swarm/plan_graph.py`) — reads each phase plan's `## Files`
+  table and reports every file two phases write, split by whether their waves are
+  concurrent or sequential, classified ISOLATE / ORDER / BLOCK
+  - `plan_graph.py` is read-only: it spawns nothing and writes nothing
+  - MEASURED on `journal-versioning`: six files written by more than one phase and **exactly
+    one of them concurrently**. Serializing that wave would have turned four waves into six;
+    isolating it cost nothing, because the three phases' edit anchors in the shared file were
+    29 lines apart at their closest — well outside git's 3-line merge context
+  - What the gate cannot buy is width: parallelism is a property of the plan's DAG, not of
+    the worktree model
+
+- **Per-phase isolation and the wave `integrator`.** Each phase can take its own worktree cut
+  from an integration branch that already carries every landed predecessor, and the
+  `integrator` agent merges a wave in dependency order, regenerates derived artifacts rather
+  than merging them, runs the full suite, and only then moves the integration branch
+  - The guarantee moved from "we all share a tree" to "the tree we are each cut from is
+    complete"
+  - A red integration stops the wave loop, so a one-phase regression never becomes a
+    six-phase bisect
+
+- **Per-repo artifact classes and test commands** (`.workflows/swarm.json`). The generated,
+  binary and regenerated-text lists and the integrator's suite are resolved from the repo —
+  config, then `.gitattributes`, then a project-agnostic suffix baseline — instead of being
+  baked in
+  - These are global tools; pointed at another repo the hardcoded values ran suites that did
+    not exist and misclassified that repo's real generated artifacts
+  - `integrator.md` derives its suite from the repo (package.json scripts → Makefile →
+    pytest → cargo → go test) rather than naming one
+
+- **`swarm.py land`, `reap`, and the `CLAIM` protocol.** `reap` captures a finished phase's
+  whole scrollback to `logs/phase-N.log` and closes its window, refusing on its own to touch
+  a phase still working or a `done` whose commit is not on the branch
+  - `CLAIM` is the fifth mesh message kind and the only one whose value is entirely in its
+    ordering: a session landing a set it did not cut announces to the ledger's coordinator
+    *before* merging. MEASURED: a peer merged first and reported after; the other ordering
+    puts two merges of one set on `main`
+  - Migration-numbering check at the merge, because two branches cut from different bases can
+    each produce a `0004` — not a file conflict, and silently skipped by a migrator that only
+    applies entries newer than the last applied row
+
+- **New skills**: `/commit` (lists what the session changed, flags dead code and debug
+  leftovers, runs the tests that touch the changed modules, then commits with a message that
+  says why); `spawn-new-cv-test` and `finish-cv-test` (sealed computer-vision practice runs
+  under an interview clock); `prune-vercel-deployments`; `fetch-gdocs-content`;
+  `edit-pdf-text` (rewrites PDF text in the content stream, leaving scans, stamps and
+  signatures byte-identical); `analyze-and-fix-slow-tmux-pane-creation`
+
+- **`token-maxxing` parallel fan-out** (N sessions as concurrent tmux windows) and
+  `--sweep-stale` for the session docs
+
+- **`/analyze` files its artifacts under `docs/` in a repo that has one**, and hands a
+  single-phase plan set straight to `/implement -f <PLAN> --phase 1` rather than routing it
+  through an orchestrator that has no DAG to schedule
+
+### Changed
+- **`plan_graph.py` and `agents/integrator.md` are no longer hardcoded to one project.** The
+  seer values survive as a worked example in `SKILL.md` — a case of the mechanism, not a
+  built-in default
+- `/analyze-orchestrator` gained a fourth iron rule — nobody in the swarm waits for a human,
+  least of all the coordinator — and the between-wave protocol every phase after the first
+  inherits: commit explicit paths, fetch and rebase before reporting, re-run the touched
+  tests *after* catching up, and treat a peer's failure report as unverified until reproduced
+- The ledger is split by lifetime: `ledger.json` is committed (phases, status, landed commit,
+  TaskIDs), `.runtime.json` is local and gitignored (tmux ids, session names). Committing tmux
+  ids would conflict on every write and mean nothing on another laptop
+- Every `pyright` rule that costs nothing is on, and the rest cleared
+
 ### Fixed
+- **The write-set gate analysed nothing inside a git worktree, and said so reassuringly.**
+  `plan_graph.py`'s root walk tested for a `.git` **directory**, but in a linked worktree
+  `.git` is a **file** holding a `gitdir:` pointer — so the walk ran to `/` and fell back to
+  `dirname(dirname(index))`, wrong for both index layouts `/analyze` emits
+  - Every plan set `/analyze` produces lives in a worktree, so the gate reported `0 files` for
+    every phase on every set, then printed **"no file is written by two phases."**
+  - `find_root()` replaces the walk: `git rev-parse --show-toplevel` run from the index's
+    directory, then an `os.path.exists` walk, then the index's own directory and its first
+    three ancestors — returning the first candidate that actually resolves one of the
+    phase-plan paths the index names
+  - **The all-clear is now conditional**, which is the half the root fix does not cover: the
+    exact old sentence prints only when every phase plan was read, and otherwise
+    `INCOMPLETE: no collision among the K of N phases whose plan could be read.` plus
+    `resolved against root: <path>`. The exit code was always correct; it was the verdict text
+    that lied, and the two disagreed with the human-readable half winning
+  - A 25-case stdlib regression harness ships at `skills/swarm/tests/test_plan_graph.py`, the
+    worktree case included — the case that was never covered. It fails 33 assertions against
+    the old module
+  - Corroborated independently on a 4-phase set in an unrelated repo, where the fixed gate
+    reproduced a symlink-workaround result byte for byte
+
+- **A path classified two ways took the lower-numbered phase's verdict, not the severer one.**
+  A `generated` or `binary` path that a lower-numbered phase declared `modify` was reported
+  ISOLATE instead of ORDER/BLOCK — the verdict decided by phase numbering. `most_severe()`
+  now applies BLOCK > ORDER > ISOLATE, because a wrong ISOLATE on a database is the one error
+  whose cost is unrecoverable rows
+
+- **`/analyze-orchestrator` instructed a flag that does not exist.** Three sites told the
+  coordinator to spawn with `swarm.py spawn --isolate`; `swarm.py` defines no such argument,
+  so argparse hard-errors and the wave never spawns. Because the failure is at coordinator
+  level it stalls the whole set — and it lands precisely on the ISOLATE remedy, the case the
+  gate exists to catch. Rewritten to the `git worktree add` + `spawn --cwd` form
+  - Verified the flag was never implemented and removed: `git log --all -S'isolate'` over
+    `swarm.py` is empty across the whole history
+
+- **A deploy target on a 9p mount lost every command, silently.** `~/.claude/commands` was a
+  symlink to a second, stale clone on the Windows drive, reached over WSL's 9p. Commands were
+  the only artifact type behind 9p and the only ones that intermittently failed to load, with
+  sessions reporting `Unknown command: /analyze-orchestrator` while every skill still worked
+  - 9p `readdir` is 50–100x slower than ext4 and can stall outright, and a discovery scan that
+    times out yields an **empty registry rather than an error** — so the symptom is a command
+    that does not exist, not one that failed to read
+  - `sync.sh` now refuses to deploy into a symlinked `commands/`, `agents/` or `skills/`, and
+    warns when one sits on a non-local filesystem
+
 - **Staging by explicit path does not scope a commit, because the INDEX is shared too**
   (`pusher`, `completion-handler`, `/implement`, `/do`, `/analyze-orchestrator`, `skills/swarm`)
   - The 2026-10-06 fix below made every phase stage a `paths` allowlist instead of `git add .`.
@@ -106,6 +281,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     phase 3 committed with phase 2's `research.py` mid-edit. Nothing was contaminated — both
     sessions independently chose explicit path allowlists. A guarantee that depends on two agents
     each guessing right is not a guarantee, which is what this change fixes
+
+- **`swarm.py` bugs found by real orchestration runs**, each one measured rather than reviewed
+  - `reap` never closed a window, and `find` answered for the wrong set: a matching bug made
+    `find --plan` fall back to the plan file's **basename**, and since every set has a
+    `phase-N.md` and ledgers are scanned in sorted order, the alphabetically-first set won every
+    lookup — naming a real slug, a real phase and a real coordinator that no longer existed
+  - `spawn` resolves the plan index instead of trusting the ledger's recorded path, which is not
+    guaranteed to survive a move or a different machine
+  - `find --plan` follows `/implement`'s adopted `{TaskID}.md` copy back to its phase
+  - `spawn` refuses a second launch of a name that already has a window, caps native thread pools
+    in every child, and propagates the repo's folder trust to the worktree — a session spawned
+    into an untrusted path stops to ask before it boots, so it never becomes a peer and the
+    coordinator waits on it forever
+  - `verify` never downgrades a `done` phase on absent evidence: "not on the branch" and "not
+    fetched here" look identical to git, and confusing them re-runs shipped work
+  - The ledger's `~` worktree path is expanded, and local `main` is un-staled after a push
+  - A launched session keeps its launch name, since `reap` can never close a window whose session
+    renamed itself out from under the ledger
+
+- `prune-vercel-deployments` treats a mid-batch race as retryable rather than fatal, and clears
+  orphaned branch aliases before pruning
+- `token-maxxing` drops manual menu selection for auto-merge to `main`, flips the session doc's
+  Merge status after the merge actually lands, and caps the README achievement cell at 120 chars
+- `update-ats-cv` is checked properly instead of being exempted
+
+### Known gaps
+- `swarm.py cmd_track` re-includes `.workflows/orchestration/` but not `.workflows/swarm.json`,
+  so in a repo that gitignores `.workflows/` broadly the new per-repo config works locally and
+  does not travel. The manual `!.workflows/swarm.json` remedy is documented in `SKILL.md`
+- The write-set gate is blind to an **index-base** collision, which is not a collision over a
+  path: committing through a private `GIT_INDEX_FILE` moves HEAD while a shared index still
+  points at the old tree, so that index reads as a revert of exactly that commit's contents
+  until refreshed. Observed twice in two sessions on unrelated file sets — deterministic, not a
+  race. Path-ownership analysis cannot see it; `git read-tree HEAD` after a private-index commit
+  is the mitigation
+- The clean verdict still prints a bare sentence rather than stating its coverage the way the
+  `INCOMPLETE:` forms do. The string is quoted byte-for-byte in three places, so moving it is a
+  coordinated change
 
 ## [3.0.0] - 2026-09-04
 
@@ -293,6 +506,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Project Milestone
 This represents the initial release of the Claude Commands Collection, providing a complete foundation for custom Claude Code command management with professional documentation and automated installation.
 
+[4.0.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v4.0.0
 [3.0.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v3.0.0
 [2.0.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v2.0.0
 [1.1.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v1.1.0
