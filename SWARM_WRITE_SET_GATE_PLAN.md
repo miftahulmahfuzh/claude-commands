@@ -6,7 +6,7 @@
 **Worktree:** `~/.worktrees/claude-commands/swarm-write-set-gate`
 **Branch:** `feature/swarm-write-set-gate` (base: `origin/main` @ `471d34a`)
 **Phases:** 3
-**Status:** planned
+**Status:** phase 1/3 complete
 **Reconciled:** 2026-10-27, round 1 — 11 conflicts, 11 resolved, Open Questions empty
 **Coordinator:** —
 
@@ -114,9 +114,22 @@ Every phase must hold all of these:
 
 | # | Title | Satisfies | Package | Files | Depends on | Difficulty | Plan | TaskID | Card |
 |---|-------|-----------|---------|-------|-----------|------------|------|--------|------|
-| 1 | Gate correctness: worktree root discovery + severity selection | R1, R4 | `skills/swarm` | 2 | — | NORMAL | `.workflows/plan/swarm-write-set-gate/phase-1.md` | — | — |
-| 2 | Per-repo artifact classes and test commands | R3, R1 (one README line) | `skills/swarm`, `agents` | 5 | 1 | HARD | `.workflows/plan/swarm-write-set-gate/phase-2.md` | — | — |
-| 3 | Make the gate a gate: enforce exits 1 and 2 | R2 | `commands`, `skills/swarm` | 2 | 1 | NORMAL | `.workflows/plan/swarm-write-set-gate/phase-3.md` | — | — |
+| 1 | Gate correctness: worktree root discovery + severity selection | R1, R4 | `skills/swarm` | 2 | — | NORMAL | `.workflows/plan/swarm-write-set-gate/phase-1.md` | P1-CL-A021 | — |
+| 2 | Per-repo artifact classes and test commands | R3, R1 (one README line) | `skills/swarm`, `agents` | 5 | 1 | HARD | `.workflows/plan/swarm-write-set-gate/phase-2.md` | P1-CL-A022 | — |
+| 3 | Make the gate a gate: enforce exits 1 and 2 | R2 | `commands`, `skills/swarm` | 2 | 1 | NORMAL | `.workflows/plan/swarm-write-set-gate/phase-3.md` | P1-CL-A023 | — |
+
+**Progress:** phase 1 ✅ complete (`P1-CL-A021`, 2026-10-27) — `skills/swarm/plan_graph.py`
+root discovery and severity selection fixed, `skills/swarm/tests/test_plan_graph.py` added
+(13 cases). Phases 2 and 3 are unblocked and are wave 1. The per-phase tick lives here rather
+than in the table above because `swarm.py parse_index` reads every phase-table cell by name and
+requires the `#` cell to be a bare integer — a status column would diverge this index from the
+one `/analyze` generates. The authoritative phase status is the swarm ledger.
+
+**Bootstrap hazard: closed by phase 1.** The installed gate, run against this set's own index
+after phase 1's `./sync.sh`, now exits `2` and names `skills/swarm/SKILL.md` as CONCURRENT /
+ISOLATE between phases 2 and 3, with the other two shared files sequential — agreeing exactly
+with the hand-declared write-set table below. The coordinator may now trust the gate's output
+for this set instead of the hand-declared table.
 
 ### Phase 1 — Gate correctness: worktree root discovery + severity selection
 **Satisfies:** R1, R4

@@ -4,32 +4,63 @@
 
 **Package Code**: CL
 
-**Last Updated**: 2025-01-16 00:15:00
+**Last Updated**: 2026-10-27
 
-**Total Active Tasks**: 0
+**Total Active Tasks**: 2
 
 ## Quick Stats
 - P0 Critical: 0
-- P1 High: 0
+- P1 High: 2
 - P2 Medium: 0
 - P3 Low: 0
 - P4 Backlog: 0
 - Blocked: 0
-- Completed Today: 14
-- Completed This Week: 14
-- Completed This Month: 15
+- Completed Today: 15
+- Completed This Week: 15
+- Completed This Month: 16
 
 ---
 
 ## Active Tasks
 
-*None identified - package is in excellent condition with no critical issues.*
+- [ ] **P1-CL-A022** Phase 2: Per-repo artifact classes and test commands
+  - **Difficulty**: HARD
+  - **Type**: Refactor
+  - **Context**: Owns `plan_graph.py`'s docstring, `GENERATED`/`REGENERATED_TEXT`/`classify()` (replaced by `CONFIG_PATH`, `BASELINE_BINARY`, `load_config`, `_norm`, `_match`, `gitattributes_classes`, a four-arg `classify`) plus three phase-1 regions (`build()`'s file loop, its `return` — which must keep the `"root"` key — and `render()`'s `out = [...]`); `agents/integrator.md` steps 2 and 4; `skills/swarm/SKILL.md` at line >= 39 only; `README.md`; and 12 appended `@case` functions in phase 1's harness. Exit: no seer-specific path or command remains; an unconfigured repo still classifies from a project-agnostic baseline and Hugo `resources/_gen/` classifies ORDER once declared; the seer values reproduce as a worked example of the mechanism; `integrator.md` derives its suite from the repo via the `DESIGN.md:239-242` ladder; phase 1's work survives (`"root"` intact, 1 all-clear, 2 `INCOMPLETE:`, 25 cases); no new merge class; `README.md` names `.workflows/swarm.json` twice and `tests/`; verified against the installed copy after `./sync.sh`.
+  - **Status**: open
+  - **Plan Set**: `SWARM_WRITE_SET_GATE_PLAN.md` (phase 2 of 3)
+  - **Satisfies**: R3, R1 (one README line) — R3: Make the generated/binary artifact list and the integrator's test commands per-repo; design and argue the mechanism; keep the seer values working as data. R1 (one line): the `README.md` Project Structure entry for the `skills/swarm/tests/` harness phase 1 ships.
+  - **Depends on**: P1-CL-A021
+  - **Plan**: `.workflows/plan/P1-CL-A022.md`
+
+- [ ] **P1-CL-A023** Phase 3: Make the gate a gate: enforce exits 1 and 2
+  - **Difficulty**: NORMAL
+  - **Type**: Feature
+  - **Context**: Owns `commands/analyze-orchestrator.md` — Step 3b (lines 181-220) becomes a hard stop and the flag block (lines 6-13) gains the escape hatch — and `skills/swarm/SKILL.md`'s exit-code paragraph at lines 32-34 only (nothing at or after line 35; phase 2 owns the class table). Touches no `plan_graph.py`. Exit: Step 3b refuses to spawn on exit 1 and exit 2, each naming the class-specific ISOLATE/ORDER/BLOCK remediation; the escape hatch reuses the repo's existing `--no-gate` convention and refusal-message shape; the refusal is a stop, not a prompt; a coordinator reaching for `--no-gate` must say what it checked instead; the refusal quotes the gate as phase 1 leaves it (`INCOMPLETE: no collision among …`, `resolved against root:`); no instruction to pass `spawn --isolate`; verified against the installed copy after `./sync.sh`.
+  - **Status**: open
+  - **Plan Set**: `SWARM_WRITE_SET_GATE_PLAN.md` (phase 3 of 3)
+  - **Satisfies**: R2 — Make the gate enforcing: `/analyze-orchestrator` hard-stops on exit 1 and 2 with class-specific remediation, using the repo's existing escape-hatch convention.
+  - **Depends on**: P1-CL-A021
+  - **Plan**: `.workflows/plan/P1-CL-A023.md`
 
 ---
 
 ## Completed Tasks
 
 ### Recently Completed
+- [x] **P1-CL-A021** Phase 1: Gate correctness: worktree root discovery + severity selection
+  - **Difficulty**: NORMAL
+  - **Type**: Bug
+  - **Plan Set**: `SWARM_WRITE_SET_GATE_PLAN.md` (phase 1 of 3)
+  - **Satisfies**: R1, R4 — R1: Fix `plan_graph.py`'s repo-root discovery so the gate works inside a git worktree; justify the root-finder; regression-test the worktree case (includes the false all-clear). R4: Remove the dead `kinds` comprehension, or implement its intent deliberately and test it.
+  - **Plan**: `.workflows/plan/P1-CL-A021.md`
+  - **Completed**: 2026-10-27 09:32
+  - **Method**: `/implement -f SWARM_WRITE_SET_GATE_PLAN.md --phase 1`
+  - **Files**: skills/swarm/plan_graph.py, skills/swarm/tests/test_plan_graph.py, .workflows/todos.md, .workflows/plan/P1-CL-A021.md, .workflows/plan/P1-CL-A022.md, .workflows/plan/P1-CL-A023.md, SWARM_WRITE_SET_GATE_PLAN.md
+  - **What landed**: R1 — `plan_graph.py`'s root walk looked for a `.git` **directory**, but in a linked worktree `.git` is a **file** (a `gitdir:` pointer), so the walk ran to `/` and fell back to `dirname(dirname(index))`, wrong for both index layouts `/analyze` produces. The gate therefore reported `0 files` for every phase of every standard plan set *and still printed* `no file is written by two phases.` Replaced by `find_root()`, which collects candidate roots in order of authority (`git rev-parse --show-toplevel` with cwd = the index's directory; an `os.path.exists` walk; the index's directory and its first three ancestors via new `_ancestors()`/`ROOT_LOOKUP_DEPTH`) and returns the first that actually resolves a phase-plan path the index names. `build()` now parses the index **before** finding the root, and returns a new `"root"` key. R1 (second half) — the all-clear is conditional: the exact old sentence prints only when every phase plan was read, otherwise `INCOMPLETE: no collision among the K of N phases whose plan could be read. …`, the tally gains `INCOMPLETE: computed over K of N phases. …`, and the missing-plans block names `resolved against root: <path>`. R4 — the dead `kinds` comprehension and the first-in-index-order `kind = next(...)` replaced by `SEVERITY`/`SEVERITY_UNKNOWN`/`most_severe()`; that was a live bug, not dead code, since a generated or binary path declared `modify` by a *lower-numbered* phase was reported ISOLATE instead of ORDER/BLOCK — the verdict was decided by phase numbering. Most-severe-wins now (invariant 6: BLOCK > ORDER > ISOLATE). New `skills/swarm/tests/test_plan_graph.py`: a stdlib-only, self-contained 13-case regression harness, no pytest, building real repos and real `git worktree add` worktrees under `tempfile.mkdtemp()`; it imports `plan_graph` from its own parent directory, so running the installed copy tests the installed copy. `swarm.py` untouched (one more name imported from it, `git`); no markdown outside bookkeeping.
+  - **Verified**: harness passes 13 cases, exit 0; the same harness against `git show HEAD:skills/swarm/plan_graph.py` fails with **33 assertions in 13 cases**, including both worktree cases, the severity case and the three false-all-clear cases — the plan's measured baseline reproduced exactly; a variant with the render guard stripped still fails 5, so the guard is independently load-bearing; `grep -c "no file is written by two phases" skills/swarm/plan_graph.py` = 1; `swarm.py selftest` passes with `git diff --stat skills/swarm/swarm.py` empty; after `./sync.sh` the harness passes against the installed `~/.claude/skills/swarm/plan_graph.py` and the three-way `diff -rq` drift check is silent; the installed gate run from `~` against this set's own index exits **2**, naming `skills/swarm/SKILL.md` as CONCURRENT/ISOLATE between phases 2 and 3 and the other two shared files sequential — agreeing exactly with the index's hand-declared Bootstrap-hazard write-set table. **That closes the bootstrap hazard: this set's own gate is now trustworthy.**
+  - **Rollback**: the deploy is a copy, so `git revert` of this commit must be followed by `./sync.sh` and `rm -rf ~/.claude/skills/swarm/tests`.
+
 - [x] **P2-CL-A018** Update postmortem.md with clear persistent file output documentation
   - **Completed**: 2025-01-30 13:00:00
   - **Method**: Enhanced postmortem.md with comprehensive documentation about persistent file creation requirements. Added new "Purpose" and "Persistent File Output" sections emphasizing that command MUST create physical markdown files, not just print analysis. Included specific file path examples like chatbot/processing/.workflows/postmortem/P0-PR-A001.md. Updated all success message templates to emphasize file creation and persistent documentation. Added best practices for verifying file creation and understanding persistent nature of postmortem files
