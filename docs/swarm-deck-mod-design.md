@@ -74,10 +74,17 @@ The repo directory **is** the loaded mod, in every session including the `claude
 
 ### How a session knows what it is
 
-At `session.start` the mod runs `swarm.py find` once against the cwd and caches
-`{ slug, phase, role }` in module state. No ledger parsing in JavaScript — `swarm.py` stays
-the single reader of the ledger format. A session outside a swarm gets `role: null` and the
-mod goes **dormant**: no guards, no heartbeat. `/fleet` stays available, read-only.
+At `session.start` the mod reads `SWARM_SLUG` / `SWARM_PHASE` / `SWARM_COORDINATOR`, which
+`swarm.py spawn` passes through tmux's `-e`. No ledger parsing in JavaScript — `swarm.py`
+stays the single reader of the ledger format.
+
+An earlier draft of this document said the mod would call `swarm.py find` against the cwd.
+That was wrong and slice 1 disproved it: `find` keys on a plan path or a TaskID, not a
+directory, so a child that has moved out of its worktree answers *"no swarm owns that"* and
+the guard disarms in precisely the session that needed it. Identity travels in the
+environment instead.
+
+A session with no `SWARM_*` pair is **dormant**: no guard, no heartbeat, no rows.
 
 ## The marshal
 
@@ -131,17 +138,39 @@ lags and has no `$.session.send` at all.
 
 ### Shared state
 
-One `$.store` key per set, `swarm/<slug>`:
+**One key per phase, not one per set** — revised during slice 2, and the revision matters.
+The original sketch was a single `swarm/<slug>` document holding every phase's row. But
+`$.store` is shared by every session on the machine, and the phases of a set run concurrently
+*by construction*: N children doing read-modify-write on one document lose each other's rows,
+silently, exactly when the set is busiest. Per-phase keys mean no two writers ever touch the
+same key:
 
 ```js
-{ coordinator: 'name',
-  phases: { '2': { name, status, wave, contextPct, lastTool, updatedAt } },
-  decisions: [ { phase, question, chose, why, at } ],   // capped
-  flags:     [ { phase, kind: 'undelivered'|'guard', at } ] }
+'swarm/<slug>/phase/<n>'    // written only by phase n
+  { slug, phase, coordinator, status, lastTool, contextPct, decided, updatedAt }
+
+'swarm/<slug>/decided/<n>'  // written only by phase n
+  [ { phase, question, at }, ... ]
 ```
 
-The store is capped at 4 MiB of JSON in total, so rows stay small and `decisions` is capped.
-The committed ledger remains the durable record; this is the live view.
+The deck reassembles the set with `$.store.keys()` rather than reading one document. The store
+is capped at 4 MiB of JSON in total, so rows stay small. The committed ledger remains the
+durable record; this is the live view.
+
+### Failure direction is declared per hook
+
+The module has two `tool.call` hooks and they fail in opposite directions, which
+`claude plugin validate` prints back as two `gating hook with .catch` lines:
+
+- the **guard** fails **closed** — its failure would stall the night
+- the **watcher** (which only records the last tool name) fails **open** — telemetry must
+  never be able to refuse work
+
+### Ordering inside `session.start`
+
+Identity is assigned *before* the heartbeat timer starts. A hook that throws partway is
+skipped, so if the timer fails to start the session still cannot ask — it just goes dark on
+the deck. The reverse order would trade the invariant for the dashboard.
 
 ### Heartbeat
 
@@ -200,8 +229,8 @@ breaks ordinary interactive work, not just swarms.
 
 ## Build order
 
-1. `role` detection + guard 1 + tests 1–3 — **closes the eight-hour bug**, roughly 80 lines
-2. heartbeat + `$.store`
+1. ~~`role` detection + guard 1 + tests 1–3~~ — **shipped**, closes the eight-hour bug
+2. ~~heartbeat + `$.store`~~ — **shipped**, 8 tests
 3. `/fleet` pane
 4. band + guards 2 and 3, after verifying guard 3's `isDelivered` assumption
 

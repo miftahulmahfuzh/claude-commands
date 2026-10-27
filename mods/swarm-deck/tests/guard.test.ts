@@ -1,5 +1,19 @@
 import { expect, mock, test } from 'claude-code/testing'
 
+/** Stub the store with a Map the test can read back. Returns the Map. */
+function storeSpy(on: any) {
+  const saved = new Map<string, unknown>()
+  on('store.get', ($: any, e: any) => ({ value: saved.get(e.key) }))
+  on('store.set', ($: any, e: any) => {
+    saved.set(e.key, e.value)
+    return { value: undefined }
+  })
+  return saved
+}
+
+/** The shape $.session.usage() answers with. */
+const USAGE = { value: { startedAt: 0, context: { tokens: 42000, window: 200000, percent: 21 }, rateLimits: [], cost: {} } }
+
 const START = { surface: 'terminal', isInteractive: true, cwd: '/work' } as const
 const QUESTION = {
   tool: 'AskUserQuestion',
@@ -11,6 +25,9 @@ const PASSED_THROUGH = { result: 'the dialog rendered' }
 
 test('a phase session cannot ask: the dialog is refused and the ladder is handed back', async ($, on) => {
   mock.env(on, { SWARM_SLUG: 'swarm-write-set-gate', SWARM_PHASE: '2', SWARM_COORDINATOR: 'impl-swarm-write-set-gate' })
+  mock.clock(on)
+  storeSpy(on)
+  on('session.usage', () => USAGE)
   on('session.start', () => ({ cwd: '/work' }))
   on('ui.log', () => ({ value: undefined }))
   on('tool.call', () => PASSED_THROUGH)
@@ -30,6 +47,9 @@ test('a phase session cannot ask: the dialog is refused and the ladder is handed
 
 test('the guard fails CLOSED: a hook that throws still refuses the dialog', async ($, on) => {
   mock.env(on, { SWARM_SLUG: 'swarm-write-set-gate', SWARM_PHASE: '2' })
+  mock.clock(on)
+  storeSpy(on)
+  on('session.usage', () => USAGE)
   on('session.start', () => ({ cwd: '/work' }))
   // Make the guard's own $.ui.log reject, so the hook throws before reaching next().
   // A skipped hook would let the dialog render -- the exact stall this mod removes.
@@ -46,6 +66,8 @@ test('the guard fails CLOSED: a hook that throws still refuses the dialog', asyn
 test('outside a swarm the guard is dormant and the dialog is untouched', async ($, on) => {
   // No SWARM_* variables: an ordinary interactive session.
   mock.env(on, {})
+  mock.clock(on)
+  storeSpy(on)
   on('session.start', () => ({ cwd: '/work' }))
   on('tool.call', () => PASSED_THROUGH)
 

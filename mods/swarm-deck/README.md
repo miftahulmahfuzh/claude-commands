@@ -73,7 +73,19 @@ claude --plugin-dir .      # load it live, hot-reloads on save
 
 ## Status
 
-Slice 1 of 4. Next: heartbeat into a machine-shared `$.store`, a `/fleet` pane that draws the
-DAG live at zero token cost, and a band that lights only when something needs a human.
+Slices 1 and 2 of 4 — the guard, and the heartbeat behind it. 8 tests, 0 fail.
+
+Each phase publishes its own row into `$.store`, which is shared by every session on the
+machine, on a 15-second timer that runs *outside any turn* — so a coordinator watching ten
+phases spends no tokens to do it. One key per phase rather than one per set, because the
+phases of a set run concurrently by construction and a shared document would have them
+losing each other's writes exactly when the set is busiest.
+
+Refused forks are written down as they happen, under their own per-phase key. The
+coordinator's "Decided without asking" review is reconstructed at the end of a run today,
+which means a coordinator that dies takes the record with it; this makes it durable.
+
+Next: a `/fleet` pane that draws the DAG live from those rows, and a band that lights only
+when something genuinely needs a human.
 
 MIT.

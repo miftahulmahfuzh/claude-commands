@@ -17,6 +17,66 @@
 // what keeps the guard dormant in ordinary interactive work -- the property test 3 pins.
 let swarm = null
 
+// What the heartbeat reports. Module-level so the hooks share it the way the engine
+// intends: one hook records, another publishes.
+let lastTool = null
+let working = false
+let decided = []
+
+/**
+ * This session's own row in the machine-shared store.
+ *
+ * ONE KEY PER PHASE, not one key per set. $.store is shared by every session on the
+ * machine, and a set's phases run concurrently by construction -- so a single
+ * `swarm/<slug>` document would have N children doing read-modify-write on it at once
+ * and silently losing each other's rows. Giving each phase its own key means no two
+ * writers ever touch the same key, and the deck reassembles the set with $.store.keys().
+ */
+function rowKey() {
+  return 'swarm/' + swarm.slug + '/phase/' + swarm.phase
+}
+
+/** The forks this phase settled alone -- same one-writer rule as the row. */
+function decisionKey() {
+  return 'swarm/' + swarm.slug + '/decided/' + swarm.phase
+}
+
+/** Name what this phase is doing. Never denies -- see its registration. */
+async function watch($, e, next) {
+  if (swarm !== null) lastTool = e.tool
+  return next(e)
+}
+
+/**
+ * Publish this session's row. Never throws: a heartbeat that takes the session down,
+ * or that takes a tool call down from inside the guard, would be a telemetry feature
+ * breaking the thing it reports on.
+ */
+async function publish($) {
+  if (swarm === null) return
+  let contextPct = null
+  try {
+    const usage = await $.session.usage()
+    if (usage && usage.context) contextPct = usage.context.percent
+  } catch (err) {
+    // A session too young to have usage still deserves a row.
+  }
+  try {
+    await $.store.set(rowKey(), {
+      slug: swarm.slug,
+      phase: swarm.phase,
+      coordinator: swarm.coordinator || null,
+      status: working ? 'working' : 'idle',
+      lastTool: lastTool,
+      contextPct: contextPct,
+      decided: decided.length,
+      updatedAt: await $.clock.now(),
+    })
+  } catch (err) {
+    // The deck will show this row as stale, which is the correct reading.
+  }
+}
+
 /** The ladder, as the executors' own docs state it. Rung 1 beats rung 6. */
 const LADDER = [
   '1. an invariant in CLAUDE.md or the plan index',
@@ -57,7 +117,31 @@ async function guard($, e, next) {
   if (swarm === null) return next(e)
   await $.ui.log('swarm-deck: refused AskUserQuestion in phase ' + swarm.phase +
     ' -- deciding on the ladder instead')
+  await record($, e)
+  // Republish, or the row keeps a stale count and the deck under-reports the one thing
+  // a reviewer is looking for. Both calls are mods API calls, so neither spends the
+  // hook's 10s budget, and publish() swallows its own errors -- the deny stands either way.
+  await publish($)
   return { deny: denyText(swarm) }
+}
+
+/**
+ * Append the refused fork to this phase's decision list.
+ *
+ * The coordinator's termination block has a "Decided without asking" section that is
+ * today reconstructed at the end of the run -- which means a coordinator that dies
+ * takes the record with it. Writing each fork as it happens makes that section
+ * durable, and lets the deck show it while the night is still going.
+ */
+async function record($, e) {
+  const asked = (e.questions && e.questions[0] && e.questions[0].question) || 'unrecorded'
+  decided = decided.concat([{ phase: swarm.phase, question: asked, at: await $.clock.now() }])
+  try {
+    await $.store.set(decisionKey(), decided)
+  } catch (err) {
+    // The deny still stands: the phase decides either way, and the commit body and
+    // completion report carry the decision even when this row is lost.
+  }
 }
 
 /**
@@ -77,10 +161,48 @@ export function register(on) {
     // Both or neither: a half-set identity means something upstream changed shape, and
     // guessing at it would arm the guard in a session that is not a phase.
     if (slug && phase) {
+      // ORDER IS LOAD-BEARING. The guard arms the instant this assignment lands; the
+      // heartbeat is started after it. A hook that throws partway is skipped, so if
+      // starting the timer fails, this session still cannot ask -- it just goes dark on
+      // the deck. The reverse order would trade the invariant for the dashboard.
       swarm = { slug: slug, phase: phase, coordinator: await $.env.get('SWARM_COORDINATOR') }
+      // Outside any turn, so a coordinator watching ten phases spends no tokens to do
+      // it. 15s is well under the pane's own redraw budget and far above the cost of a
+      // single $.store.set.
+      $.clock.every(15000, async () => {
+        await publish($)
+      })
+      await publish($)
     }
     return next(e)
   })
 
   on('tool.call', { tool: 'AskUserQuestion' }, guard).catch(failClosed)
+
+  // Every other tool call, only to name what this phase is doing right now. No matcher,
+  // so it must be the only unmatched tool.call registration in the module.
+  //
+  // This one fails OPEN, which is the exact opposite of the guard above and deliberate:
+  // the guard's failure would stall the night, while this hook's failure would at worst
+  // leave a stale tool name on a dashboard. Telemetry must never be able to refuse work.
+  on('tool.call', watch).catch(async ($, e, next) => next(e))
+
+  on('turn.start', async ($, e, next) => {
+    if (swarm !== null) {
+      working = true
+      await publish($)
+    }
+    return next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    // A subagent finishing is not the phase finishing, and reporting it as idle makes a
+    // busy session look parked -- which is the one misreading that matters on a deck
+    // built to spot sessions that have gone quiet.
+    if (swarm !== null && e.agentId === undefined) {
+      working = false
+      await publish($)
+    }
+    return next(e)
+  })
 }
