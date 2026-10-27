@@ -33,6 +33,26 @@ Exit codes: **0** clean, **2** a file is written by concurrent phases, **1** the
 read (no phase table, or a phase plan missing). 1 is deliberately not 0 — a caller that reads 0 as
 "nothing collides" would spawn a wave on the strength of an analysis that never ran.
 
+**The exit code is enforced, not advisory.** `/analyze-orchestrator` Step 3b spawns nothing on a
+non-zero exit. On **1** it stops outright: there is no collision report to act on, only the
+`INCOMPLETE:` line and the `resolved against root:` path the gate prints in that state, and both
+belong in the stop. On **2** it remediates by class where it can — per-phase worktrees for ISOLATE
+(`git worktree add` plus `swarm.py spawn --cwd`), a dependency edge for ORDER and BLOCK — re-runs
+the gate once, and stops only if that did not clear it. A gate that stopped on something the
+coordinator could have fixed itself would be the no-waiting rule failing in a new costume.
+
+**A stop here terminates with a report; it never prompts.** No `AskUserQuestion`, no `[y/N]`, no
+turn ending on a question — a coordinator that asks stalls the whole set. Nothing is spawned, so
+every phase stays `pending` and `--resume <slug>` picks the set up once the cause is fixed.
+
+**`--no-gate` is the escape hatch**, the same flag and meaning `skills/task` uses
+(`skills/task/DESIGN.md:159`, `skills/task/task_gh.py:2617`): the gate still runs and still prints,
+its exit just stops refusing. It has to be passed on purpose. A session that cannot run the gate at
+all does not reach for the flag and does not wait for someone to type it — it derives the write
+sets by hand from the phase plans' `## Files` tables, proceeds, and **names what it checked
+instead** in the ledger note, which is the ladder at `skills/task/DESIGN.md:238-246` applied to
+this gate.
+
 It reads each phase plan's `## Files` table, the same write set `/implement` hands `pusher`, and
 classifies every shared path:
 

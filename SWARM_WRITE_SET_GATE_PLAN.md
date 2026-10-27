@@ -120,7 +120,13 @@ Every phase must hold all of these:
 
 **Progress:** phase 1 ✅ complete (`P1-CL-A021`, 2026-10-27) — `skills/swarm/plan_graph.py`
 root discovery and severity selection fixed, `skills/swarm/tests/test_plan_graph.py` added
-(13 cases). Phases 2 and 3 are unblocked and are wave 1. The per-phase tick lives here rather
+(13 cases). Phases 2 and 3 are unblocked and are wave 1.
+Phase 3 ✅ complete (`P1-CL-A023`, 2026-10-27) — `commands/analyze-orchestrator.md` Step 3b is
+now an enforcing gate (exit 1 stops, exit 2 remediates by class then stops, one round) with the
+`--no-gate` escape hatch in the flag block, and `skills/swarm/SKILL.md`'s exit-code paragraph
+says the same; committed on the isolated branch `swarm-wsg-p3` for the coordinator to integrate.
+Phase 2 is still in flight; `**Status:**` above is left to the coordinator rather than counting
+an out-of-order wave. The per-phase tick lives here rather
 than in the table above because `swarm.py parse_index` reads every phase-table cell by name and
 requires the `#` cell to be a bare integer — a status column would diverge this index from the
 one `/analyze` generates. The authoritative phase status is the swarm ledger.

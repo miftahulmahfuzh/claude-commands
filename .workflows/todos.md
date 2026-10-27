@@ -6,18 +6,18 @@
 
 **Last Updated**: 2026-10-27
 
-**Total Active Tasks**: 2
+**Total Active Tasks**: 1
 
 ## Quick Stats
 - P0 Critical: 0
-- P1 High: 2
+- P1 High: 1
 - P2 Medium: 0
 - P3 Low: 0
 - P4 Backlog: 0
 - Blocked: 0
-- Completed Today: 15
-- Completed This Week: 15
-- Completed This Month: 16
+- Completed Today: 16
+- Completed This Week: 16
+- Completed This Month: 17
 
 ---
 
@@ -33,21 +33,29 @@
   - **Depends on**: P1-CL-A021
   - **Plan**: `.workflows/plan/P1-CL-A022.md`
 
-- [ ] **P1-CL-A023** Phase 3: Make the gate a gate: enforce exits 1 and 2
-  - **Difficulty**: NORMAL
-  - **Type**: Feature
-  - **Context**: Owns `commands/analyze-orchestrator.md` — Step 3b (lines 181-220) becomes a hard stop and the flag block (lines 6-13) gains the escape hatch — and `skills/swarm/SKILL.md`'s exit-code paragraph at lines 32-34 only (nothing at or after line 35; phase 2 owns the class table). Touches no `plan_graph.py`. Exit: Step 3b refuses to spawn on exit 1 and exit 2, each naming the class-specific ISOLATE/ORDER/BLOCK remediation; the escape hatch reuses the repo's existing `--no-gate` convention and refusal-message shape; the refusal is a stop, not a prompt; a coordinator reaching for `--no-gate` must say what it checked instead; the refusal quotes the gate as phase 1 leaves it (`INCOMPLETE: no collision among …`, `resolved against root:`); no instruction to pass `spawn --isolate`; verified against the installed copy after `./sync.sh`.
-  - **Status**: open
-  - **Plan Set**: `SWARM_WRITE_SET_GATE_PLAN.md` (phase 3 of 3)
-  - **Satisfies**: R2 — Make the gate enforcing: `/analyze-orchestrator` hard-stops on exit 1 and 2 with class-specific remediation, using the repo's existing escape-hatch convention.
-  - **Depends on**: P1-CL-A021
-  - **Plan**: `.workflows/plan/P1-CL-A023.md`
-
 ---
 
 ## Completed Tasks
 
 ### Recently Completed
+- [x] **P1-CL-A023** Phase 3: Make the gate a gate: enforce exits 1 and 2
+  - **Difficulty**: NORMAL
+  - **Type**: Feature
+  - **Plan Set**: `SWARM_WRITE_SET_GATE_PLAN.md` (phase 3 of 3)
+  - **Satisfies**: R2 — Make the gate enforcing: `/analyze-orchestrator` hard-stops on exit 1 and 2 with class-specific remediation, using the repo's existing escape-hatch convention.
+  - **Plan**: `.workflows/plan/P1-CL-A023.md`
+  - **Completed**: 2026-10-27 09:47
+  - **Method**: swarm phase session on isolated branch `swarm-wsg-p3` (`/implement -f SWARM_WRITE_SET_GATE_PLAN.md --phase 3`); coordinator `orch-swarm-write-set-gate` integrates the wave and lands the set
+  - **Files**: commands/analyze-orchestrator.md, skills/swarm/SKILL.md, .workflows/todos.md, SWARM_WRITE_SET_GATE_PLAN.md
+  - **What landed**: R2 — the write-set gate's exit codes were always correct and deliberate (`plan_graph.py` `main()`); what was missing was a caller that honoured them. `/analyze-orchestrator` Step 3b was advisory prose ("act on what it flags, by class") with no instruction to stop, so a coordinator could read exit 1 or 2 and spawn the wave anyway. Step 3b is now enforcing: an exit table (`0` → Step 4; `1` → stop; `2` → remediate, re-run once, stop only if that did not clear it) followed by a section per non-zero exit. **Exit 1** is a stop with no remediation — the analysis never ran — and must quote the two lines phase 1 added, `INCOMPLETE: no collision among the K of N phases …` and `resolved against root: <path>`, the latter being what distinguishes a genuinely absent plan file from a wrongly resolved root; it also forbids quoting the old all-clear sentence there and says to report a regression if it ever appears alongside exit 1. **Exit 2** is remediate-and-proceed by class — ISOLATE → one worktree per phase via `git worktree add` + `swarm.py spawn --cwd` (explicitly *not* `spawn --isolate`, which does not exist: `grep -c isolate skills/swarm/swarm.py` is 0), with the caveat that anchors within three lines of each other are ORDER in disguise; ORDER and BLOCK → a dependency edge, added mechanically in five numbered steps across **both** copies of the index, re-`init`'d, committed through `pusher` before anything spawns. One remediation round, then stop; a `waves` cycle stops too. **The stop is a stop, not a prompt** — a session that terminates with a report rather than ending a turn on a question, with the two termination blocks in Step 5's shape, and the observation that because nothing was spawned every phase is still `pending` and `--resume <slug>` picks the set up. **`--no-gate`** is added to the flag block and reuses `skills/task`'s flag, meaning and refusal-message shape (`skills/task/DESIGN.md:159`, `task_gh.py:2617`, `task_gh.py:1994-1999`): the gate still runs and still prints, only its refusal is lifted, and it must be passed on purpose. Because the flag was written for a human who is by construction asleep, the command never reaches for it and never waits for it — a gate that cannot run *at all* walks the `DESIGN.md:238-246` ladder instead (derive the write sets by hand from the phase plans' `## Files` tables, proceed under the flag, and **name what was checked instead** in the ledger note), falling through to the exit-1 stop only when nothing could be derived either. `skills/swarm/SKILL.md` gains the matching four paragraphs after its exit-code line (enforced not advisory; the stop never prompts; `--no-gate` and the ladder), touching nothing at or after the class table phase 2 owns.
+  - **Verified**: all 7 phase checks pass — flag spelling matches `skills/task`; all three exits enforced; no prompt primitive spelled anywhere in Step 3b (grep finds none); `SKILL.md` lines 55-58 byte-identical to `HEAD` with the edit landing as a single insert-only hunk; `skills/swarm/plan_graph.py` absent from the diff; the post-phase-1 quotes present with the old all-clear sentence appearing exactly once, inside the historical note; no `spawn --isolate` instruction. Check 8 — `python3 skills/swarm/plan_graph.py SWARM_WRITE_SET_GATE_PLAN.md` exits **2**, naming `skills/swarm/SKILL.md` as CONCURRENT/ISOLATE between phases 2 and 3, with no `INCOMPLETE:` line. Pre-sync safety check: phase 1's `rev-parse --show-toplevel` root finder still at `plan_graph.py:128`, the old `os.path.isdir(os.path.join(repo` walk gone. After `./sync.sh` both installed copies are byte-identical to the repo copies and the full three-way drift check is clean; phase 1's harness still passes 13/13.
+  - **Drift**: `commands/analyze-orchestrator.md` Step 3b's bash block had one line (`# exit 2 = a concurrent collision`) where the plan's carried-across text showed two; the plan replaces Step 3b wholesale, so the replacement text governs. No impact.
+  - **Decided**: Step 3b's prompt-disclaimer sentence named the prompt primitives literally in the plan's code block, but the phase's own exit criterion 3 forbids those spellings appearing anywhere in Step 3b and verification check 3 greps for them expecting no match → reworded the sentence to name no prompt primitive literally, with a parenthetical saying why (rung 2: exit criteria outrank a code block's wording; the intent, "no prompt primitive introduced inside Step 3b", is unchanged and now actually checkable).
+  - **Decided**: `skills/swarm/SKILL.md` keeps the plan's literal wording for those same primitives → no criterion forbids those tokens in SKILL.md, and deviating for cosmetic consistency with Step 3b would be scope creep (rung 3: the plan's code block governs where nothing outranks it).
+  - **Decided**: Skipped `readme-updater` → no `package_readme.md` exists anywhere in this repo, and the repo `README.md` is phase 2's sole-writer file; the phase's Files table and its "Does not touch" list name exactly two files (rung 2/3: exit criteria + the plan's Files table).
+  - **Decided**: git rendered the `SKILL.md` edit as an insertion after old line 35 rather than a replacement of 32-34, narrowing the reconciler's measured margin → re-ran the `git merge-file` check against phase 2's real replacement text (its plan Steps 9 and 10): rc=0, zero conflict markers, all three edits present. ISOLATE stands (rung 1: the phase plan's standing instruction to re-run that check if the margin is in question).
+  - **Rollback**: the deploy is a copy, so `git revert` of this commit must be followed by `./sync.sh`.
+
 - [x] **P1-CL-A021** Phase 1: Gate correctness: worktree root discovery + severity selection
   - **Difficulty**: NORMAL
   - **Type**: Bug

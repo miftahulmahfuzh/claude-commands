@@ -10,7 +10,15 @@ where the DAG allows — and **resume that same set on any machine, at any time.
 /analyze-orchestrator --status <slug>            # report, change nothing
 
 /analyze-orchestrator -f <PLAN> --permission-mode acceptEdits         # narrow the children
+/analyze-orchestrator -f <PLAN> --no-gate                             # spawn without the write-set gate
 ```
+
+`--no-gate` is the only escape hatch in this command, and it is the same flag `skills/task` uses
+for the same reason (`skills/task/DESIGN.md:159`, `skills/task/task_gh.py:2617`). The write-set
+gate still runs and still prints; its exit code just stops refusing the spawn. It has to be passed
+on purpose, and a wave spawned under it is spawned on somebody's judgement rather than on an
+analysis. Step 3b says what to do when the gate cannot run *at all* — that case needs a ladder,
+not this flag.
 
 `/implement` walks a plan set one phase at a time in one session. This command runs the same set
 as a swarm: it computes which phases share no dependency edge, opens a session per phase, watches
@@ -185,7 +193,8 @@ phase starts. It says nothing about what two phases in one wave will both *write
 different questions, and the second is where the collisions come from:
 
 ```bash
-python3 ~/.claude/skills/swarm/plan_graph.py <PLAN.md>      # exit 2 = a concurrent collision
+python3 ~/.claude/skills/swarm/plan_graph.py <PLAN.md>           # 0 clean · 1 unreadable · 2 collision
+python3 ~/.claude/skills/swarm/plan_graph.py <PLAN.md> --json    # the per-collision class, for deciding
 ```
 
 It reads each phase plan's `## Files` table — the write set the planner declared, the same list
@@ -199,20 +208,214 @@ That is the file whose collision was reported by hand afterwards. The other five
 `lab/store.py`, `test_lab_snapshot.py`, `lab/lab.sqlite`, `view.test.ts`, `web/data/lab.json` —
 are written in different waves and were never at risk.
 
-**Act on what it flags, by class:**
+**This gate is enforcing, not advisory.** Nothing is spawned on a non-zero exit until that exit
+has been dealt with — and dealing with it is this session's job, not a human's:
 
-- **ISOLATE** (ordinary source file): give each phase its own worktree. Separate worktrees turn
-  concurrent writes into separate branches, and disjoint regions of one file then merge cleanly.
+| exit | meaning | what this session does |
+|---|---|---|
+| `0` | no file is written by two concurrent phases | go to Step 4 |
+| `1` | the plan could not be read — no phase table, or a phase plan missing | **stop.** There is nothing to remediate |
+| `2` | a real concurrent collision | **remediate by class, re-run the gate once, and stop only if that did not clear it** |
+
+Reading `1` or `2` as "proceed and watch" is the failure this gate exists to prevent. The exit
+codes were always correct and deliberate (`plan_graph.py` `main()`); what was missing was a caller
+that honoured them.
+
+### Exit 1 — stop, and say why
+
+Exit 1 means the analysis never ran. There is no collision report to act on, because there is no
+report: the gate could not read the index's phase table, or a phase's **Plan** column points at a
+file it could not open. The output lists them under `phase plans not found`, and — since phase 1 —
+names the directory it resolved them against:
+
+```
+phase plans not found (write set unknown, treated as empty):
+  phase 2: .workflows/plan/<slug>/phase-2.md
+  resolved against root: /home/<you>/.worktrees/<repo>/<slug>
+
+INCOMPLETE: no collision among the 2 of 3 phases whose plan could be read. 1 write set is
+unknown, so this is not an all-clear.
+```
+
+Quote both of those lines in the stop. `resolved against root:` is the one that distinguishes a
+plan file that is genuinely absent from a root the gate resolved wrongly, and it is the line that
+was missing while the worktree bug survived four real plan sets.
+
+No remediation applies, and that is the point of distinguishing 1 from 2: a missing phase plan is
+not a scheduling problem to route around, it is a plan set that is not there. Spawning anyway
+would run a wave on the strength of an analysis that never happened.
+
+**Do not expect the all-clear sentence here, and do not quote it.** Before phase 1 the gate
+printed `no file is written by two phases.` on this branch — affirmatively false, not merely
+unknown; MEASURED: a two-phase set with a genuine concurrent ISOLATE collision printed exactly
+that sentence and exited 1. Phase 1 made that sentence conditional on every phase plan having been
+read, and gave the partial branch the `INCOMPLETE:` forms above, which deliberately share no
+prefix with it. So on exit 1 the gate now says what it means; this phase's job is only to stop on
+it. If that sentence ever appears alongside exit 1, phase 1's render guard has regressed — report
+that, do not work around it.
+
+So **stop**: print the gate's output verbatim, name each plan it could not read and the root it
+resolved against, and end the session with the termination block below. Do not retry, do not route
+around it, do not ask.
+
+Two causes are worth naming, because they are the common ones and they are fixed differently:
+
+- **A phase plan genuinely is not there.** Step 2 copied the set into
+  `.workflows/orchestration/<slug>/` and one `phase-N.md` did not come with it, or the index's
+  **Plan** column is stale. Fix the set, then `/analyze-orchestrator -f <PLAN>` again.
+- **The index has no phase table at all** — it is an analysis document, not a plan index. Step 1
+  should have caught that; say so and name `/analyze`.
+
+An exit 1 that is neither of those means the gate could not resolve the repo root from the index's
+location: the `resolved against root:` line names a directory the phase plans are not under. That
+is a bug in the gate rather than in the set — report it as one, and quote that line, the index
+path and the phase-plan paths it tried.
+
+### Exit 2 — remediate what you can, stop only where you cannot
+
+A gate that stops on something it could have fixed itself is iron rule 4 failing in a new costume:
+the wave is not spawned, nobody is asked, and the night is gone anyway. So run `--json`, read each
+collision's `verdict`, `concurrent`, `written_by` and `waves` fields, and act by class. These are
+the same three classes `skills/swarm/SKILL.md` tabulates; what is added here is which of them this
+session fixes for itself.
+
+- **ISOLATE** (ordinary source file, concurrent writers) — **remediate and proceed.** Give each
+  colliding phase its own worktree, cut from the integration branch at the start of the wave, and
+  spawn into it:
+
+  ```bash
+  git worktree add <path> <integration-branch>
+  python3 ~/.claude/skills/swarm/swarm.py spawn --slug <slug> --phase N --cwd <path>
+  ```
+
+  Use that form, not `spawn --isolate`. **`swarm.py spawn` has no `--isolate` argument** —
+  VERIFIED: `grep -c isolate skills/swarm/swarm.py` is `0`, and its argparse
+  (`skills/swarm/swarm.py:2113-2124`) defines only `--slug --phase --prefix --prompt --cwd
+  --permission-mode --model --force --no-trust --dry-run`. Step 4 of this command names
+  `--isolate` at `:237`, `:255` and `:383`; those three lines are wrong, they are outside this
+  phase's region, and fixing them serves none of R1-R4 (see **Handoffs**). `--cwd` does exist and
+  is the mechanism. Separate worktrees turn concurrent writes into separate branches, and disjoint
+  regions of one file then merge cleanly at Step 4c.
+
   On `journal-versioning` the three phases' edit anchors in `commands/lab.py` were 29 lines apart
   at their closest (`3@101` / `2@130`; phase 4's single anchor at 843 sits 82 from its nearest
   neighbour) — well outside git's 3-line merge context, so isolation would have cost nothing.
   **Serializing that wave would have made it four waves into six.** Check the regions before
-  trusting the verdict; "same file" is not "same lines".
-- **ORDER** (generated artifact): it is regenerated, not merged. Add a dependency edge so one
-  phase publishes last. `journal-versioning`'s planner found the `4 → 6` edge this way by hand.
-- **BLOCK** (binary): two concurrent phases writing a database is unresolvable after the fact.
-  Serialize them, always. This is not a preference — a sqlite merge is a choice of side, and the
-  discarded side's rows are gone.
+  trusting the verdict; "same file" is not "same lines". Where the two plans' anchors for that
+  path sit within three lines of each other, isolation only defers the conflict to integration —
+  treat that pair as ORDER and add the edge instead, and say that you did.
+
+- **ORDER** (generated artifact) — **remediate and proceed.** It is regenerated, not merged, so
+  one phase has to publish last. Add the dependency edge yourself, as below.
+  `journal-versioning`'s planner found the `4 → 6` edge this way by hand.
+
+- **BLOCK** (binary) — **serialize, always, and proceed.** Two concurrent phases writing a
+  database is unresolvable after the fact. This is not a preference: a sqlite merge is a choice of
+  side, and the discarded side's rows are gone. Serializing is the same edge as ORDER; add it.
+
+- **sequential** — nothing to do. These never caused the exit; they are reported for completeness.
+
+**Adding the edge, mechanically.** The later writer depends on the earlier one, so the last write
+is the one that survives:
+
+1. **Pick the publisher.** The phase whose `## Files` row for that path says `regenerate`
+   publishes last; with no such row, the higher phase number does.
+2. **Edit the Depends on cell** of that phase in **both** copies of the index — the tracked
+   `.workflows/orchestration/<slug>/PLAN.md` and the worktree's `<SLUG>_PLAN.md`. They are one
+   document in two places, and a resume on another machine reads the tracked one.
+3. **Re-read the table:**
+   ```bash
+   python3 ~/.claude/skills/swarm/swarm.py init --plan .workflows/orchestration/<slug>/PLAN.md \
+                                                --coordinator orch-<slug>
+   ```
+   `init` is safe to re-run: it re-reads the phase table and keeps every recorded outcome.
+4. **Commit and push both through `pusher`, before spawning anything.** Iron rules 1 and 2: a
+   schedule that exists only in this session's memory dies with this session.
+5. **Re-run the gate.** It must now exit `0`, or exit `2` with only ISOLATE collisions left —
+   which the per-phase worktrees handle.
+
+**One remediation round, then stop.** If the second run still exits non-zero for a reason that
+round was meant to clear, the remediation did not work and repeating it will not make it work.
+Stop and report what was tried. Stop too if `dependency waves` comes back holding a cycle — `waves`
+reports a cycle rather than looping on it, and a cycle means the edge you added is unaddable.
+
+Print every remediation as it is decided, in the Step 1 format, and carry each line into the
+ledger note and the termination block's `Decided without asking`:
+
+```
+⚖ collision src/shared.py (phases 2, 3, wave 0) → ISOLATE: one worktree per phase.
+  Rung 6: SKILL.md's ISOLATE remedy; anchors 2@130 / 3@101 are 29 lines apart.
+⚖ collision lab/lab.sqlite (phases 2, 4, wave 1) → BLOCK: serialize, edge 2 → 4.
+  Rung 1: "a database merge is a choice of side and the other side's rows are gone".
+```
+
+### The stop is a stop, not a prompt
+
+This is the reading that would turn iron rule 4 inside out, so it is written down rather than
+assumed. A hard stop here **terminates the session with a report**. It does not put a question to
+anyone: not through the ask-the-user tool, not as a yes-or-no confirmation, not as an interactive
+shell command, and not as a turn ending on "which would you like?". Nothing is left running and
+nothing is waiting on anybody. Stopping is allowed; blocking is not.
+
+(That sentence names no prompt primitive literally, on purpose: exit criterion 3 and its grep
+require that none of those spellings appear anywhere in Step 3b, and a ban that quotes the thing
+it bans trips its own check.)
+
+Print the termination block with the refusal in the landing position, the same shape Step 5's stop
+uses:
+
+```
+Spawned: STOPPED — write-set gate exit 1: phase 3's plan
+         .workflows/orchestration/<slug>/phase-3.md could not be read.
+         Nothing spawned; all 4 phases remain `pending`.
+         Re-run: /analyze-orchestrator --resume <slug>
+```
+
+```
+Spawned: STOPPED — write-set gate exit 2 after remediation: lab/lab.sqlite is still
+         written concurrently by phases 2 and 4; the 2 → 4 edge creates a cycle.
+         Index and ledger restored; nothing spawned; all 6 phases remain `pending`.
+         Re-run: /analyze-orchestrator --resume <slug>
+```
+
+Because nothing was spawned, every phase is still `pending` in the ledger and the set resumes
+cleanly the moment the cause is fixed. That is what makes stopping cheap enough to be the right
+answer here — unlike a stop mid-wave, this one costs nothing but the time to fix the plan.
+
+### `--no-gate` — the escape hatch, and the ladder before it
+
+`--no-gate` is the same flag and the same meaning `skills/task` gives it
+(`skills/task/DESIGN.md:159`, `skills/task/task_gh.py:2617`): the gate still runs and still prints,
+but its exit no longer refuses the spawn. It restores the advisory behaviour deliberately, for one
+run. State the refusal in the shape `task_gh.py:1994-1999` established — what is missing, why it
+matters, and the flag plus the words *on purpose*:
+
+> The write-set gate could not read this plan set (exit 1), so nothing has checked whether two
+> phases in one wave write the same file, and a collision found after the fact is a commit
+> carrying work its author never finished. Fix the plan set, or pass `--no-gate` to spawn anyway,
+> on purpose.
+
+> The write-set gate found `lab/lab.sqlite` written concurrently by phases 2 and 4 (exit 2) and
+> the serializing edge could not be added, so a wave spawned now would merge a binary by choosing
+> a side. Serialize the two phases by hand, or pass `--no-gate` to spawn anyway, on purpose.
+
+**But `--no-gate` was written to be typed by a human who is, by construction, asleep.** So this
+session never reaches for it and never ends a turn hoping somebody types it. Where the gate cannot
+run *at all* — `plan_graph.py` missing from the install, a crash, no `python3` — walk the ladder
+instead, the same one `skills/task/DESIGN.md:238-246` documents for a repo with no CI:
+
+1. **Derive the write sets by hand.** Read each phase plan's `## Files` table yourself, map every
+   path to the phases that write it, and intersect that against `swarm.py waves`. This is the same
+   analysis the gate performs — read rather than computed.
+2. **Something was checked** → proceed under `--no-gate`, applying the class rules above to what
+   you derived, and **name what you derived** — the paths, the phases, the waves — in the ledger
+   note and under `Decided without asking`. "The gate did not run" is not the same as "nothing was
+   checked", and the report must not blur them.
+3. **Nothing could be derived either** — the phase plans are unreadable too — then this is exit 1
+   by another route, and the answer is the stop above.
+
+A plan index that already declares its own write-set table by hand, because the gate is
+known-untrusted for that particular set, is rung 1 already done: act on that table and say so.
 
 **What this gate cannot buy you is width.** The schedule's parallelism is a property of the
 plan's DAG, not of the worktree model: `journal-versioning`'s widest wave holds three phases, so
