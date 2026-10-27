@@ -1,0 +1,70 @@
+{
+  "branch": "feature/swarm-write-set-gate",
+  "coordinator": "orch-swarm-write-set-gate",
+  "coordinator_session_id": "91058943-f422-47d0-a1e0-b81f9a57954f",
+  "created": "2026-10-27T02:27:00+00:00",
+  "phases": [
+    {
+      "card": null,
+      "commit": null,
+      "depends_on": [],
+      "difficulty": "NORMAL",
+      "n": 1,
+      "note": null,
+      "package": "skills/swarm",
+      "plan": ".workflows/plan/swarm-write-set-gate/phase-1.md",
+      "reported_at": null,
+      "satisfies": [
+        "R1",
+        "R4"
+      ],
+      "status": "pending",
+      "task_id": null,
+      "title": "Gate correctness: worktree root discovery + severity selection"
+    },
+    {
+      "card": null,
+      "commit": null,
+      "depends_on": [
+        1
+      ],
+      "difficulty": "HARD",
+      "n": 2,
+      "note": null,
+      "package": "skills/swarm`, `agents",
+      "plan": ".workflows/plan/swarm-write-set-gate/phase-2.md",
+      "reported_at": null,
+      "satisfies": [
+        "R3",
+        "R1"
+      ],
+      "status": "pending",
+      "task_id": null,
+      "title": "Per-repo artifact classes and test commands"
+    },
+    {
+      "card": null,
+      "commit": null,
+      "depends_on": [
+        1
+      ],
+      "difficulty": "NORMAL",
+      "n": 3,
+      "note": null,
+      "package": "commands`, `skills/swarm",
+      "plan": ".workflows/plan/swarm-write-set-gate/phase-3.md",
+      "reported_at": null,
+      "satisfies": [
+        "R2"
+      ],
+      "status": "pending",
+      "task_id": null,
+      "title": "Make the gate a gate: enforce exits 1 and 2"
+    }
+  ],
+  "plan": "/home/miftah/claude-commands/.workflows/orchestration/swarm-write-set-gate/PLAN.md",
+  "repo": "/home/miftah/claude-commands",
+  "slug": "swarm-write-set-gate",
+  "updated": "2026-10-27T02:27:00+00:00",
+  "worktree": "/home/miftah/.worktrees/claude-commands/swarm-write-set-gate"
+}
