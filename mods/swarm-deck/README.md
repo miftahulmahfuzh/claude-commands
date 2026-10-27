@@ -97,7 +97,23 @@ deck refuses `Raster` and `Image`, both terminal-only and both a minefield insid
 Verified end to end in a live tmux session: a forced `AskUserQuestion` came back refused with
 the ladder, and the fork appeared on the deck as `Decided without asking: 1` seconds later.
 
-Next: a band above the prompt that lights only when something genuinely needs a human, plus
-the interactive-command guard and the undelivered-report detector.
+The band above the prompt draws **nothing** unless a person is actually needed: a phase gone
+quiet, or a report that reached nobody. A band that is always lit is noise, and noise is how
+the one night it matters gets scrolled past.
+
+Interactive shell commands (`git rebase -i`, editors, pagers, `top`) are refused too — they
+are worse than a dialog, because they hold the Bash tool open with nothing on screen, so the
+session looks busy rather than stuck. The patterns anchor at a command position and blank
+quoted strings first, because over-matching is the real hazard: a missed case costs what it
+costs, but a false deny blocks legitimate work with no way around it.
+
+Reports are mirrored into the store as well as sent. `swarm.py spawn` warns that a child on a
+mismatched permission mode has its reports held for approval and the set stalls silently; the
+plan was to detect that on the send result, but the engine's types say `isDelivered: true`
+means "reached its recipient's queue or inbox" — which a held message has. So the channel was
+made non-essential rather than observable. The coordinator reads the report from the store,
+where no approval gate sits.
+
+That is all four slices.
 
 MIT.

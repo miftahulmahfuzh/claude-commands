@@ -109,19 +109,44 @@ and stall the night. It must **fail closed**, returning the same deny.
 
 ### Guard 2 — interactive shell commands
 
-`tool.call { tool: 'Bash' }` denying `git rebase -i`, `git add -i`, `$EDITOR`, pagers.
-CLAUDE.md names these alongside `AskUserQuestion` as stall reintroductions. The pattern list
-stays short and says so in a comment: Anthropic's own `blast-radius` sample documents that its
-regex misses `git push -f`, and under-claiming is the honest posture.
+`tool.call { tool: 'Bash' }` denying `git rebase -i`, `$EDITOR`, pagers, `top`/`watch`. These
+are worse than a dialog in one respect: they hold the Bash tool open with *nothing on screen*,
+so the session looks like it is working rather than waiting.
 
-### Guard 3 — the silent-stall detector
+**Over-matching is the real hazard here, not under-matching.** A missed case costs what it
+costs today; a false deny blocks legitimate work with no way around it. Two rules keep that in
+check, and both exist because the first draft failed them:
 
-Reports go out via `$.session.send`, which resolves `{ isDelivered: false, reason }`. On a
-false, escalate and flag the row instead of going quiet.
+- **Anchor at a command position** — start of line, or after `;`, `&&`, `||`, `|`, optionally
+  behind `sudo` or an inline `VAR=value`. Unanchored, `echo "on top of that"` matches `top`.
+- **Blank quoted strings before matching** — a commit message is not a command. Without it,
+  `git commit -m "add -i support"` reads as an interactive rebase.
 
-**Unverified assumption:** that a message *held for approval* reports `isDelivered: false`
-rather than `true`. This is checked at the top of slice 4, before any code leans on it. If it
-comes back `true`, guard 3 needs a different signal.
+The list stays short and the comment says so: Anthropic's own `blast-radius` sample documents
+that its regex misses `git push -f`. This is a reminder, not a sandbox — anything that truly
+must not run belongs in a permission deny rule.
+
+### Guard 3 — the assumption was wrong, so the design changed
+
+The flagged assumption was checked at the top of slice 4, before any code leaned on it, and it
+is **false**. The engine's own type declarations settle it:
+
+> `isDelivered: true` — "the message reached its recipient's **queue or inbox**"
+> `isDelivered: false` — "nobody by that name, several by it, the recipient gone or refusing,
+> or a hook's refusal"
+
+A message *held for the user to approve* has reached the inbox. It reports success. The
+detector cannot see the failure it was built for, and would have shipped as a green light that
+means nothing — worse than no detector, because the deck would have asserted health.
+
+**So the channel is not made observable; it is made non-essential.** Every outgoing report is
+also written to `swarm/<slug>/sent/<n>`, which no approval gate sits in front of, and the
+coordinator reads it there. A held message stops being a lost night and becomes a slow one.
+This is the better fix regardless of the assumption: removing a silent failure mode beats
+detecting it.
+
+`isDelivered: false` is still recorded, because it covers a real misconfiguration — a typo'd
+coordinator name, or a coordinator that is gone — which the band should and does surface.
 
 ### Addressing
 
@@ -241,7 +266,8 @@ breaks ordinary interactive work, not just swarms.
 1. ~~`role` detection + guard 1 + tests 1–3~~ — **shipped**, closes the eight-hour bug
 2. ~~heartbeat + `$.store`~~ — **shipped**, 8 tests
 3. ~~`/fleet` pane~~ — **shipped**, 12 tests, verified live in tmux
-4. band + guards 2 and 3, after verifying guard 3's `isDelivered` assumption
+4. ~~band + guards 2 and 3~~ — **shipped**; guard 3's assumption was verified and disproved
+   first, and the design changed rather than the assumption being quietly kept
 
 ## Distribution
 

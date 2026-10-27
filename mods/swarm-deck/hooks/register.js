@@ -22,6 +22,8 @@ let swarm = null
 let lastTool = null
 let working = false
 let decided = []
+let sent = []
+let undelivered = 0
 
 /**
  * This session's own row in the machine-shared store.
@@ -39,6 +41,11 @@ function rowKey() {
 /** The forks this phase settled alone -- same one-writer rule as the row. */
 function decisionKey() {
   return 'swarm/' + swarm.slug + '/decided/' + swarm.phase
+}
+
+/** What this phase told the coordinator -- same one-writer rule again. */
+function sentKey() {
+  return 'swarm/' + swarm.slug + '/sent/' + swarm.phase
 }
 
 /** Name what this phase is doing. Never denies -- see its registration. */
@@ -70,6 +77,8 @@ async function publish($) {
       lastTool: lastTool,
       contextPct: contextPct,
       decided: decided.length,
+      sent: sent.length,
+      undelivered: undelivered,
       updatedAt: await $.clock.now(),
     })
   } catch (err) {
@@ -156,14 +165,118 @@ async function failClosed($, e, next) {
   return { deny: denyText(swarm) }
 }
 
+/**
+ * Mirror an outgoing report into the store, and note a send that went nowhere.
+ *
+ * THIS REPLACES THE DETECTOR THE DESIGN ASKED FOR, because the thing it was meant to
+ * detect is not detectable. `swarm.py spawn` warns that a child on a different permission
+ * mode than its coordinator has its reports "held for the user to approve", and the set
+ * then stalls in silence. The plan was to catch that on $.session.send's result -- but
+ * the engine's own types settle it: isDelivered true means the message "reached its
+ * recipient's queue or inbox", which a held message has. It reports success.
+ *
+ * So the channel is not made observable; it is made non-essential. Every report is also
+ * written to the store, which no approval gate sits in front of, and the coordinator
+ * reads it there. A held message stops being a lost night and becomes a slow one.
+ *
+ * isDelivered false is still worth recording -- it means nobody by that name, several by
+ * it, or the recipient gone -- which is a real misconfiguration the deck should show.
+ */
+async function mirror($, e, result) {
+  if (swarm === null) return
+  if (result && result.isDelivered === false) undelivered += 1
+  // Capped: the store holds 4 MiB for every session on the machine, and the ledger is
+  // the durable record. This is the live view of a night, not an archive.
+  sent = sent.concat([{
+    to: typeof e.to === 'string' ? e.to : JSON.stringify(e.to),
+    text: String(e.text || '').slice(0, 2000),
+    delivered: !(result && result.isDelivered === false),
+    at: await $.clock.now(),
+  }]).slice(-20)
+  try {
+    await $.store.set(sentKey(), sent)
+  } catch (err) {
+    // The message itself still went; only this copy of it is lost.
+  }
+  await publish($)
+}
+
+// ------------------------------------------------------- guard 2: interactive shells
+
+/**
+ * Shell commands that wait on a terminal nobody is sitting at.
+ *
+ * CLAUDE.md names these alongside AskUserQuestion as the ways a stall gets reintroduced,
+ * and they are worse in one respect: an editor or a pager holds the Bash tool open with
+ * no dialog on screen, so the session looks like it is working rather than waiting.
+ *
+ * The list is short on purpose, and it is a REMINDER, not a sandbox. Anthropic's own
+ * blast-radius sample documents that its pattern misses `git push -f`; this one will miss
+ * spellings too. Anything that genuinely must not run belongs in a permission deny rule.
+ */
+// Only at a command position: start of line, or after ; && || | -- optionally behind
+// sudo or an inline VAR=value. Without this anchor, `echo "on top of that"` matches
+// `top` and a legitimate command is refused.
+const CMD = '(?:^|[;&|\\n])\\s*(?:sudo\\s+|\\w+=\\S+\\s+)*'
+
+const INTERACTIVE = [
+  { re: new RegExp(CMD + '(?:vim?|nvim|nano|emacs|pico)\\b'), why: 'it opens an editor' },
+  { re: new RegExp(CMD + '(?:less|more|man)\\b'), why: 'it opens a pager that waits for a keypress' },
+  { re: new RegExp(CMD + '(?:top|htop|watch)\\b'), why: 'it runs until a key is pressed' },
+  { re: new RegExp(CMD + 'git\\s+(?:rebase|add|commit|clean|checkout)\\b[^;&|]*?\\s-{1,2}(?:i|interactive|patch)\\b'),
+    why: 'it opens an interactive git session' },
+]
+
+/**
+ * Blank the contents of quoted strings before matching.
+ *
+ * A commit message is not a command. Without this, `git commit -m "add -i support"`
+ * reads as an interactive rebase and `echo "one more thing"` reads as a pager -- and a
+ * guard that refuses legitimate work is worse than one that misses a case, because the
+ * phase it blocks has no way around it.
+ */
+function bare(command) {
+  return String(command).replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""')
+}
+
+function interactiveReason(command) {
+  const text = bare(command)
+  for (const probe of INTERACTIVE) {
+    if (probe.re.test(text)) return probe.why
+  }
+  return null
+}
+
+/** Refuse a command that would wait on a terminal nobody is watching. */
+async function shellGuard($, e, next) {
+  if (swarm === null) return next(e)
+  const why = interactiveReason(e.command || '')
+  if (why === null) return next(e)
+  return {
+    deny: 'Refused: ' + why + ', and this is phase ' + swarm.phase + ' of an unattended ' +
+      'swarm set. It would hold the Bash tool open with nothing on screen, which looks ' +
+      'like work rather than like waiting.\n\n' +
+      'Use the non-interactive form instead: a flag such as --no-pager, -y, --yes or ' +
+      '--batch, a here-doc or -m for text an editor would have collected, or the file ' +
+      'tools for an edit. If no non-interactive form exists, treat it as out of scope ' +
+      'for this phase and say so in your report.',
+  }
+}
+
+/** Fail CLOSED, for the same reason the AskUserQuestion guard does. */
+async function shellFailClosed($, e, next) {
+  if (swarm === null) return next(e)
+  const why = interactiveReason(e.command || '')
+  if (why === null) return next(e)
+  return { deny: 'The interactive-command guard failed, so this command was not run.' }
+}
+
 // ---------------------------------------------------------------- the deck
 
 // Rows read out of the store, newest read wins. Rendering must not await the store:
 // a ui.render hook runs on every redraw, and redraws are throttled at 30/s.
 let fleet = []
 let fleetSlug = null
-let paneOpen = false
-let paneTimer = null
 
 /** A row older than this has stopped heartbeating -- the thing the deck exists to spot. */
 const STALE_MS = 60000
@@ -218,18 +331,6 @@ function ago(now, then) {
   return (sec / 3600).toFixed(1) + 'h'
 }
 
-/** Stop refreshing once the pane is gone. */
-async function closePane($, e, next) {
-  if (e.id === 'fleet') {
-    paneOpen = false
-    if (paneTimer !== null) {
-      paneTimer.cancel()
-      paneTimer = null
-    }
-  }
-  return next(e)
-}
-
 /** The pane's tree. Box and Text only: it has to draw the same in tmux, Desktop and VS Code. */
 async function draw($, e) {
   const el = $.ui.resolve(e)
@@ -279,6 +380,31 @@ async function draw($, e) {
   return Box({ flexDirection: 'column', children: children })
 }
 
+/**
+ * What, if anything, needs a person right now. Null means draw nothing.
+ *
+ * A band that is always lit is noise, and noise is how the one night it matters gets
+ * scrolled past. So this reports only the two states a human has to act on, and the
+ * quiet set -- the overwhelmingly common case -- renders no band at all.
+ */
+function alarm(now) {
+  const quiet = []
+  const lost = []
+  for (const row of fleet) {
+    if (missing(row.updatedAt) || (now - row.updatedAt) > STALE_MS) quiet.push(row)
+    if (row.undelivered > 0) lost.push(row)
+  }
+  if (lost.length > 0) {
+    return 'phase ' + lost.map(r => r.phase).join(', ') +
+      ': a report reached nobody -- check the coordinator name in the ledger'
+  }
+  if (quiet.length > 0) {
+    const worst = quiet.map(r => ago(now, r.updatedAt)).join(', ')
+    return 'phase ' + quiet.map(r => r.phase).join(', ') + ' has gone quiet (' + worst + ')'
+  }
+  return null
+}
+
 export function register(on) {
   on('session.start', async ($, e, next) => {
     const slug = await $.env.get('SWARM_SLUG')
@@ -296,6 +422,11 @@ export function register(on) {
       // single $.store.set.
       $.clock.every(15000, async () => {
         await publish($)
+        // Refresh unconditionally, not only while the pane is open: the band has to be
+        // able to light for a sibling that went quiet in a session nobody has opened the
+        // deck in. Store reads outside a turn cost no tokens, which is what makes an
+        // always-on watch affordable at all.
+        await refresh($)
       })
       await publish($)
     }
@@ -326,22 +457,7 @@ export function register(on) {
     }
     await refresh($)
     await $.ui.open({ id: 'fleet', title: 'swarm ' + fleetSlug, focus: true, closeOnEscape: true })
-    paneOpen = true
-    if (paneTimer === null) {
-      // Only while the pane is open, and slower than the heartbeat: the rows cannot
-      // change faster than the sessions write them.
-      paneTimer = $.clock.every(5000, async () => {
-        if (paneOpen) await refresh($)
-      })
-    }
     return {}
-  })
-
-  // Fails open like the watcher: closing a pane must always succeed. The cleanup is
-  // repeated in the handler so a throw mid-way cannot leak the refresh timer.
-  on('ui.close', closePane).catch(async ($, e, next) => {
-    paneOpen = false
-    return next(e)
   })
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
@@ -350,7 +466,32 @@ export function register(on) {
     return draw($, e)
   })
 
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const text = alarm(await $.clock.now())
+    // Nothing wrong: hand the band back untouched so Claude Code draws its own.
+    if (text === null) return next(e)
+    const el = $.ui.resolve(e)
+    return el.Box({
+      flexDirection: 'row',
+      columnGap: 1,
+      children: [
+        el.Text({ color: 'yellow', children: ['swarm'] }),
+        el.Text({ children: [text] }),
+      ],
+    })
+  })
+
   on('tool.call', { tool: 'AskUserQuestion' }, guard).catch(failClosed)
+
+  on('tool.call', { tool: 'Bash' }, shellGuard).catch(shellFailClosed)
+
+  on('session.send', async ($, e, next) => {
+    // Observe only: a mod that refuses its own session's messages would be doing the
+    // thing it exists to prevent, one layer down.
+    const result = await next(e)
+    await mirror($, e, result)
+    return result
+  }).catch(async ($, e, next) => next(e))
 
   // Every other tool call, only to name what this phase is doing right now. No matcher,
   // so it must be the only unmatched tool.call registration in the module.
