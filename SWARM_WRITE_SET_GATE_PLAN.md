@@ -120,15 +120,20 @@ Every phase must hold all of these:
 
 **Progress:** phase 1 ✅ complete (`P1-CL-A021`, 2026-10-27) — `skills/swarm/plan_graph.py`
 root discovery and severity selection fixed, `skills/swarm/tests/test_plan_graph.py` added
-(13 cases). Phase 2 ✅ complete (`P1-CL-A022`, 2026-10-27, branch `swarm-wsg-p2`) — the two
+(13 cases). Phases 2 and 3 were unblocked together and ran as wave 1, each in its own
+worktree; the two share `skills/swarm/SKILL.md` on disjoint line regions (the measured ISOLATE
+row below).
+Phase 2 ✅ complete (`P1-CL-A022`, 2026-10-27, branch `swarm-wsg-p2`) — the two
 hardcoded seer constants replaced by a three-tier per-repo resolution
 (`.workflows/swarm.json` → `.gitattributes` → a project-agnostic suffix baseline) feeding a
 four-argument `classify()`; `agents/integrator.md` derives its suite from a repo ladder instead
 of naming `pytest engine/tests`; the harness grew 13 → 25 cases with phase 1's assertions intact
 (`"root"` key present, 1 all-clear, 2 `INCOMPLETE:`), and no new merge class was minted.
-Phase 3 (`P1-CL-A023`) is wave 1 alongside phase 2 and is running concurrently in its own
-worktree; the two share `skills/swarm/SKILL.md` on disjoint line regions (the measured ISOLATE
-row below). The per-phase tick lives here rather
+Phase 3 ✅ complete (`P1-CL-A023`, 2026-10-27) — `commands/analyze-orchestrator.md` Step 3b is
+now an enforcing gate (exit 1 stops, exit 2 remediates by class then stops, one round) with the
+`--no-gate` escape hatch in the flag block, and `skills/swarm/SKILL.md`'s exit-code paragraph
+says the same; committed on the isolated branch `swarm-wsg-p3` for the coordinator to integrate.
+`**Status:**` above is left to the coordinator. The per-phase tick lives here rather
 than in the table above because `swarm.py parse_index` reads every phase-table cell by name and
 requires the `#` cell to be a bare integer — a status column would diverge this index from the
 one `/analyze` generates. The authoritative phase status is the swarm ledger.
