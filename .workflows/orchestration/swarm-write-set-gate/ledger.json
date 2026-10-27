@@ -3,6 +3,12 @@
   "coordinator": "orch-swarm-write-set-gate",
   "coordinator_session_id": "91058943-f422-47d0-a1e0-b81f9a57954f",
   "created": "2026-10-27T02:27:00+00:00",
+  "landed": {
+    "at": "2026-10-27T02:58:49+00:00",
+    "base": "main",
+    "commit": "4cd8f2e23992547fcd70d10a57c3cddc3c895fe8",
+    "machine": "pc"
+  },
   "phases": [
     {
       "card": null,
@@ -24,47 +30,47 @@
     },
     {
       "card": null,
-      "commit": null,
+      "commit": "2b8b95e55b0bb7e5abb732fe7eb5213956413b2e",
       "depends_on": [
         1
       ],
       "difficulty": "HARD",
       "n": 2,
-      "note": "WAVE-1 ISOLATION (coordinator decision, rung 1: plan invariant 2 + the hand-declared write-set table). Phases 2 and 3 both write skills/swarm/SKILL.md concurrently -> ISOLATE. Each gets its own worktree cut from feature/swarm-write-set-gate after phase 1 lands; spawn --cwd <wt> (spawn --isolate does NOT exist: grep -c isolate swarm.py = 0). SYNC.SH CONCURRENCY: ./sync.sh deploys the WHOLE worktree tree to ~/.claude, so two isolated worktrees each running it would overwrite each other's work in the installed copy. Per-phase sync+verify is therefore TRANSIENT and satisfies each phase's own exit criterion; the AUTHORITATIVE ./sync.sh is the coordinator's, run from merged main at landing. Rung 1: invariant 2 requires the two trees to agree AT THE END.",
+      "note": "Per-repo artifact classes land as 3 tiers (.workflows/swarm.json > .gitattributes > suffix baseline); integrator derives its suite from a repo ladder. Decided: _match docstring example de-seered to data/snapshot.json per exit criterion (rung 2 over rung 3's code block); readme-updater skipped to keep the write set at the index's 5 declared files while p3 runs concurrently (rung 4). Harness 13->25, seer sweep 1559 rows -> only the predicted .pkl create->binary upgrade.",
       "package": "skills/swarm`, `agents",
       "plan": ".workflows/plan/swarm-write-set-gate/phase-2.md",
-      "reported_at": "2026-10-27T02:28:51+00:00",
+      "reported_at": "2026-10-27T02:51:20+00:00",
       "satisfies": [
         "R3",
         "R1"
       ],
-      "status": "spawned",
-      "task_id": null,
+      "status": "done",
+      "task_id": "P1-CL-A022",
       "title": "Per-repo artifact classes and test commands"
     },
     {
       "card": null,
-      "commit": null,
+      "commit": "0a54f905a32314e7485e82aae7802d839a4f6694",
       "depends_on": [
         1
       ],
       "difficulty": "NORMAL",
       "n": 3,
-      "note": "WAVE-1 ISOLATION (coordinator decision, rung 1: plan invariant 2 + the hand-declared write-set table). Phases 2 and 3 both write skills/swarm/SKILL.md concurrently -> ISOLATE. Each gets its own worktree cut from feature/swarm-write-set-gate after phase 1 lands; spawn --cwd <wt> (spawn --isolate does NOT exist: grep -c isolate swarm.py = 0). SYNC.SH CONCURRENCY: ./sync.sh deploys the WHOLE worktree tree to ~/.claude, so two isolated worktrees each running it would overwrite each other's work in the installed copy. Per-phase sync+verify is therefore TRANSIENT and satisfies each phase's own exit criterion; the AUTHORITATIVE ./sync.sh is the coordinator's, run from merged main at landing. Rung 1: invariant 2 requires the two trees to agree AT THE END.",
+      "note": "Gate enforcing: analyze-orchestrator Step 3b hard-stops exit 1, remediates exit 2 by class (ISOLATE->per-phase worktrees via 'git worktree add' + 'spawn --cwd'; ORDER/BLOCK->dep edge), one remediation round then stop; escape hatch --no-gate. SKILL.md :32-34 grown in place, nothing at/after old :35. DECIDED: (1) Step 3b disclaimer reworded to name no prompt primitive literally, rung 2 - exit criterion 3 and its grep forbid those spellings in Step 3b though the plan's code block used them; (2) SKILL.md keeps the plan's literal AskUserQuestion/[y/N], rung 3, no criterion forbids them there; (3) readme-updater skipped, rung 2/3 - no package_readme.md in this repo and README.md is phase 2's; (4) git rendered my SKILL.md edit as an insert AFTER old line 35, not a replace of 32-34, narrowing the reconciler's one-line margin, so I RE-RAN git merge-file against phase 2's real Step 9+10 text: rc=0, 0 conflict markers, all 3 edits present - ISOLATE stands, measured not assumed. Status line 9 left to the coordinator: phases 1+3 done, 2 in flight, so an ordinal there would mislead and would be a second writer on phase 2's line.",
       "package": "commands`, `skills/swarm",
       "plan": ".workflows/plan/swarm-write-set-gate/phase-3.md",
-      "reported_at": "2026-10-27T02:28:51+00:00",
+      "reported_at": "2026-10-27T02:51:01+00:00",
       "satisfies": [
         "R2"
       ],
-      "status": "spawned",
-      "task_id": null,
+      "status": "done",
+      "task_id": "P1-CL-A023",
       "title": "Make the gate a gate: enforce exits 1 and 2"
     }
   ],
   "plan": "/home/miftah/claude-commands/.workflows/orchestration/swarm-write-set-gate/PLAN.md",
   "repo": "/home/miftah/claude-commands",
   "slug": "swarm-write-set-gate",
-  "updated": "2026-10-27T02:41:31+00:00",
+  "updated": "2026-10-27T02:58:49+00:00",
   "worktree": "/home/miftah/.worktrees/claude-commands/swarm-write-set-gate"
 }
