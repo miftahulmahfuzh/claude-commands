@@ -6,7 +6,7 @@
 **Worktree:** `~/.worktrees/claude-commands/swarm-write-set-gate`
 **Branch:** `feature/swarm-write-set-gate` (base: `origin/main` @ `471d34a`)
 **Phases:** 3
-**Status:** phase 2/3 complete
+**Status:** complete — all 3 phases landed, wave 1 integrated at `5e0e586`
 **Reconciled:** 2026-10-27, round 1 — 11 conflicts, 11 resolved, Open Questions empty
 **Coordinator:** —
 
