@@ -268,6 +268,44 @@ breaks ordinary interactive work, not just swarms.
 3. ~~`/fleet` pane~~ — **shipped**, 12 tests, verified live in tmux
 4. ~~band + guards 2 and 3~~ — **shipped**; guard 3's assumption was verified and disproved
    first, and the design changed rather than the assumption being quietly kept
+5. ~~the coordinator's deck~~ — **shipped**; see *Identity and discovery are not the same
+   lookup* below
+
+## Identity and discovery are not the same lookup
+
+Slice 5 reintroduces the cwd lookup slice 1 rejected — for the deck only, and the asymmetry is
+the point:
+
+- **Identity** (`SWARM_SLUG` / `SWARM_PHASE`) arms the guards. A wrong answer disarms a guard
+  in precisely the session that needed it: a lost night. It stays in the environment.
+- **Discovery** (list `.workflows/orchestration/` under `$.session.repo().root`) only points
+  the dashboard. A wrong answer shows the wrong set, or none. Read-only, no safety property.
+
+Same mechanism, different blast radius, different answer. The code says so at both sites, and
+a test asserts that a session which *discovered* a set still passes `AskUserQuestion` and
+`vim` straight through — because if the two are ever merged, every ordinary session in a repo
+that once ran a swarm loses the ability to ask its user anything.
+
+One set is adopted silently; several are listed for the user to name. A dashboard confidently
+showing the wrong run is worse than one that asks.
+
+### The bug slice 5 fixes
+
+The refresh timer was started inside slice 2's `slug && phase` branch — a phase-only path. A
+coordinator that ran `/fleet` therefore got one snapshot and a deck that never updated again.
+The refresh belongs to the deck, not to being a phase. **A dashboard that silently stops
+updating is worse than no dashboard, because it still looks right.**
+
+### What the test suite could not catch
+
+Two defects in slice 5 survived a green suite and were found by running it in a real repo:
+
+- `$.fs.list` reports a directory as `kind: 'dir'`, not `'directory'`. The filter matched
+  nothing — and **the unit test agreed, because its stub was written from the same wrong
+  guess.** A stub written from memory validates the memory, not the engine.
+- Claude Code prefixes a command's reply with the plugin's name, so text beginning
+  `'swarm-deck: '` renders as `swarm-deck: swarm-deck: …` — the same duplicate the slice 3
+  live run turned up in `$.ui.log`, reintroduced in a different call.
 
 ## Distribution
 

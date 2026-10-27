@@ -276,10 +276,46 @@ async function shellFailClosed($, e, next) {
 // Rows read out of the store, newest read wins. Rendering must not await the store:
 // a ui.render hook runs on every redraw, and redraws are throttled at 30/s.
 let fleet = []
+let reports = []
 let fleetSlug = null
+let deckTimer = null
 
 /** A row older than this has stopped heartbeating -- the thing the deck exists to spot. */
 const STALE_MS = 60000
+
+/**
+ * Find the set this session should watch, for a session that is not itself a phase.
+ *
+ * THIS IS THE cwd LOOKUP SLICE 1 REJECTED, AND THE REVERSAL IS DELIBERATE -- do not
+ * "fix" the inconsistency by reintroducing it for identity. Identity arms a guard, so a
+ * wrong answer there disarms the guard in precisely the session that needed it, which is
+ * a lost night. The deck is read-only: a wrong answer here points a dashboard at the
+ * wrong set, or at none. Same mechanism, different blast radius, different answer.
+ *
+ * One set is adopted silently. Several are not guessed between -- /fleet lists them and
+ * the user names one, because a dashboard confidently showing the wrong run is worse
+ * than a dashboard that asks.
+ */
+async function discover($) {
+  let root = null
+  try {
+    const repo = await $.session.repo()
+    root = repo && repo.root
+  } catch (err) {
+    return []
+  }
+  if (!root) return []
+  try {
+    const entries = await $.fs.list(root + '/.workflows/orchestration')
+    // 'dir', not 'directory'. The first draft guessed the latter, matched nothing, and
+    // the unit test agreed with it because the stub was written from the same guess --
+    // which is why this one needed a real repo to catch.
+    return entries.filter(x => x.kind === 'dir').map(x => x.name)
+  } catch (err) {
+    // No orchestration directory: this repo has never run a set.
+    return []
+  }
+}
 
 /**
  * Re-read every phase row of one set and ask for a redraw.
@@ -296,18 +332,32 @@ async function refresh($) {
     return
   }
   const prefix = 'swarm/' + fleetSlug + '/phase/'
+  const sentPrefix = 'swarm/' + fleetSlug + '/sent/'
   const rows = []
+  const latest = []
   for (const key of keys) {
-    if (!key.startsWith(prefix)) continue
     try {
-      const row = await $.store.get(key)
-      if (row) rows.push(row)
+      if (key.startsWith(prefix)) {
+        const row = await $.store.get(key)
+        if (row) rows.push(row)
+      } else if (key.startsWith(sentPrefix)) {
+        // The mirrored reports. Without reading these the durability fix is write-only:
+        // the text survives an approval gate and then nobody can see it.
+        const list = await $.store.get(key)
+        if (list && list.length > 0) {
+          const last = list[list.length - 1]
+          latest.push({ phase: key.slice(sentPrefix.length), text: last.text, at: last.at,
+                        delivered: last.delivered })
+        }
+      }
     } catch (err) {
-      // One unreadable row must not blank the whole deck.
+      // One unreadable key must not blank the whole deck.
     }
   }
   rows.sort((a, b) => Number(a.phase) - Number(b.phase))
+  latest.sort((a, b) => Number(a.phase) - Number(b.phase))
   fleet = rows
+  reports = latest
   $.ui.invalidate('ui.render')
 }
 
@@ -377,6 +427,28 @@ async function draw($, e) {
     children.push(Text({ dimColor: true, children: ['Review before the set lands.'] }))
   }
 
+  if (reports.length > 0) {
+    children.push(Text({ children: [' '] }))
+    children.push(Text({ children: ['Latest report'] }))
+    // The width the pane actually has, so a long report wraps instead of being clipped.
+    const width = Math.max(20, (e.props && e.props.bodyColumns) || 60)
+    for (const report of reports) {
+      children.push(Box({
+        flexDirection: 'row',
+        columnGap: 1,
+        children: [
+          Text({ dimColor: true, children: ['p' + report.phase] }),
+          Text({ wrap: 'wrap', dimColor: !report.delivered,
+                 color: report.delivered ? undefined : 'yellow',
+                 children: [String(report.text || '').slice(0, width * 3).replace(/\s+/g, ' ')] }),
+        ],
+      }))
+      if (!report.delivered) {
+        children.push(Text({ color: 'yellow', children: ['  reached nobody -- read it here'] }))
+      }
+    }
+  }
+
   return Box({ flexDirection: 'column', children: children })
 }
 
@@ -422,17 +494,30 @@ export function register(on) {
       // single $.store.set.
       $.clock.every(15000, async () => {
         await publish($)
-        // Refresh unconditionally, not only while the pane is open: the band has to be
-        // able to light for a sibling that went quiet in a session nobody has opened the
-        // deck in. Store reads outside a turn cost no tokens, which is what makes an
-        // always-on watch affordable at all.
-        await refresh($)
       })
       await publish($)
     }
-    // The deck reads whichever set this session belongs to. A coordinator that is not
-    // itself a phase still gets /fleet: it names the set as an argument.
-    if (slug) fleetSlug = slug
+    // The deck reads whichever set this session belongs to. A session that is not a
+    // phase -- a coordinator, most often -- discovers the set instead.
+    if (slug) {
+      fleetSlug = slug
+    } else {
+      const sets = await discover($)
+      if (sets.length === 1) fleetSlug = sets[0]
+    }
+    // SHIPPED BUG, slice 4: this timer lived inside the `slug && phase` branch, so a
+    // coordinator that ran /fleet got one snapshot and a deck that never updated again.
+    // The refresh belongs to the deck, not to being a phase -- and a dashboard that
+    // silently stops updating is worse than no dashboard, because it still looks right.
+    if (fleetSlug !== null) {
+      // Store reads outside any turn cost no tokens, which is what makes an always-on
+      // watch affordable, and what lets the band light in a session nobody opened the
+      // deck in.
+      deckTimer = $.clock.every(15000, async () => {
+        await refresh($)
+      })
+      await refresh($)
+    }
     // Registered last in this hook: $.command.register throws on a taken name, and a
     // hook that throws is skipped -- which would take the heartbeat down with it.
     try {
@@ -453,9 +538,21 @@ export function register(on) {
   on('command.run', { command: 'fleet' }, async ($, e) => {
     if (e.args) fleetSlug = e.args.trim()
     if (fleetSlug === null) {
-      return { text: 'swarm-deck: no set in this session. Try /fleet <slug>.' }
+      const sets = await discover($)
+      if (sets.length === 0) {
+        return { text: 'no orchestrated set in this repo. Try /fleet <slug>.' }
+      }
+      // Several: name them rather than pick one. A deck confidently showing the wrong
+      // run is worse than one that asks.
+      return { text: 'several sets here. Pick one:\n  /fleet ' + sets.join('\n  /fleet ') }
     }
     await refresh($)
+    // A session that named a set after startup has no timer yet.
+    if (deckTimer === null) {
+      deckTimer = $.clock.every(15000, async () => {
+        await refresh($)
+      })
+    }
     await $.ui.open({ id: 'fleet', title: 'swarm ' + fleetSlug, focus: true, closeOnEscape: true })
     return {}
   })

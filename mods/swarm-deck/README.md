@@ -114,6 +114,13 @@ means "reached its recipient's queue or inbox" — which a held message has. So 
 made non-essential rather than observable. The coordinator reads the report from the store,
 where no approval gate sits.
 
-That is all four slices.
+A session that is **not** a phase — a coordinator, usually — gets the deck anyway: it finds
+the set by listing `.workflows/orchestration/` under the repo root. That is the cwd lookup the
+identity plumbing deliberately refuses, and the asymmetry is the point. Identity arms a guard,
+so a wrong answer there disarms it in the session that needed it. Discovery only aims a
+dashboard. A test pins that a discovered set never arms the refusal.
+
+One set is adopted silently; several are listed for you to name, because a deck confidently
+showing the wrong run is worse than one that asks.
 
 MIT.
