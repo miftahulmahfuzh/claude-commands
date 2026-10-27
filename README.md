@@ -1,7 +1,8 @@
 # claude-commands
 
-Slash commands, subagents, and skills for [Claude Code](https://claude.ai/code). Each file is a
-prompt, not a program — there is nothing to build or run.
+Slash commands, subagents, skills, and a mod for [Claude Code](https://claude.ai/code). Almost
+every file is a prompt, not a program — there is nothing to build or run. The one exception is
+[`mods/swarm-deck`](mods/swarm-deck), which is JavaScript that runs inside Claude Code itself.
 
 ## Install
 
@@ -12,7 +13,8 @@ cd claude-commands
 ```
 
 `sync.sh` copies `commands/*` → `~/.claude/commands/`, `agents/*` → `~/.claude/agents/`,
-`skills/*` → `~/.claude/skills/`. Re-run it after any edit.
+`skills/*` → `~/.claude/skills/`. Re-run it after any edit. The mod is **not** synced — see
+[Mods](#mods) for why it loads from the repo instead.
 
 **Legacy installs:** earlier versions were cloned directly into `~/.claude/commands/`, leaving
 repo files that show up as bogus commands, plus `.subagents/` and `.workflows/` that Claude Code
@@ -880,6 +882,55 @@ TaskIDs are `P{0-3}-{SCOPE}-{ID}` (e.g. `P0-DB-A236`), unique across every `todo
 repo. Tasks are tagged EASY / NORMAL / HARD; EASY and NORMAL can run from the task description
 alone, HARD requires a plan file — and `/do` gets one by running `/analyze` rather than by asking
 for it.
+
+---
+
+## Mods
+
+A [mod](https://code.claude.com/docs/en/plugins/mods/overview) is a plugin whose JavaScript hooks
+run **inside** Claude Code's process. Unlike a settings hook, which is a shell command fired at a
+lifecycle event, a mod's hook sits in front of the event as middleware and can observe it, rewrite
+it, or **answer it outright** — so a tool call can be refused rather than merely logged. Mods need
+Claude Code v2.1.287 or later.
+
+### `mods/swarm-deck`
+
+Makes the swarm's central invariant mechanical: **a phase session cannot block on a human.**
+
+The orchestration docs already said it — *a phase that asks stalls its dependents, a coordinator
+that asks stalls the whole set* — but they said it in a prompt, and a prompt is advice. MEASURED:
+a phase-2 session held an `AskUserQuestion` for eight hours and stalled a six-phase set whose
+answer was rung 1 of the precedence ladder.
+
+`swarm-deck` hooks `tool.call` on `AskUserQuestion` in any session `swarm.py spawn` launched as a
+phase, and refuses it — handing back the precedence ladder as the tool result so the phase decides
+on the highest rung that settles it, and recording the decision for the coordinator's morning
+review. Outside a swarm it is dormant and ordinary sessions are untouched.
+
+It **fails closed**: a mod hook that throws is normally *skipped*, which here would let the dialog
+render and stall the night, so the guard carries a `.catch` that re-issues the refusal. A test
+forces the throw and asserts the refusal survives it.
+
+```bash
+cd mods/swarm-deck
+claude plugin validate .   # the events, calls and env reads the engine will actually see
+claude plugin test         # offline: no session, no sign-in, no network
+```
+
+It loads from the repo rather than through `sync.sh`:
+
+```jsonc
+// ~/.claude/settings.json
+{ "env": { "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/claude-commands/mods/swarm-deck" } }
+```
+
+Installed plugins are cached by version, and edits do not reach the installed copy without a
+version bump — which is the same "deployed tree silently diverges from the repo" failure this
+repo keeps a whole section of `CLAUDE.md` about. Pointing the loader at the repo leaves one
+source of truth.
+
+Full notes: [`mods/swarm-deck/README.md`](mods/swarm-deck/README.md), design in
+[`docs/swarm-deck-mod-design.md`](docs/swarm-deck-mod-design.md).
 
 ---
 

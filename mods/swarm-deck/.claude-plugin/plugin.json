@@ -1,0 +1,7 @@
+{
+  "name": "swarm-deck",
+  "version": "0.1.0",
+  "description": "Makes the swarm's no-ask invariant mechanical: a phase session cannot block on a human, and the coordinator can watch the fleet without spending a turn",
+  "author": { "name": "miftahulmahfuzh" },
+  "license": "MIT"
+}

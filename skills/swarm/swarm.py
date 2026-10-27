@@ -562,8 +562,32 @@ def thread_cap_env(environ=None):
     return out
 
 
+IDENTITY = ("SWARM_SLUG", "SWARM_PHASE", "SWARM_COORDINATOR")
+
+
+def identity_env(slug, phase, coordinator=None):
+    """`-e VAR=value` pairs telling a child which phase of which set it is.
+
+    The swarm-deck mod reads these to arm its no-ask guard. It needs an answer BEFORE
+    the first prompt, in a session that may later cd anywhere, so the identity travels
+    in the environment rather than being re-derived from the cwd: `find` keys on a plan
+    path or a TaskID, and a child that has wandered out of its worktree would come back
+    "no swarm owns that" -- which disarms the guard in exactly the session that needs it.
+
+    Both halves or neither: the mod treats a slug without a phase as a shape change
+    upstream and stays dormant rather than guessing, so emitting a partial pair here
+    would silently disable the guard instead of failing loudly.
+    """
+    if not slug or phase is None:
+        return []
+    out = ["-e", f"SWARM_SLUG={slug}", "-e", f"SWARM_PHASE={phase}"]
+    if coordinator:
+        out += ["-e", f"SWARM_COORDINATOR={coordinator}"]
+    return out
+
+
 def spawn_argv(name, cwd, prompt, permission_mode=None, model=None, keep_open=True,
-               environ=None):
+               environ=None, slug=None, phase=None, coordinator=None):
     inner = ["claude", "-n", name]
     if permission_mode:
         inner += ["--permission-mode", permission_mode]
@@ -577,6 +601,7 @@ def spawn_argv(name, cwd, prompt, permission_mode=None, model=None, keep_open=Tr
         command += "; exec ${SHELL:-/bin/sh}"
     return (["tmux", "new-window", "-d", "-n", name, "-c", cwd]
             + thread_cap_env(environ)
+            + identity_env(slug, phase, coordinator)
             + ["-P", "-F", "#{window_id} #{pane_id}", command])
 
 
@@ -860,7 +885,9 @@ def cmd_spawn(args):
             return soft(f"no plan index found for {slug}", recorded=ledger.get("plan"),
                         hint="re-run init with --plan pointing at the set's PLAN.md")
         prompt = f"/implement -f {plan} --phase {args.phase}"
-    argv = spawn_argv(name, cwd, prompt, args.permission_mode, args.model)
+    argv = spawn_argv(name, cwd, prompt, args.permission_mode, args.model,
+                      slug=slug, phase=args.phase,
+                      coordinator=ledger.get("coordinator"))
     trust = ensure_trusted(cwd, ledger.get("repo") or repo, enabled=not args.no_trust)
 
     if args.dry_run:
@@ -1959,6 +1986,26 @@ def selftest():
     eq("every cap is a tmux -e pair", thread_cap_env({}).count("-e"), len(THREAD_CAPS))
     eq("the command stays last, after the env flags",
        spawn_argv("n", "/tmp", "p", environ={})[-1].startswith("claude -n n"), True)
+
+    # A child learns which phase it is from its environment, because the swarm-deck
+    # mod has to arm its no-ask guard before the first prompt -- see identity_env.
+    ident = spawn_argv("n", "/tmp", "p", environ={}, slug="write-gate", phase=2,
+                       coordinator="impl-write-gate")
+    eq("a child is told its set", "SWARM_SLUG=write-gate" in ident, True)
+    eq("and its phase", "SWARM_PHASE=2" in ident, True)
+    eq("and who to report to", "SWARM_COORDINATOR=impl-write-gate" in ident, True)
+    eq("phase 0 is a phase, not a missing one",
+       "SWARM_PHASE=0" in spawn_argv("n", "/tmp", "p", environ={}, slug="s", phase=0),
+       True)
+    eq("an unidentified session gets no SWARM_ pair at all",
+       [a for a in spawn_argv("n", "/tmp", "p", environ={}) if a.startswith("SWARM_")],
+       [])
+    eq("a slug with no phase arms nothing rather than half-arming the guard",
+       [a for a in spawn_argv("n", "/tmp", "p", environ={}, slug="s") if "SWARM_" in a],
+       [])
+    eq("the coordinator is optional, the identity is not",
+       [a for a in identity_env("s", 1) if a != "-e"],
+       ["SWARM_SLUG=s", "SWARM_PHASE=1"])
 
     # The plan a child is handed must exist: the recorded path is only a first guess.
     with tempfile.TemporaryDirectory() as tmp:

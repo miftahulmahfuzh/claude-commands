@@ -1,0 +1,4 @@
+{
+  "description": "swarm-deck hooks module",
+  "modules": ["./register.js"]
+}
