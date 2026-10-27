@@ -6,32 +6,22 @@
 
 **Last Updated**: 2026-10-27
 
-**Total Active Tasks**: 2
+**Total Active Tasks**: 1
 
 ## Quick Stats
 - P0 Critical: 0
-- P1 High: 2
+- P1 High: 1
 - P2 Medium: 0
 - P3 Low: 0
 - P4 Backlog: 0
 - Blocked: 0
-- Completed Today: 15
-- Completed This Week: 15
-- Completed This Month: 16
+- Completed Today: 16
+- Completed This Week: 16
+- Completed This Month: 17
 
 ---
 
 ## Active Tasks
-
-- [ ] **P1-CL-A022** Phase 2: Per-repo artifact classes and test commands
-  - **Difficulty**: HARD
-  - **Type**: Refactor
-  - **Context**: Owns `plan_graph.py`'s docstring, `GENERATED`/`REGENERATED_TEXT`/`classify()` (replaced by `CONFIG_PATH`, `BASELINE_BINARY`, `load_config`, `_norm`, `_match`, `gitattributes_classes`, a four-arg `classify`) plus three phase-1 regions (`build()`'s file loop, its `return` — which must keep the `"root"` key — and `render()`'s `out = [...]`); `agents/integrator.md` steps 2 and 4; `skills/swarm/SKILL.md` at line >= 39 only; `README.md`; and 12 appended `@case` functions in phase 1's harness. Exit: no seer-specific path or command remains; an unconfigured repo still classifies from a project-agnostic baseline and Hugo `resources/_gen/` classifies ORDER once declared; the seer values reproduce as a worked example of the mechanism; `integrator.md` derives its suite from the repo via the `DESIGN.md:239-242` ladder; phase 1's work survives (`"root"` intact, 1 all-clear, 2 `INCOMPLETE:`, 25 cases); no new merge class; `README.md` names `.workflows/swarm.json` twice and `tests/`; verified against the installed copy after `./sync.sh`.
-  - **Status**: open
-  - **Plan Set**: `SWARM_WRITE_SET_GATE_PLAN.md` (phase 2 of 3)
-  - **Satisfies**: R3, R1 (one README line) — R3: Make the generated/binary artifact list and the integrator's test commands per-repo; design and argue the mechanism; keep the seer values working as data. R1 (one line): the `README.md` Project Structure entry for the `skills/swarm/tests/` harness phase 1 ships.
-  - **Depends on**: P1-CL-A021
-  - **Plan**: `.workflows/plan/P1-CL-A022.md`
 
 - [ ] **P1-CL-A023** Phase 3: Make the gate a gate: enforce exits 1 and 2
   - **Difficulty**: NORMAL
@@ -48,6 +38,20 @@
 ## Completed Tasks
 
 ### Recently Completed
+- [x] **P1-CL-A022** Phase 2: Per-repo artifact classes and test commands
+  - **Difficulty**: HARD
+  - **Type**: Refactor
+  - **Plan Set**: `SWARM_WRITE_SET_GATE_PLAN.md` (phase 2 of 3)
+  - **Satisfies**: R3, R1 (one README line) — R3: Make the generated/binary artifact list and the integrator's test commands per-repo; design and argue the mechanism; keep the seer values working as data. R1 (one line): the `README.md` Project Structure entry for the `skills/swarm/tests/` harness phase 1 ships.
+  - **Plan**: `.workflows/plan/P1-CL-A022.md`
+  - **Completed**: 2026-10-27 09:49
+  - **Method**: `/do P1-CL-A022` (swarm phase 2, wave 1, branch `swarm-wsg-p2`)
+  - **Files**: skills/swarm/plan_graph.py, skills/swarm/tests/test_plan_graph.py, agents/integrator.md, skills/swarm/SKILL.md, README.md
+  - **What landed**: R3 — the two hardcoded seer constants (`GENERATED`, `REGENERATED_TEXT`) are gone from `plan_graph.py`, replaced by a three-tier per-repo resolution: an explicit `.workflows/swarm.json` first, then the repo's own `.gitattributes` (`binary`/`-diff`/`linguist-generated` markers), then a project-agnostic suffix baseline. `classify()` is now four-argument and takes the resolved classes as data; `load_config`, `_norm`, `_match`, `gitattributes_classes`, `CONFIG_PATH` and `BASELINE_BINARY` are the new surface. The seer values survive as a worked example of the mechanism in `SKILL.md`, not as a built-in default, and `lab.xlsx` keeps its existing ORDER classification per the index's Decisions ("do not regress those plan sets"). `agents/integrator.md` steps 2 and 4 no longer name `pytest engine/tests`: the suite is derived from a repo ladder in the shape of `skills/task/DESIGN.md:239-242` (package.json scripts → Makefile → pytest → cargo → go test). `README.md` gained the `.workflows/swarm.json` references and the Project Structure `tests/` line (R1's one line, assigned here by reconciliation conflict 7).
+  - **Verified**: harness 13 → **25 cases**, all passing; phase 1's work intact — `build()`'s returned dict still carries `"root"`, `grep -c "no file is written by two phases"` = 1 and `grep -c "INCOMPLETE:"` = 2; no new merge class minted (`classify()` still returns only `read`/`binary`/`generated`/`create`/`modify`), so phase 1's `SEVERITY` needed no row; the R3 exit-criterion grep over `plan_graph.py` and `integrator.md` returns nothing; verified against the installed copy after `./sync.sh`.
+  - **Decided**: Step 3's `_match` docstring shipped `web/data/lab.json` as a path example, but the phase exit criterion requires the seer grep over `plan_graph.py` to return nothing → replaced with `data/snapshot.json` (identical length, alignment preserved; no test asserts on the docstring). Rung 2 (phase exit criteria) over rung 3 (the plan's code block); also satisfies the index's looser "nothing but documentation-of-the-example".
+  - **Decided**: `readme-updater` deliberately NOT run → the plan index's hand-declared write-set table is the authority while phase 3 runs concurrently, and it lists exactly 5 files with no `package_readme.md`. Creating one would add a 6th, unowned file to a concurrent wave. `README.md` documentation is already this phase's own Step 11. Rung 4 (the index's write-set table) + "never widen scope to settle an ambiguity".
+
 - [x] **P1-CL-A021** Phase 1: Gate correctness: worktree root discovery + severity selection
   - **Difficulty**: NORMAL
   - **Type**: Bug

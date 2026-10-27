@@ -497,7 +497,13 @@ python3 ~/.claude/skills/swarm/swarm.py waves  --slug <slug>
 python3 ~/.claude/skills/swarm/swarm.py verify --slug <slug> --apply
 python3 ~/.claude/skills/swarm/swarm.py reap   --slug <slug>       # close finished windows
 python3 ~/.claude/skills/swarm/swarm.py selftest
+python3 ~/.claude/skills/swarm/plan_graph.py <PLAN.md>   # the write-set gate, before spawning
 ```
+
+Which of a repo's paths are generated or binary — and which suite the `integrator` runs after
+merging a wave — is per-repo, not baked into the tool: an optional `<repo>/.workflows/swarm.json`
+declares them, on top of what the repo's `.gitattributes` already says and a universal suffix
+baseline. See `skills/swarm/SKILL.md`, "Per-repo artifact classes".
 
 ### `create-task`
 The front door to the same board. `/create-task "…"` opens the issue, adds it to the board, and
@@ -838,7 +844,7 @@ claude-commands/
 │   ├── fetch-gdocs-content/  # + gdocs_fetch.py
 │   ├── create-task/
 │   ├── task/                 # + DESIGN.md, taskcore/task_gh/task_gl/todos/session.py
-│   ├── swarm/                # + swarm.py — the orchestrator's mechanics
+│   ├── swarm/                # + swarm.py, plan_graph.py, tests/ — the orchestrator's mechanics
 │   ├── sync-todos-into-gitlab-board/  # + sync_todos.py
 │   ├── reap-orphaned-blobs/
 │   ├── analyze-and-fix-slow-tmux-pane-creation/  # + diagnose.sh
@@ -864,6 +870,8 @@ your-project/
 │   ├── plan/{TaskID}.md
 │   └── postmortem/{TaskID}.md
 ├── .workflows/plan/<slug>/phase-N.md      # repo root, one per phase
+├── .workflows/swarm.json                  # repo root, optional — this repo's generated
+│                                          #   and binary paths, and its full suite
 ├── 20250108-164512-A3F7_code_analyzer.md  # repo root
 └── PURGE_..._PLAN.md                      # repo root, the plan index
 ```
