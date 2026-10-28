@@ -55,11 +55,22 @@ Check each planted trap: hit, avoided deliberately, or avoided by accident?
 
 ## Step 4 — Get a cold read
 
-Dispatch **one** `general-purpose` subagent. Give it the brief, the ground truth and
-`TRANSCRIPT.md` — and *not* your own account of the run. Ask it to score the seven
-dimensions in `~/cv-problems/reference/prompting-playbook.md` from the transcript
-alone, quote the weakest instruction verbatim, and name the single highest-leverage
-change.
+Run the headless scorer; it starts a fresh `claude -p` session with the repo root as
+its cwd and scores `TRANSCRIPT.md` against the brief, the ground truth and the
+playbook, with no account of the run from you:
+
+```bash
+cd ~/cv-problems
+python3 bin/cvtest.py coldread --attempt attempts/<date>-<slug>
+```
+
+It writes `attempts/<slug>/COLD_READ.md`; read it. **Do not use a subagent for this.**
+A subagent spawned from inside the run inherits the workspace `CLAUDE.md` (no reading
+outside the directory, no grading), cannot see that you invoked this skill, and refuses
+to score. `coldread` avoids that by starting outside the run directory.
+
+If `coldread` fails, say so in the evaluation and score alone; do not retry through a
+subagent.
 
 You helped produce this work, so you are a lenient judge of the instructions that
 produced it. The cold read is the correction for that. Where it disagrees with you,
