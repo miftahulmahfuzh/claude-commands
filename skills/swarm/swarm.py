@@ -70,7 +70,7 @@ import shlex
 import subprocess
 import sys
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 MAX_NAME = 60                      # session.py's cap; a tab title renders this
@@ -87,8 +87,15 @@ TERMINAL = ("done", "failed", "blocked")
 SHELLS = ("sh", "bash", "zsh", "fish", "dash", "ksh", "ksh93", "tcsh", "csh")
 
 
+# Ledger timestamps are read by a person in Jakarta, so they are written in WIB rather than
+# UTC: a "reported_at" four hours off the wall clock reads as a phase that stalled. A fixed
+# offset, not zoneinfo -- WIB has no DST, and this keeps the script free of tzdata.
+# The offset stays in the string, so the instant is unambiguous either way.
+WIB = timezone(timedelta(hours=7), "WIB")
+
+
 def now():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(WIB).isoformat(timespec="seconds")
 
 
 def slugify(name):
