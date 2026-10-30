@@ -139,3 +139,82 @@ test('the mirrored report is readable on the deck, not merely stored', async ($,
   expect(await ui.find({ type: 'Text', text: /reached nobody -- read it here/ })).toBeDefined()
   await ui.unmount()
 })
+
+/**
+ * A coordinator whose repo's sets and ledgers can change under it, as they do when
+ * /analyze-orchestrator creates its own set after the session started.
+ */
+function asLiveCoordinator(on: any, sets: string[], ledgers: Record<string, unknown>, sessionId: string) {
+  mock.env(on, {})
+  on('session.start', () => ({ cwd: '/repo' }))
+  on('session.id', () => ({ value: sessionId }))
+  on('command.register', () => ({ value: undefined }))
+  on('session.repo', () => ({ value: { root: '/repo', remote: null } }))
+  on('fs.list', () => ({ value: sets.map(name => ({ name, kind: 'dir', size: 0, isLink: false })) }))
+  on('fs.read', ($: any, e: any) => {
+    const slug = e.path.split('/').slice(-2)[0]
+    if (!(slug in ledgers)) throw new Error('ENOENT ' + e.path)
+    return { value: JSON.stringify(ledgers[slug]) }
+  })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.render', () => ({ type: 'Text', props: {}, children: ['drawn by Claude Code'] }))
+  on('session.usage', () => USAGE)
+}
+
+test('a coordinator started beside a landed set gets its OWN set on /fleet, not the old one', async ($, on) => {
+  // SHIPPED BUG: orch-chat-bar-brain started while notes-spine-images-ui -- landed an hour
+  // earlier -- was the only directory under .workflows/orchestration/. It was adopted
+  // silently at session.start and /fleet kept drawing it after chat-bar-brain existed.
+  const sets = ['notes-spine-images-ui']
+  const ledgers: Record<string, unknown> = {
+    'notes-spine-images-ui': { slug: 'notes-spine-images-ui', coordinator_session_id: 'old', landed: { commit: 'abc' } },
+  }
+  asLiveCoordinator(on, sets, ledgers, 'me')
+  mock.clock(on)
+  storeSpy(on, {
+    'swarm/notes-spine-images-ui/phase/1': { slug: 'notes-spine-images-ui', phase: '1', status: 'done', updatedAt: 0 },
+    'swarm/chat-bar-brain/phase/1': { slug: 'chat-bar-brain', phase: '1', status: 'working', updatedAt: 0 },
+  })
+
+  await $.session.start(START)
+  sets.push('chat-bar-brain')
+  ledgers['chat-bar-brain'] = { slug: 'chat-bar-brain', coordinator_session_id: 'me' }
+  const answer = await $.command.run({ command: 'fleet', args: '' })
+
+  expect(answer.text).toBeUndefined()
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: 'set chat-bar-brain' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a set this session coordinates wins over other live sets', async ($, on) => {
+  asLiveCoordinator(on, ['a-set', 'b-set'], {
+    'a-set': { slug: 'a-set', coordinator_session_id: 'someone-else' },
+    'b-set': { slug: 'b-set', coordinator_session_id: 'me' },
+  }, 'me')
+  mock.clock(on)
+  storeSpy(on)
+
+  await $.session.start(START)
+  const answer = await $.command.run({ command: 'fleet', args: '' })
+
+  expect(answer.text).toBeUndefined()
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: 'set b-set' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a landed set is never adopted silently, but can still be named', async ($, on) => {
+  asLiveCoordinator(on, ['old-set'], { 'old-set': { slug: 'old-set', landed: { commit: 'abc' } } }, 'me')
+  mock.clock(on)
+  storeSpy(on)
+
+  await $.session.start(START)
+  // One directory, but it is history: listed, not adopted.
+  expect((await $.command.run({ command: 'fleet', args: '' })).text).toContain('/fleet old-set')
+
+  expect((await $.command.run({ command: 'fleet', args: 'old-set' })).text).toBeUndefined()
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Text', text: 'set old-set' })).toBeDefined()
+  await ui.unmount()
+})

@@ -323,6 +323,10 @@ async function shellFailClosed($, e, next) {
 let fleet = []
 let reports = []
 let fleetSlug = null
+// True when the set was NAMED -- by SWARM_SLUG or by `/fleet <slug>` -- rather than
+// discovered. A named set is kept; a discovered one is a guess and is re-made on every
+// refresh, because the right answer changes under a running coordinator (see pick).
+let pinned = false
 let deckTimer = null
 
 /** No heartbeat for this long and the session is not live. */
@@ -370,9 +374,7 @@ function shown(row, now) {
  * a lost night. The deck is read-only: a wrong answer here points a dashboard at the
  * wrong set, or at none. Same mechanism, different blast radius, different answer.
  *
- * One set is adopted silently. Several are not guessed between -- /fleet lists them and
- * the user names one, because a dashboard confidently showing the wrong run is worse
- * than a dashboard that asks.
+ * Returns { root, names }: the repo root the names live under, and every set directory.
  */
 async function discover($) {
   let root = null
@@ -380,19 +382,83 @@ async function discover($) {
     const repo = await $.session.repo()
     root = repo && repo.root
   } catch (err) {
-    return []
+    return { root: null, names: [] }
   }
-  if (!root) return []
+  if (!root) return { root: null, names: [] }
   try {
     const entries = await $.fs.list(root + '/.workflows/orchestration')
     // 'dir', not 'directory'. The first draft guessed the latter, matched nothing, and
     // the unit test agreed with it because the stub was written from the same guess --
     // which is why this one needed a real repo to catch.
-    return entries.filter(x => x.kind === 'dir').map(x => x.name)
+    return { root: root, names: entries.filter(x => x.kind === 'dir').map(x => x.name) }
   } catch (err) {
     // No orchestration directory: this repo has never run a set.
-    return []
+    return { root: root, names: [] }
   }
+}
+
+/**
+ * Choose among the discovered sets: { slug } when one is the answer, else { sets } to
+ * list for the user.
+ *
+ * SHIPPED BUG: a coordinator ran /fleet and got the PREVIOUS set's deck -- a set that had
+ * landed an hour earlier. Its session started while that set's directory was the only one
+ * under .workflows/orchestration/ (the coordinator creates its own later), "one set" was
+ * adopted silently, and the guess was then never revisited. Two facts the ledger already
+ * records settle it instead:
+ *
+ *   1. coordinator_session_id: `swarm.py init` stamps the session that owns the set. A
+ *      session watching its own set is not a guess, however many others sit beside it.
+ *   2. landed: a set merged to main is history. It is still reachable as /fleet <slug>,
+ *      but it must never be adopted silently -- and its old rows must never light the band.
+ *
+ * Only then does the old rule apply: one live set is adopted, several are listed, because a
+ * dashboard confidently showing the wrong run is worse than a dashboard that asks.
+ */
+async function pick($) {
+  const found = await discover($)
+  if (found.names.length === 0) return { sets: [] }
+  let me = null
+  try {
+    me = await $.session.id()
+  } catch (err) {
+    // Without an id, ownership cannot be proved; the landed filter still applies.
+  }
+  const live = []
+  for (const name of found.names) {
+    let ledger = null
+    try {
+      ledger = JSON.parse(await $.fs.read(found.root + '/.workflows/orchestration/' + name + '/ledger.json'))
+    } catch (err) {
+      // No readable ledger: unknown, which is not the same as landed. Keep it a candidate.
+    }
+    if (ledger && me && ledger.coordinator_session_id === me) return { slug: name }
+    if (!(ledger && ledger.landed)) live.push(name)
+  }
+  if (live.length === 1) return { slug: live[0] }
+  return { sets: live.length > 0 ? live : found.names }
+}
+
+/** Re-make a discovered choice. A named set is left alone. */
+async function rediscover($) {
+  if (pinned) return
+  const choice = await pick($)
+  const slug = choice.slug || null
+  if (slug !== fleetSlug) {
+    // Drop the old set's rows with it, or the band keeps alarming about a set this session
+    // no longer watches.
+    fleetSlug = slug
+    fleet = []
+    reports = []
+  }
+}
+
+function startDeckTimer($) {
+  if (deckTimer !== null) return
+  deckTimer = $.clock.every(15000, async () => {
+    await rediscover($)
+    await refresh($)
+  })
 }
 
 /**
@@ -403,6 +469,10 @@ async function discover($) {
  * that is not there.
  */
 async function refresh($) {
+  if (fleetSlug === null) {
+    $.ui.invalidate('ui.render')
+    return
+  }
   let keys = []
   try {
     keys = await $.store.keys()
@@ -574,24 +644,27 @@ export function register(on) {
       await publish($)
     }
     // The deck reads whichever set this session belongs to. A session that is not a
-    // phase -- a coordinator, most often -- discovers the set instead.
+    // phase -- a coordinator, most often -- discovers the set instead, and keeps
+    // re-discovering it: the set it is about to coordinate may not exist yet.
     if (slug) {
       fleetSlug = slug
+      pinned = true
     } else {
-      const sets = await discover($)
-      if (sets.length === 1) fleetSlug = sets[0]
+      await rediscover($)
     }
     // SHIPPED BUG, slice 4: this timer lived inside the `slug && phase` branch, so a
     // coordinator that ran /fleet got one snapshot and a deck that never updated again.
     // The refresh belongs to the deck, not to being a phase -- and a dashboard that
     // silently stops updating is worse than no dashboard, because it still looks right.
-    if (fleetSlug !== null) {
+    //
+    // Started in any repo that has ever run a set, not only when one was adopted: a
+    // coordinator usually starts BEFORE its set exists, and a timer gated on adoption
+    // would never start for it.
+    if (fleetSlug !== null || (await discover($)).names.length > 0) {
       // Store reads outside any turn cost no tokens, which is what makes an always-on
       // watch affordable, and what lets the band light in a session nobody opened the
       // deck in.
-      deckTimer = $.clock.every(15000, async () => {
-        await refresh($)
-      })
+      startDeckTimer($)
       await refresh($)
     }
     // Registered last in this hook: $.command.register throws on a taken name, and a
@@ -612,30 +685,36 @@ export function register(on) {
   })
 
   on('command.run', { command: 'fleet' }, async ($, e) => {
-    if (e.args) fleetSlug = e.args.trim()
-    if (fleetSlug === null) {
-      const sets = await discover($)
-      if (sets.length === 0) {
-        return { text: 'no orchestrated set in this repo. Try /fleet <slug>.' }
-      }
-      if (sets.length === 1) {
-        // The same adoption session.start does. A session that started before the set
-        // existed -- a coordinator that ran /analyze, which is the common case -- reaches
-        // discovery here instead, and must not be told there are "several" of one.
-        fleetSlug = sets[0]
+    if (e.args && e.args.trim()) {
+      fleetSlug = e.args.trim()
+      pinned = true
+      fleet = []
+      reports = []
+    } else if (!pinned) {
+      // Never trust an earlier guess: the set this session coordinates may have been
+      // created since, and an older one may have landed.
+      const choice = await pick($)
+      if (choice.slug) {
+        if (choice.slug !== fleetSlug) {
+          fleet = []
+          reports = []
+        }
+        fleetSlug = choice.slug
       } else {
+        fleetSlug = null
+        fleet = []
+        reports = []
+        if (choice.sets.length === 0) {
+          return { text: 'no orchestrated set in this repo. Try /fleet <slug>.' }
+        }
         // Several: name them rather than pick one. A deck confidently showing the wrong
         // run is worse than one that asks.
-        return { text: 'several sets here. Pick one:\n  /fleet ' + sets.join('\n  /fleet ') }
+        return { text: 'several sets here. Pick one:\n  /fleet ' + choice.sets.join('\n  /fleet ') }
       }
     }
     await refresh($)
     // A session that named a set after startup has no timer yet.
-    if (deckTimer === null) {
-      deckTimer = $.clock.every(15000, async () => {
-        await refresh($)
-      })
-    }
+    startDeckTimer($)
     await $.ui.open({ id: 'fleet', title: 'swarm ' + fleetSlug, focus: true, closeOnEscape: true })
     return {}
   })
