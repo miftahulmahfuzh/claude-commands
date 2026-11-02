@@ -593,6 +593,31 @@ def identity_env(slug, phase, coordinator=None):
     return out
 
 
+PARENT_SESSION_VAR = "CC_PARENT_SESSION"
+
+
+def parent_env(environ=None):
+    """`-e CC_PARENT_SESSION=<id>`: the spawning session's own Claude Code session id.
+
+    mcp-notes draws a graph of which session started which. A child cannot work out its
+    parent afterwards: names are reused (see `init`), and a transcript only says that
+    *something* ran `swarm.py spawn --name X`. So the parent's id goes into the child's
+    environment at launch, where the child's SessionStart hook reads it and records an
+    exact link instead of a guessed one.
+
+    It comes from this process's environment (`CLAUDE_CODE_SESSION_ID`, which Claude Code
+    sets for every Bash call). tmux gives a new window the SERVER's environment, not this
+    process's, so without the `-e` the id would never reach the child. When it is unset or
+    blank (swarm.py run by hand outside Claude Code) nothing is emitted. A blank value would
+    send the child a parent link to nobody.
+    """
+    env = os.environ if environ is None else environ
+    sid = (env.get("CLAUDE_CODE_SESSION_ID") or "").strip()
+    if not sid:
+        return []
+    return ["-e", f"{PARENT_SESSION_VAR}={sid}"]
+
+
 def spawn_argv(name, cwd, prompt, permission_mode=None, model=None, keep_open=True,
                environ=None, slug=None, phase=None, coordinator=None):
     inner = ["claude", "-n", name]
@@ -609,6 +634,7 @@ def spawn_argv(name, cwd, prompt, permission_mode=None, model=None, keep_open=Tr
     return (["tmux", "new-window", "-d", "-n", name, "-c", cwd]
             + thread_cap_env(environ)
             + identity_env(slug, phase, coordinator)
+            + parent_env(environ)
             + ["-P", "-F", "#{window_id} #{pane_id}", command])
 
 
@@ -2013,6 +2039,28 @@ def selftest():
     eq("the coordinator is optional, the identity is not",
        [a for a in identity_env("s", 1) if a != "-e"],
        ["SWARM_SLUG=s", "SWARM_PHASE=1"])
+
+    # The parent's session id travels to the child so mcp-notes can draw an exact
+    # parent link instead of guessing one from names -- see parent_env.
+    sid = "d5c27d87-c38b-4fb8-83b5-1b1afaa5991f"
+    parented = spawn_argv("n", "/tmp", "p", environ={"CLAUDE_CODE_SESSION_ID": sid})
+    eq("a child is told who spawned it",
+       f"{PARENT_SESSION_VAR}={sid}" in parented, True)
+    eq("the parent id is a tmux -e pair",
+       parented[parented.index(f"{PARENT_SESSION_VAR}={sid}") - 1], "-e")
+    eq("the command still stays last", parented[-1].startswith("claude -n n"), True)
+    eq("no session id, no parent pair",
+       [a for a in spawn_argv("n", "/tmp", "p", environ={}) if "CC_PARENT" in a], [])
+    eq("a blank session id is no session id",
+       parent_env({"CLAUDE_CODE_SESSION_ID": "   "}), [])
+    eq("surrounding whitespace is not part of the id",
+       parent_env({"CLAUDE_CODE_SESSION_ID": f" {sid}\n"}),
+       ["-e", f"{PARENT_SESSION_VAR}={sid}"])
+    eq("a swarm phase gets both its identity and its parent",
+       [a for a in spawn_argv("n", "/tmp", "p", slug="s", phase=1,
+                              environ={"CLAUDE_CODE_SESSION_ID": sid})
+        if a.startswith(("SWARM_", "CC_PARENT"))],
+       ["SWARM_SLUG=s", "SWARM_PHASE=1", f"{PARENT_SESSION_VAR}={sid}"])
 
     # The plan a child is handed must exist: the recorded path is only a first guess.
     with tempfile.TemporaryDirectory() as tmp:
