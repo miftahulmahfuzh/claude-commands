@@ -629,6 +629,24 @@ Loop until `runnable_now` is empty:
    - `map_drift` → the coordinator fixes those `features/*.md` entries in its ledger commit.
    Skip it for a wave that changed no runnable behavior, and say so in the round's notes.
 
+   **The small-set rule.** Skip the separate verifier, and land on the implementers' own evidence,
+   only when ALL of these hold:
+   - the set has **at most 2 phases**;
+   - no phase is Difficulty `HARD`;
+   - no phase adds a migration or rewrites stored data (schema change, backfill, data fix), since
+     those are the changes that are costly to undo once they reach production;
+   - every phase's own Proof came back `verified`, with evidence, in a single pass (its report
+     says `proof: verified-first-pass`; read the ledger note, not the session's prose): no
+     `inconclusive` claim and no journey that failed and then passed after a fix.
+
+   The verifier costs a roughly fixed $2–4 per phase. MEASURED 2026-11-03: small mcp-notes sets ran
+   about $5/phase before it existed and about $9/phase with it. On a small, reversible, cleanly
+   self-proven change, that is most of the bill for little extra assurance. Record a skip as
+   `self-verified (small-set rule)` in the ledger and the report, so it is never mistaken for an
+   independent check. If any condition fails, dispatch the verifier as usual.
+   The rule is about the whole set, not one wave: a 6-phase set never qualifies, even when its
+   last wave has one phase.
+
 7. **Push the ledger** via `pusher`. Every round. This is iron rule 2.
 8. **Reap the finished windows.**
    ```bash

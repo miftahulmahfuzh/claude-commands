@@ -371,6 +371,8 @@ Then, until nothing is runnable and nothing is live:
    commits landed, not that the feature works. Dispatch one `verifier` agent per wave
    (`agents/verifier.md`; the details are in step 6b of `analyze-orchestrator.md`). A `failed`
    verdict marks that phase failed in the ledger, with the repro, and its dependents stall.
+   Sets of at most 2 phases may skip it under the small-set rule (step 6b of
+   `analyze-orchestrator.md`), recorded as `self-verified (small-set rule)`.
 7. **Re-compute.** `waves` again; a finished phase may have unblocked others. Go to 1.
 
 8. **When every phase is `done`, land the set** — `land`, below. The loop does not end with a
@@ -520,8 +522,8 @@ you do not have, stop and say so.
 
 ## Landing the set
 
-**Land only verified work.** Every phase needs a wave verdict of `verified` or `inconclusive`
-(with its reason carried into the landing report). A phase whose wave verdict is `failed`, and
+**Land only verified work.** Every phase needs a wave verdict of `verified`, `inconclusive`
+(with its reason carried into the landing report), or `self-verified (small-set rule)`. A phase whose wave verdict is `failed`, and
 not re-verified after a fix, keeps the set off `main`. Green tests do not mean the feature works.
 
 The loop above ends with N phases on a branch, which is worth nothing until it is on `main`.

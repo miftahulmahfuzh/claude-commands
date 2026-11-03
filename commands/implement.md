@@ -268,7 +268,8 @@ check into a journey and run it; if not, report it `inconclusive`.
 
 This is your own check of your own work, and it is the weaker witness. In a swarm, the
 coordinator sends a separate `verifier` agent after the wave. Solo, Step 5a sends one before
-landing. Your evidence makes their pass cheaper, but it never replaces it.
+landing. Your evidence makes their pass cheaper. It replaces their pass only under the
+small-set rule in Step 5a, so report honestly whether your Proof passed in one go.
 
 Then dispatch **`completion-handler`**:
 
@@ -393,7 +394,7 @@ Otherwise `find` returns the `slug`, the `phase`, the `coordinator` to address a
 
 ```bash
 python3 ~/.claude/skills/swarm/swarm.py report --slug <slug> --phase <N> \
-    --status done --commit <sha from pusher> --task <TaskID> --note "<one line>"
+    --status done --commit <sha from pusher> --task <TaskID> --note "<one line>; proof: <verified-first-pass | verified-after-fix | inconclusive> <evidence dir>"
 ```
 
 **If the ladder produced any decision, the `--note` is where it goes** — a later phase planned
@@ -462,7 +463,22 @@ python3 ~/.claude/skills/swarm/swarm.py find --plan <the phase plan just impleme
 - `{"swarm": false, ...}` → no coordinator is coming. This session is the only one that will ever
   land this branch — continue below.
 
-**Independent verification first.** Dispatch the **`verifier`** agent (`subagent_type:
+**The small-set rule.** Skip the separate verifier, and land on the implementers' own evidence,
+only when ALL of these hold:
+- the set has **at most 2 phases**;
+- no phase is Difficulty `HARD`;
+- no phase adds a migration or rewrites stored data (schema change, backfill, data fix), since
+  those are the changes that are costly to undo once they reach production;
+- every phase's own Proof came back `verified`, with evidence, in a single pass: no
+  `inconclusive` claim and no journey that failed and then passed after a fix.
+
+The verifier costs a roughly fixed $2–4 per phase. MEASURED 2026-11-03: small mcp-notes sets ran
+about $5/phase before it existed and about $9/phase with it. On a small, reversible, cleanly
+self-proven change, that is most of the bill for little extra assurance. Record a skip as
+`self-verified (small-set rule)` in the ledger and the report, so it is never mistaken for an
+independent check. If any condition fails, dispatch the verifier as usual.
+
+**Independent verification first** (unless the small-set rule applies). Dispatch the **`verifier`** agent (`subagent_type:
 "verifier"`) with this worktree, the base the set branched from, and every phase plan of the
 set. It drives the plans' Proof sections with fresh context; you wrote the code, so your own
 Proof run does not count as this check. Then:
@@ -475,8 +491,8 @@ Proof run does not count as this check. Then:
 - `map_drift` entries → fix those `features/*.md` entries (they are docs, and yours to fix)
   before landing.
 
-Skip the verifier only when the set changed no runnable behavior (docs, comments, CI config).
-Say so in the Termination block.
+Also skip the verifier when the set changed no runnable behavior (docs, comments, CI config).
+Either skip is stated in the Termination block, with its reason.
 
 **Nothing to land** if the plan index's worktree is `none` and its branch is already `main` (a
 `--no-worktree` plan planned directly against it) — skip to Termination, nothing merges or deletes.
@@ -552,7 +568,7 @@ Plan: {pkg}/.workflows/plan/{TaskID}.md
 Branch: {branch}
 Session: impl-{slug}-p{N}
 Verification: {command} — passed
-Proof: {verified | failed | inconclusive} — {n} journeys, evidence {dir}
+Proof: {verified-first-pass | verified-after-fix | failed | inconclusive} — {n} journeys, evidence {dir}
   {one line per claim: claim → evidence file, or the inconclusive reason}
 
 Remaining: phase {N+1} ({TaskID}), phase {N+2} ({TaskID})

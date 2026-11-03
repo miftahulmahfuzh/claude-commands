@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Small-set rule: the separate `verifier` is skipped on small, reversible, cleanly self-proven
+  sets.** A set of at most 2 phases, none `HARD`, with no migration or data rewrite, and every
+  phase's own Proof `verified` in one pass, lands on its implementers' evidence. Reports and the
+  ledger record it as `self-verified (small-set rule)`. Measured 2026-11-03 on mcp-notes: small
+  sets cost about $5/phase before the verifier and about $9/phase with it
+
 Verification and planning principles, adapted from Lauren Tan's pstack (`cursor/plugins/pstack`).
 Unit tests alone no longer count as done. A plan says how the real app proves each claim,
 and an agent that did not write the code checks it.
