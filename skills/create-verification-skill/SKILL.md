@@ -7,10 +7,14 @@ disable-model-invocation: true
 # Create a verification skill
 
 Adapted from pstack's `create-verification-skill` (`cursor/plugins/pstack`), plus what building
-`~/mcp-notes/.claude/skills/verify-notesd` and `~/agentic_golang/.claude/skills/verify-agentic`
-taught us. Read one before you start: verify-notesd is the small example (Node daemon, one Postgres,
-Playwright UI); verify-agentic is the heavy one (compiled Go server, Docker-isolated Arango + Redis,
-real LLM under a budget, egress control, an existing e2e harness wrapped).
+`~/mcp-notes/.claude/skills/verify-notesd`, `~/agentic_golang/.claude/skills/verify-agentic` and
+`~/seer/.claude/skills/verify-seer` taught us. Read the one closest to your repo before you start:
+verify-notesd is the small example (Node daemon, one Postgres, Playwright UI); verify-agentic is the
+heavy one (compiled Go server, Docker-isolated Arango + Redis, real LLM under a budget, egress
+control, an existing e2e harness wrapped); verify-seer has two halves sharing one database (a
+Next.js app behind a serverless Postgres driver, shimmed to a local Postgres; a Python CLI with a
+denylist of commands that write outside the run) and a per-run snapshot for a dev server that
+locks its directory.
 
 **Why this exists.** `phase-planner` writes a **Proof** section that names
 `.claude/skills/verify-*`, `/implement` and `/do` run it, and the `verifier` agent re-runs it
@@ -40,26 +44,57 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
   route, JSON on another), polling, which stream it opens, which headers carry auth. The drive
   command replays that sequence; guessing it produces 400s that look like product bugs.
 - **Run:** the exact local start command, ports, env vars, config files, seed data, auth.
+- **Auth:** how a signed-in user is recognised, read in the app's session code. Mint a session
+  with the app's own encoder and a per-run secret; never add a bypass to the app. Read identity
+  rules from the code, not from env alone: a section may admit one hardcoded email on top of the
+  allowlist (verify-seer: `/sera` 404'd for the minted user until the run signed in as the address
+  `lib/sera/access.ts` names). A 404 or a redirect on first drive is the gate before it is a bug.
 - **Dependencies:** each database, cache, queue and third-party API, and how each can be
   isolated per run (its own Docker container or database name, a local emulator, a fake). Never
   the user's own dev containers. A heavy service with cheap namespaces (Postgres, Arango) gets one
   shared verify container and a database per run; one without them (Redis) gets a container per
   run. Any response or answer cache must be per-run, or a repeated journey replays a cached
   answer instead of exercising the code.
+- **The client library decides, not the URL.** Read how the app opens each connection.
+  Serverless drivers (Neon's `@neondatabase/serverless`, PlanetScale, libsql over HTTP, Supabase
+  REST) speak HTTP or WebSocket to a vendor proxy, never TCP, so a local Postgres cannot answer
+  them. Build the stand-in into the harness: a small shim that speaks the vendor protocol in front
+  of the run's database, plus a preload (`NODE_OPTIONS=--import`) that routes the driver to it. Do
+  not edit app code, and do not give up and point at the hosted service. verify-seer's
+  `neon-shim.mjs` is about 100 lines and served every query the app and its seeders sent.
 - **Classify every external call by harm, not by price:**
   - *Harmful:* messages real people (chat alerts, SMS, email), writes to production or shared
-    systems, moves money, anything irreversible. Pinned off in `up`, with no flag that turns it on.
+    systems, moves money, places orders or touches a live broker/exchange account, triggers a
+    production CI workflow, anything irreversible. Pinned off in `up`, with no flag that turns it
+    on.
+  - *Harmful to integrity, though nothing leaves the machine:* writes to tracked or frozen repo
+    files, to shared local stores other sessions read, git operations aimed at another checkout,
+    and spending or peeking at a sealed or budgeted dataset (a held-out test window). For a CLI,
+    list every subcommand by what it writes (the run's own state / shared local state / tracked
+    files / external) and refuse the last three by name in the drive command. verify-seer refuses
+    13 engine commands and 6 lab subcommands this way, including one that git-adds in the main
+    checkout even when run from a worktree.
   - *Paid, and the product itself* (the LLM in an LLM app): **real by default**, behind a per-run
     budget, with journeys targeted at the change. A stub-backed verify of an LLM app is a unit
     test with extra steps: it cannot plan, route or answer. Keep a stub only as `--offline`, for
     plumbing, labelled as not proof.
-  - *Paid or external, peripheral* (a data gateway, a search API the feature does not need):
-    off unless a flag opts in.
+  - *Paid or external, peripheral* (a data gateway, a search API the feature does not need, an
+    LLM that only decorates a non-LLM app): off unless a flag opts in. Note any free-tier quota the
+    production cron shares, and when that cron runs, so opted-in drives stay clear of it.
+  - **Follow each feature's success path to its last write.** When it passes through a pinned-off
+    sink, the success state cannot be produced locally, whatever else you enable. Say so in the
+    feature's Gotchas, prove the refusal end state plus the unit tests, and do not pay for the
+    paid step in front of it (verify-seer: a receipt is saved only after its image is committed to
+    a GitHub branch, so a billed vision read would still end in "not kept").
 - **Observe:** what proves behavior: response bodies, DB rows, files written, logs, exit codes,
   screenshots.
 - **Isolate:** can two instances run at once? Port 0 or a free-port picker, per-run data dirs,
-  per-run DB names. If something cannot be isolated, say so in the skill, and make the script
-  refuse to share it.
+  per-run DB names. Check for per-directory locks too, not only ports: Next 16's `next dev` locks
+  `.next/dev` in the project directory, so a second server on another port still exits. Serve such
+  a tool from a per-run snapshot of its directory (rsync the sources and hard-link dependencies
+  with `cp -al`, which took 0.2 s for 17k files; a symlinked `node_modules` breaks Turbopack). The
+  snapshot is a build artifact, so doctor warns when the tree changes. If something cannot be
+  isolated, say so in the skill, and make the script refuse to share it.
 
 If the checkout does not build or start as-is, fix that first, or stop and report it exactly.
 A skill written against a broken base teaches wrong steps.
@@ -78,7 +113,8 @@ would be awkward). Agents call subcommands; they never hand-write launch sequenc
 | `down RUN` / `down --all` | Kills exactly what `up` started, drops per-run state, keeps evidence. |
 | `ls` | Runs, state, evidence count. |
 
-Hard-won rules. Each one is a bug we actually hit in `verify-notesd`:
+Hard-won rules. Each one is a bug we actually hit in `verify-notesd`, `verify-agentic` or
+`verify-seer`:
 
 - **Never let the daemon hold the caller's pipe.** Start it with `setsid`, with stdin from
   `/dev/null` and stdout/stderr to a log file, and NOT as part of a `cd && ... &` list (that
@@ -90,21 +126,41 @@ Hard-won rules. Each one is a bug we actually hit in `verify-notesd`:
 - **Binary responses go to a file** with their size and sha256, never to the terminal. Raw bytes
   corrupt the agent's output and every `grep` after them. Use one `curl -w` (a second `-w`
   silently replaces the first).
-- **Real env beats config files.** Pin every path and endpoint the app reads (DB URL, data
-  dir, home dirs, ports) to per-run values, and blank what the classification above keeps off.
+- **Real env beats config files, and `env -i` beats both.** Start every process the run owns
+  from `env -i` plus the run's own values (PATH, HOME, locale, then the pinned settings), so no
+  secret exported in the caller's shell leaks in. If the app reads a dotenv file, point it at a
+  file the run generates (`SEER_ENV_FILE`-style) instead of letting it find the real one. Pin every
+  path and endpoint the app reads (DB URL, data dir, home dirs, ports) to per-run values, and blank
+  what the classification above keeps off.
   Check how the app's config loader merges env and files before trusting this, including whether
   `VAR=` (set but empty) counts as set: godotenv's `Load` keeps it, some loaders fall back to the
   file or a default.
 - **Blanking a URL is not isolation.** Code falls back to hardcoded hosts when its env var is
-  empty (verify-agentic: blanked BE URLs still reached a dev gateway). Add egress control: a dead
-  `HTTP(S)_PROXY` plus a `NO_PROXY` allowlist of loopback and the services the run may reach.
-  After the first real journey, list the hosts the server log mentions and confirm each was
-  allowed. State in Gotchas that this is best effort: a client on a custom transport that ignores
-  proxy env slips past it.
+  empty (verify-agentic: blanked BE URLs still reached a dev gateway). Add egress control, chosen
+  per runtime, because no single mechanism covers them all:
+  - Go, Python (urllib, requests), curl: a dead `HTTP(S)_PROXY` (both cases) plus a `NO_PROXY`
+    allowlist of loopback and the services the run may reach.
+  - Node: `fetch` ignores proxy env (Node 22). Load a preload with `NODE_OPTIONS=--import` that
+    wraps `globalThis.fetch` and rejects every host off the allowlist, logging what it blocked.
+    Next and similar frameworks wrap fetch after the preload, so the guard stays underneath.
+  - Build tools can need the network, and a dead proxy can break them: behind one, Turbopack could
+    not fetch `next/font/google` files and every page answered 500. Allowlist that CDN in the
+    guard, leave the proxy off that process, and say so.
+  Prove both directions from `doctor` without sending anything out: a probe to a harmful host
+  must fail against the dead proxy. After the first real journey, list the hosts the logs mention
+  and confirm each was allowed. State in Gotchas that this is best effort: `node:http(s)` used
+  directly, or a native fetcher, slips past.
 - **Compiled apps: build per run, stamp the build.** `up` builds into the run dir from the
   checkout and injects the commit (plus `-dirty`) into whatever the health/version endpoint
   reports. Doctor warns when HEAD **or the working tree** changed since `up`: an edit without a
   commit leaves a stale binary too.
+- **Readiness distinguishes "not up yet" from "up and broken".** Poll for the usable state, but
+  stop after a few identical 5xx answers and print the log tail. verify-seer's first `up` waited
+  4.5 minutes on a page that had been failing the same way since second 5.
+- **Copy state files with a read-only open.** Some tools migrate a database on connect even for a
+  read (Seer's lab migrates `lab.sqlite` that way). Copy the committed state with the database's
+  backup API from a `mode=ro` connection, and hash the protected original before and after the
+  proving pass.
 - **Budget the paid core.** The run keeps a counter; each paid drive decrements it, and the
   script refuses rather than overspends. Record the mode (`real` / `offline`) in the run's
   metadata and print it from `doctor` and `ls`, so nobody cites an offline run as proof.
@@ -114,6 +170,19 @@ Hard-won rules. Each one is a bug we actually hit in `verify-notesd`:
   `$VAR` and refuses functions whose names collide with aliases. Scripts are executables with a
   `#!/usr/bin/env bash` shebang; recipes in the feature map never depend on word splitting or
   inline functions.
+- **No `| head` inside the script.** Under `set -o pipefail`, a reader that closes early
+  SIGPIPEs the writer and `set -e` aborts the drive halfway, here before a body file was renamed.
+  Cap output in the producer (a line-limit argument), never in a pipe after it. Likewise give
+  `curl -w` a separator (`%{http_code}|%{content_type}`): a content type contains a space.
+- **HTML evidence is the visible text.** Server-rendered pages carry a framework payload in
+  `<script>` tags, and a regex strip keeps that payload and loses the page. Save the HTML, and print
+  the visible text with each `aria-label` inline (`[Mark as done]`) through a real HTML parser.
+  That is what lets a recipe assert on what the user reads without a browser.
+- **The browser driver must not create its own failures.** Playwright's screenshot hides the
+  caret by injecting a style, and mid-hydration React reports that as a hydration mismatch the
+  app does not have. Pass `caret: 'initial'` and wait for `networkidle`. Dev-only overlays (Next's
+  dev-tools badge) sit on top of real controls and swallow clicks, so hide them with an init
+  script. Resolve the steps-file path before the script `cd`s anywhere.
 - **`down` copies the server log into evidence** before deleting run state: it is the record of
   every decision the run made.
 - **Evidence lives outside the repo and outside the worktree**
@@ -182,7 +251,16 @@ A skill that was never executed is a draft. Run, for real:
 2. **Every journey in every feature file, once.** Fix the recipe when the recipe was wrong
    (wrong arg name, wrong column, wrong route). When the APP is wrong, record it as a product
    bug in the final report and do not paper over it in the map.
-3. `down`, then confirm the evidence still exists and no process or per-run DB is left behind.
+3. **Every surface against every seed mode.** When two halves of the app read the same seed
+   (a web UI and a CLI or worker), drive each half on it, not only the half the seed was written
+   for. Seed scripts drift from the schema the other half needs: Seer's demo seeder, written for
+   the UI, omitted the columns migration 006 added after it, and the engine's `paper_check` crashed
+   on it. Only driving the engine on demo data found that.
+4. **Isolation, proven rather than assumed.** Run two instances at once, write through the app in
+   one, and read the other's state to show the write did not cross. Hash every file the harness
+   must never touch (a committed database, a shared store's manifest) before and after the pass,
+   and check `git status` on the paths it could have dirtied.
+5. `down`, then confirm the evidence still exists and no process or per-run DB is left behind.
 
 Run `down` after every failed attempt too. Expect this pass to find bugs in your own script:
 it is the point of the pass.
@@ -198,8 +276,21 @@ it is the point of the pass.
 - Confirm the scripts are committed executable: `git ls-files -s` shows `100755`. A repo with
   `core.fileMode=false` records `100644` whatever the disk says; fix with
   `git update-index --chmod=+x <file>`.
-- Commit with the repo's conventions (its CHANGELOG under Unreleased if it keeps one) and push
-  to the default branch, unless the repo's CLAUDE.md says otherwise.
+- Commit with the repo's conventions (its CHANGELOG under Unreleased if it keeps one, unless its
+  CLAUDE.md reserves the changelog for a release command) and push to the default branch, unless
+  the repo's CLAUDE.md says otherwise.
+- **The index may hold someone else's staged work.** In a shared checkout (an active swarm or
+  orchestration), `git add <your paths> && git commit` also commits whatever a peer has already
+  staged. Commit through an isolated index instead, then sync only your paths into the real one:
+
+  ```sh
+  export GIT_INDEX_FILE=$SCRATCH/verify.index && git read-tree HEAD
+  git add -- .claude/skills/verify-<app> CLAUDE.md && git commit -m '...'
+  unset GIT_INDEX_FILE && git add -- .claude/skills/verify-<app> CLAUDE.md
+  git status --porcelain     # the peer's lines must read exactly as before
+  ```
+
+  Without that last `git add` the real index still shows your new files as staged deletions.
 
 ## Report
 
@@ -207,6 +298,9 @@ End with:
 - the skill path and its subcommands;
 - the feature-map entries, and which journeys were proven, failed, or inconclusive, each with
   its evidence path;
-- product bugs found (app wrong, not recipe wrong);
+- product bugs found (app wrong, not recipe wrong), each with a one-line root cause when you
+  found it, so the user can say "fix it" without a second investigation;
+- failures that were already on the base (a red test unrelated to the skill), kept apart from
+  the bugs the pass found;
 - what the skill deliberately never drives;
 - the commit sha.
