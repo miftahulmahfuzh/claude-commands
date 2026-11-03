@@ -28,6 +28,15 @@ and an agent that did not write the code checks it.
   the decision each principle changed. Bug fixes must reproduce first, and user-facing changes
   must update the feature map
 - **`plan-generator`**: briefs carry `principles` and `validation.proof`
+- **`create-verification-skill`**, from its first real run (`verify-agentic`, agentic_golang):
+  external calls are classified by harm, not price, and an LLM app verifies on the real LLM by
+  default under a per-run budget with targeted journeys (a stub is `--offline`, never proof);
+  new rules for egress control (blanked URLs still hit hardcoded fallbacks), set-but-empty env,
+  per-run build stamping for compiled apps, per-run caches, read-only state drives, zsh-safe
+  recipes and executable bits under `core.fileMode=false`; feature files are written from driven
+  journeys, not predicted ones
+- **`verifier`** respects a harness budget (Proof + one neighbor) and never cites a stub-mode run;
+  **`phase-planner`** Proof sections state their paid-drive cost
 - **`/implement`** runs the Proof journeys and reports evidence per claim. Solo landings dispatch
   `verifier` first: `failed` blocks the landing after one fix-and-retry
 - **`/do`** runs Proof itself and labels the result `self-verified`, with no extra agent, to keep

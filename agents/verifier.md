@@ -35,7 +35,11 @@ phases:
    and again after any drive that surprised you.
 4. For each phase, run every journey in its Proof. Add one journey the plan did not list: the
    most likely way this diff breaks a neighboring feature, picked from the feature map. A plan
-   that proves only its own happy path is the case this step exists for.
+   that proves only its own happy path is the case this step exists for. Stop there: when drives
+   cost money (the skill has a budget), the Proof plus one neighbor is the whole job, not the
+   full map. If the budget runs out first, the remaining journeys are `inconclusive`, not skipped.
+   A run in a stub mode (`--offline` or similar) never verifies behaviour of the stubbed
+   dependency; say so rather than citing it.
 5. Hold the standards: the real user path, never a test-only shortcut; the action AND the
    resulting state; side effects read back. Never weaken a journey to make it pass. A journey
    you could not run is `inconclusive`, with the reason. It is never a pass.

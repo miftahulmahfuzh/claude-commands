@@ -7,8 +7,10 @@ disable-model-invocation: true
 # Create a verification skill
 
 Adapted from pstack's `create-verification-skill` (`cursor/plugins/pstack`), plus what building
-`~/mcp-notes/.claude/skills/verify-notesd` taught us. Read that skill before you start. It is
-the worked example: a script with subcommands, isolated runs, numbered evidence, and a feature map.
+`~/mcp-notes/.claude/skills/verify-notesd` and `~/agentic_golang/.claude/skills/verify-agentic`
+taught us. Read one before you start: verify-notesd is the small example (Node daemon, one Postgres,
+Playwright UI); verify-agentic is the heavy one (compiled Go server, Docker-isolated Arango + Redis,
+real LLM under a budget, egress control, an existing e2e harness wrapped).
 
 **Why this exists.** `phase-planner` writes a **Proof** section that names
 `.claude/skills/verify-*`, `/implement` and `/do` run it, and the `verifier` agent re-runs it
@@ -18,7 +20,9 @@ app. Write it for that reader.
 
 **Run unattended.** Answer everything from the repo. Ask the user only what the code cannot
 tell you, and if nobody is there to answer, decide, write the decision into the skill's
-Gotchas, and go on.
+Gotchas, and go on. The one question worth asking up front, when someone is there and the
+arguments do not settle it: if the app's core is a paid dependency (an LLM app), should verify
+run it for real by default? The default below is yes, under a budget.
 
 ## 1. Interview the repo
 
@@ -28,11 +32,29 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
   consumer. Pick the primary one; note the rest.
 - **Existing harnesses first:** e2e suites, smoke scripts, Postman/http files, compose test
   stacks, seed scripts, fixtures. A harness the repo already maintains beats anything you
-  invent. Wrap it, don't replace it.
+  invent. Wrap it, don't replace it. Check how it picks its target (a `BASE_URL`-style env var,
+  a flag): wrapping should be "point it at the run". If the target is hardcoded, add the override
+  to the harness itself, a few lines, rather than forking it.
+- **The real client's sequence:** read the frontend, mobile client or the existing e2e client
+  for the exact calls a user's action makes: body encoding per API version (multipart on one
+  route, JSON on another), polling, which stream it opens, which headers carry auth. The drive
+  command replays that sequence; guessing it produces 400s that look like product bugs.
 - **Run:** the exact local start command, ports, env vars, config files, seed data, auth.
 - **Dependencies:** each database, cache, queue and third-party API, and how each can be
-  isolated per run (its own Docker container or database name, a local emulator, a fake). Note
-  which are paid or external (LLM APIs, SMS, payment, email): those are never called by default.
+  isolated per run (its own Docker container or database name, a local emulator, a fake). Never
+  the user's own dev containers. A heavy service with cheap namespaces (Postgres, Arango) gets one
+  shared verify container and a database per run; one without them (Redis) gets a container per
+  run. Any response or answer cache must be per-run, or a repeated journey replays a cached
+  answer instead of exercising the code.
+- **Classify every external call by harm, not by price:**
+  - *Harmful:* messages real people (chat alerts, SMS, email), writes to production or shared
+    systems, moves money, anything irreversible. Pinned off in `up`, with no flag that turns it on.
+  - *Paid, and the product itself* (the LLM in an LLM app): **real by default**, behind a per-run
+    budget, with journeys targeted at the change. A stub-backed verify of an LLM app is a unit
+    test with extra steps: it cannot plan, route or answer. Keep a stub only as `--offline`, for
+    plumbing, labelled as not proof.
+  - *Paid or external, peripheral* (a data gateway, a search API the feature does not need):
+    off unless a flag opts in.
 - **Observe:** what proves behavior: response bodies, DB rows, files written, logs, exit codes,
   screenshots.
 - **Isolate:** can two instances run at once? Port 0 or a free-port picker, per-run data dirs,
@@ -69,8 +91,31 @@ Hard-won rules. Each one is a bug we actually hit in `verify-notesd`:
   corrupt the agent's output and every `grep` after them. Use one `curl -w` (a second `-w`
   silently replaces the first).
 - **Real env beats config files.** Pin every path and endpoint the app reads (DB URL, data
-  dir, home dirs, ports) to per-run values, and blank out paid API keys unless a flag opts in.
-  Check how the app's config loader merges env and files before trusting this.
+  dir, home dirs, ports) to per-run values, and blank what the classification above keeps off.
+  Check how the app's config loader merges env and files before trusting this, including whether
+  `VAR=` (set but empty) counts as set: godotenv's `Load` keeps it, some loaders fall back to the
+  file or a default.
+- **Blanking a URL is not isolation.** Code falls back to hardcoded hosts when its env var is
+  empty (verify-agentic: blanked BE URLs still reached a dev gateway). Add egress control: a dead
+  `HTTP(S)_PROXY` plus a `NO_PROXY` allowlist of loopback and the services the run may reach.
+  After the first real journey, list the hosts the server log mentions and confirm each was
+  allowed. State in Gotchas that this is best effort: a client on a custom transport that ignores
+  proxy env slips past it.
+- **Compiled apps: build per run, stamp the build.** `up` builds into the run dir from the
+  checkout and injects the commit (plus `-dirty`) into whatever the health/version endpoint
+  reports. Doctor warns when HEAD **or the working tree** changed since `up`: an edit without a
+  commit leaves a stale binary too.
+- **Budget the paid core.** The run keeps a counter; each paid drive decrements it, and the
+  script refuses rather than overspends. Record the mode (`real` / `offline`) in the run's
+  metadata and print it from `doctor` and `ls`, so nobody cites an offline run as proof.
+- **State drives are read-only.** `sql`, `aql`, `redis` refuse writes (a read-only transaction,
+  or a keyword/command allowlist). Writes go through the app's own routes, or they prove nothing.
+- **The agent's shell may not be bash.** The Bash tool can run zsh, which does not word-split
+  `$VAR` and refuses functions whose names collide with aliases. Scripts are executables with a
+  `#!/usr/bin/env bash` shebang; recipes in the feature map never depend on word splitting or
+  inline functions.
+- **`down` copies the server log into evidence** before deleting run state: it is the record of
+  every decision the run made.
 - **Evidence lives outside the repo and outside the worktree**
   (`~/.local/state/<app>-verify/<run>/evidence/`), so it survives `down` and worktree deletion,
   and is never committed by accident.
@@ -90,23 +135,34 @@ with real commands from this repo and no placeholders:
 - **Drive:** a table of the drive commands, plus one complete example per surface (a UI steps
   file, a CLI invocation, an API call). Prefer stable handles: routes, ARIA labels, test ids,
   prompt strings.
+- **Targeted, not exhaustive** (when a drive costs money): pick only the feature-map entries the
+  change touches, what each drive costs, the default budget and how to raise it.
 - **Evidence:** where it lands, and the proof standards:
   - Use the real user path, never a test-only endpoint.
   - Capture the action AND the resulting state, and read side effects back.
   - For a bug fix, show the failure first.
+  - Nondeterministic output (LLMs): assert on structure (route, tools, persisted fields, status)
+    and quote text only as support. One miss earns one re-run; two misses are a finding.
   - A step that could not be driven is `inconclusive` with its reason. Never weaken a journey
     to make it pass.
 - **Cleanup:** `down`. Evidence survives it.
 - **Feature map:** points at `features/README.md`, and says that a user-facing change updates its
   entry in the same change.
-- **Gotchas:** what must never be driven (paid APIs, anything that messages real people,
-  anything outside the sandbox), what cannot be produced locally, flaky timings.
+- **Gotchas:** what must never be driven (the harmful class: anything that messages real
+  people, production or shared systems, money), what stays off unless a flag opts in, where the
+  isolation is best effort, what cannot be produced locally, flaky timings.
 
 ## 4. Seed the feature map
 
-`features/README.md` (an index table: feature, file, surfaces) plus one file per user-facing
-feature. Start with the 5 to 8 most important, taken from routes, commands, menus and docs. Every
-file has exactly these four H2s:
+`features/README.md` (an index table: feature, file, surfaces, and paid calls per entry when
+drives cost money) plus one file per user-facing feature. Start with the 5 to 8 most important,
+taken from routes, commands, menus and docs.
+
+**Drive first, write second.** Run each journey by hand against a live run, then write the file
+with the end states you saw pasted in. Predicted end states are wrong surprisingly often: in
+verify-agentic, 6 recipes written from reading code failed on first run (a field the app had
+superseded, a cache that pre-generates, a body encoding, a metric name). Every file has exactly
+these four H2s:
 
 - `## Sub-features`
 - `## How to get to it (user POV)`
@@ -120,7 +176,9 @@ goes in Gotchas.
 
 A skill that was never executed is a draft. Run, for real:
 
-1. `up`, then `doctor` on the run.
+1. `up`, then `doctor` on the run, and once for each mode flag (`--offline`, rebuild flags). A
+   flag you deliberately did not exercise (it would reach an external service) is listed as
+   `inconclusive` in the report, never silently skipped.
 2. **Every journey in every feature file, once.** Fix the recipe when the recipe was wrong
    (wrong arg name, wrong column, wrong route). When the APP is wrong, record it as a product
    bug in the final report and do not paper over it in the map.
@@ -137,6 +195,9 @@ it is the point of the pass.
   the skill and the feature map.
 - Any dev dependency the drives need (Playwright, an HTTP client) goes into the repo's own
   manifest at a pinned version. Prefer browsers and tools already installed on this machine.
+- Confirm the scripts are committed executable: `git ls-files -s` shows `100755`. A repo with
+  `core.fileMode=false` records `100644` whatever the disk says; fix with
+  `git update-index --chmod=+x <file>`.
 - Commit with the repo's conventions (its CHANGELOG under Unreleased if it keeps one) and push
   to the default branch, unless the repo's CLAUDE.md says otherwise.
 

@@ -130,6 +130,7 @@ The reconciler reads this section to detect cross-phase conflicts. Be exact and 
 - Journeys: one per claim, each with the exact commands or steps file, and the end state that
   passes it ("`GET /api/notes/<id>` returns tags `["beta"]`", not "it works")
 - Neighbor check: the existing feature most likely to break, and its journey
+- Cost: paid drives the journeys need (LLM turns etc.), when the harness budgets them
 **Exit criteria:** {the observable statement that this phase is done}
 
 ## Handoffs
