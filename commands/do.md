@@ -259,6 +259,7 @@ execution:
 validation:
   success_criteria: ["{criterion}"]
   test_command: "{command}"
+  proof: {harness, journeys}   # optional; see Proof below
 ```
 
 ### Phase 2: Execution (Main Context)
@@ -273,7 +274,8 @@ validation:
    than re-deriving the change from the prose around them.
 3. Run the plan's own **Verification** commands. A failing build or test is a failure, not a
    caveat.
-4. Return the completion report.
+4. Run the plan's **Proof** journeys with the harness it names (see **Proof** below).
+5. Return the completion report.
 
 Anything the plan leaves ambiguous is settled here, by the ladder in **Deciding Without
 Asking**, and never by a question — this is the phase where the eight-hour stall happened.
@@ -287,7 +289,18 @@ request rather than in the tree: follow the plan and say so in the completion re
 1. Display the task summary from the brief
 2. For each `target_file`: read, apply the steps, write
 3. Run `test_command` if provided
-4. Return the completion report
+4. Run `proof.journeys` if provided (see **Proof** below)
+5. Return the completion report
+
+**Proof.** Tests are the cheap check. Proof is the real artifact doing the thing. If the repo has
+a verification skill (`.claude/skills/verify-*/SKILL.md`), follow its launch, doctor, drive and
+cleanup sections and run each journey. Keep the evidence paths for the report. A failing
+journey is a failure like a red test: fix the code, never the journey. One you cannot run is
+`inconclusive` with its reason, never a pass. A brief or plan with no Proof, in a repo with a
+harness, still gets one journey: the change's own user-visible effect, driven once.
+`/do` tasks are small, so this self-check is the whole verification. There is no separate
+verifier agent on this path, to keep it cheap. Say `self-verified` in the report so nobody
+mistakes it for an independent check.
 
 **On both routes the main context does NOT:** read `todos.md`, `package_readme.md` or
 `analysis_report.md` · read documentation · update `todos.md` · run git · write plans.
@@ -614,6 +627,7 @@ says so out loud, because a silently shorter run reads like a step was skipped b
 ✅ Task Completed: P1-DB-A236
 📦 Package: db
 📄 Modified: manager.go
+🔎 Proof: self-verified — 2 journeys, evidence ~/.local/state/notesd-verify/<run>/evidence
 📝 Updated: todos.md, package_readme.md
 💾 Commit: abc1234
 🌿 Branch: main

@@ -41,7 +41,15 @@ output_file: "{absolute path to write}"
    built from the index, not just its own scope.
 4. Assume every phase in `depends_on` has already landed. Quote files as they will look *after*
    those phases, not as they look today. Say so where it matters.
-5. Write `output_file`. Create parent directories if needed.
+5. Read `~/.claude/skills/engineering-principles/SKILL.md` and apply it to your phase: change
+   the plan where a principle triggers, and record each change under **Principles applied**.
+   Implementers never read that file, so a decision a principle drove must be visible in your
+   steps and code, not only in that section.
+6. Find how this repo proves behavior: `ls {worktree_root}/.claude/skills/verify-*/SKILL.md`.
+   If one exists, read its SKILL.md and the `features/` entries your phase touches, and write the
+   **Proof** section with its real commands. If none exists, write Proof from the real artifact
+   anyway (run the CLI, read the row back, hit the endpoint) and say `no harness`.
+7. Write `output_file`. Create parent directories if needed.
 
 ## Hard requirements for the plan
 
@@ -51,6 +59,12 @@ output_file: "{absolute path to write}"
 - **The phase must build and pass tests on its own.** If a change would break the tree until a
   later phase lands, it belongs in the later phase — move it and note the move.
 - **No scope creep.** Drive-by cleanups belong in Handoffs, not in your steps.
+- **Proof an agent can run.** No "manual check", no "looks right in the browser". Every Proof
+  journey is a command or a scripted drive, plus the observable end state that passes it. A
+  separate verifier agent runs your Proof section without your context, so write it for a
+  stranger. For a bug fix, the first journey reproduces the bug and must fail before the fix.
+- **A user-facing change updates the feature map.** If the phase adds or changes what a user
+  can do, one step edits the matching `features/*.md` entry, or adds one.
 
 ## Output file format
 
@@ -102,11 +116,20 @@ The reconciler reads this section to detect cross-phase conflicts. Be exact and 
 ### Step 2: {Title}
 ...
 
+## Principles applied
+
+{`<principle>: <the decision it changed>`, one per line, or `none triggered`.}
+
 ## Verification
 
 **Build:** `{command}`
 **Tests:** `{command}`
-**Manual check:** {what to look at, if anything}
+**Proof:** {how the real artifact shows this phase works}
+- Harness: `{.claude/skills/verify-<app>}` — or `no harness`, and what is run instead
+- Feature-map entries: `{features/x.md}`, ... — or `none`
+- Journeys: one per claim, each with the exact commands or steps file, and the end state that
+  passes it ("`GET /api/notes/<id>` returns tags `["beta"]`", not "it works")
+- Neighbor check: the existing feature most likely to break, and its journey
 **Exit criteria:** {the observable statement that this phase is done}
 
 ## Handoffs
@@ -134,5 +157,7 @@ contract:
   creates: ["..."]
   requires: ["..."]
 handoffs: ["..."]
+principles: ["{principle}: {decision}"]
+proof: "{harness name or 'no harness'}; {number of journeys}"
 risks: ["..."]
 ```

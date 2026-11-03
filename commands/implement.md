@@ -257,6 +257,19 @@ executed there has to be read identically in both.
 Run the plan's **Verification** commands before reporting success. A failing build or test is a
 failure, not a caveat.
 
+**Then run the plan's Proof journeys.** Tests are the cheap check. Proof is the real artifact
+doing the thing: follow the harness the Proof names (`.claude/skills/verify-*/SKILL.md`: launch,
+doctor, drive, cleanup) and run every journey it lists. Keep the evidence paths. A journey that
+fails is a failure exactly like a red test: fix the code, never the journey. A journey you
+cannot run (missing prerequisite, no harness, billed path the plan forbids) is `inconclusive`
+with its reason. Never report it as passed. A plan written before Proof existed (it has a
+`Manual check` line instead) gets the same treatment: if the repo has a harness, turn the manual
+check into a journey and run it; if not, report it `inconclusive`.
+
+This is your own check of your own work, and it is the weaker witness. In a swarm, the
+coordinator sends a separate `verifier` agent after the wave. Solo, Step 5a sends one before
+landing. Your evidence makes their pass cheaper, but it never replaces it.
+
 Then dispatch **`completion-handler`**:
 
 **`modified_files` must be complete and must be yours.** It becomes the `paths` allowlist that
@@ -449,6 +462,22 @@ python3 ~/.claude/skills/swarm/swarm.py find --plan <the phase plan just impleme
 - `{"swarm": false, ...}` → no coordinator is coming. This session is the only one that will ever
   land this branch — continue below.
 
+**Independent verification first.** Dispatch the **`verifier`** agent (`subagent_type:
+"verifier"`) with this worktree, the base the set branched from, and every phase plan of the
+set. It drives the plans' Proof sections with fresh context; you wrote the code, so your own
+Proof run does not count as this check. Then:
+- `verified` → land.
+- `failed` → do not land. Fix what it showed (its `repro` lines are the reproduction), re-run
+  the failing journeys yourself, then dispatch the verifier once more. A second `failed` stops
+  without landing: report both verdicts and the evidence dir.
+- `inconclusive` → land, and carry every inconclusive claim and its reason into the
+  Termination block, so the gap is visible, not buried.
+- `map_drift` entries → fix those `features/*.md` entries (they are docs, and yours to fix)
+  before landing.
+
+Skip the verifier only when the set changed no runnable behavior (docs, comments, CI config).
+Say so in the Termination block.
+
 **Nothing to land** if the plan index's worktree is `none` and its branch is already `main` (a
 `--no-worktree` plan planned directly against it) — skip to Termination, nothing merges or deletes.
 
@@ -523,6 +552,8 @@ Plan: {pkg}/.workflows/plan/{TaskID}.md
 Branch: {branch}
 Session: impl-{slug}-p{N}
 Verification: {command} — passed
+Proof: {verified | failed | inconclusive} — {n} journeys, evidence {dir}
+  {one line per claim: claim → evidence file, or the inconclusive reason}
 
 Remaining: phase {N+1} ({TaskID}), phase {N+2} ({TaskID})
 

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Verification and planning principles, adapted from Lauren Tan's pstack (`cursor/plugins/pstack`).
+Unit tests alone no longer count as done. A plan says how the real app proves each claim,
+and an agent that did not write the code checks it.
+
+### Added
+- **`verifier` agent** (Sonnet). It drives the repo's verification skill against landed work
+  with fresh context, never edits code, and returns `verified | failed | inconclusive` per phase,
+  with an evidence file for each claim and repro commands for each failure
+- **`engineering-principles` skill**: ten principles (subtract before you add, laziness, build
+  the lever, boundary discipline, illegal states unrepresentable, root causes / attack the
+  premise, prove it works, verifiable units, behavior-not-implementation tests, encode lessons
+  in structure). It is hidden from the skill list and read only by planners, once per plan,
+  so implementers pay nothing
+
+### Changed
+- **`phase-planner`**: `Manual check` is replaced by **Proof** (harness, feature-map entries,
+  journeys with pass conditions, a neighbor check). The new **Principles applied** section records
+  the decision each principle changed. Bug fixes must reproduce first, and user-facing changes
+  must update the feature map
+- **`plan-generator`**: briefs carry `principles` and `validation.proof`
+- **`/implement`** runs the Proof journeys and reports evidence per claim. Solo landings dispatch
+  `verifier` first: `failed` blocks the landing after one fix-and-retry
+- **`/do`** runs Proof itself and labels the result `self-verified`, with no extra agent, to keep
+  small tasks cheap
+- **`/analyze-orchestrator` and `swarm`**: step 6b sends one `verifier` per wave. A failed phase
+  is marked failed and its dependents stall. Landing requires every phase to be `verified`, or
+  `inconclusive` with a stated reason
+
 ## [4.0.0] - 2026-10-27
 
 The release that makes an unattended run actually finish. Everything below serves one

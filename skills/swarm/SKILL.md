@@ -367,6 +367,10 @@ Then, until nothing is runnable and nothing is live:
    cross-machine resume to losing at most one phase.
 6. **Reap the windows the wave finished with.** `reap --slug <slug>`, after `verify` and
    never before it — an unverified `done` is a claim, and its window is the evidence.
+6b. **Prove the wave, with an agent that did not write it.** `swarm.py verify` proves the
+   commits landed, not that the feature works. Dispatch one `verifier` agent per wave
+   (`agents/verifier.md`; the details are in step 6b of `analyze-orchestrator.md`). A `failed`
+   verdict marks that phase failed in the ledger, with the repro, and its dependents stall.
 7. **Re-compute.** `waves` again; a finished phase may have unblocked others. Go to 1.
 
 8. **When every phase is `done`, land the set** — `land`, below. The loop does not end with a
@@ -515,6 +519,10 @@ permission laundering: it routes around a decision the user made. If a phase nee
 you do not have, stop and say so.
 
 ## Landing the set
+
+**Land only verified work.** Every phase needs a wave verdict of `verified` or `inconclusive`
+(with its reason carried into the landing report). A phase whose wave verdict is `failed`, and
+not re-verified after a fix, keeps the set off `main`. Green tests do not mean the feature works.
 
 The loop above ends with N phases on a branch, which is worth nothing until it is on `main`.
 `land` is the mechanical half of getting it there — and it is **four steps rather than one**,

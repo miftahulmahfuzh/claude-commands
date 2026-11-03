@@ -94,7 +94,18 @@ execution:
     - "{Step 1}"
     - "{Step 2}"
 
+principles: ["{principle}: {the decision it changed}"]   # or [] — see below
+
 validation:
   success_criteria: ["{criterion}"]
   test_command: "{command or empty}"
+  proof:
+    harness: "{.claude/skills/verify-<app> or 'no harness'}"
+    journeys:
+      - "{exact command or steps, and the end state that passes it}"
 ```
+
+Before writing the brief, read `~/.claude/skills/engineering-principles/SKILL.md`, apply
+it, and list each principle that changed a decision in `principles`. If the repo has a
+verification skill (`.claude/skills/verify-*/SKILL.md`), read it and write `proof.journeys`
+with its real commands. Proof is something an agent runs, never "check it manually".

@@ -615,6 +615,20 @@ Loop until `runnable_now` is empty:
    The write-set gate is where that is prevented, by never putting two database writers in one
    wave.
 
+6b. **Verify the wave independently.** Once the wave's work is on the branch the next wave
+   will be cut from (the integration branch after step 6, or the shared worktree's branch),
+   dispatch one **`verifier`** agent (`subagent_type: "verifier"`) for the whole wave: that
+   checkout, the commit before the wave, and the wave's phase plans. It never wrote any of
+   it, so its verdict is what counts. Each phase's own Proof run is the weaker witness.
+   One verifier per wave, not per phase, keeps this to one launch and one drive session.
+   - `verified` → go on.
+   - `failed` phase → mark it `failed` in the ledger with the verifier's `repro` lines and
+     evidence dir. `stalled` then holds its dependents back on its own. Keep driving
+     everything else that is runnable, as with any failed phase.
+   - `inconclusive` → go on, and carry the claims and reasons into the final report.
+   - `map_drift` → the coordinator fixes those `features/*.md` entries in its ledger commit.
+   Skip it for a wave that changed no runnable behavior, and say so in the round's notes.
+
 7. **Push the ledger** via `pusher`. Every round. This is iron rule 2.
 8. **Reap the finished windows.**
    ```bash
