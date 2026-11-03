@@ -12,6 +12,7 @@ Unit tests alone no longer count as done. A plan says how the real app proves ea
 and an agent that did not write the code checks it.
 
 ### Added
+- **`create-verification-skill` skill**: generates a repo-local `verify-<app>` skill (one script with `up`, `doctor`, drive commands, `down`, numbered evidence outside the repo) plus a feature map, then proves every recipe before handing it over. Built from pstack's generator and the bugs we hit building `verify-notesd`
 - **`verifier` agent** (Sonnet). It drives the repo's verification skill against landed work
   with fresh context, never edits code, and returns `verified | failed | inconclusive` per phase,
   with an evidence file for each claim and repro commands for each failure
