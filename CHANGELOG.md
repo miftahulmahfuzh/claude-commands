@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`create-verification-skill`**, from its third run (`verify-run-insights`: Next.js on Neon and
+  Vercel Blob, an LLM coach): object-store SDKs get a stand-in that honours their API-URL override
+  and enforces the browser's signed client-token options, with the vendor host kept for a fake
+  store and every other store refused; the paid budget is counted where calls leave the process,
+  not per drive command, and seeding refuses calls until `up` arms it; the Playwright driver is
+  fenced like the server; a sink the guard cannot see is argued structurally empty; seed through
+  the app when it derives state, mind recency windows in crons, wait on the app's own signals;
+  the repo's formatter, linter and dead-code scanner cover the new files; a requested bug fix is
+  proven with the new skill
 - **Small-set rule: the separate `verifier` is skipped on small, reversible, cleanly self-proven
   sets.** A set of at most 2 phases, none `HARD`, with no migration or data rewrite, and every
   phase's own Proof `verified` in one pass, lands on its implementers' evidence. Reports and the

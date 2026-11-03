@@ -14,7 +14,9 @@ heavy one (compiled Go server, Docker-isolated Arango + Redis, real LLM under a 
 control, an existing e2e harness wrapped); verify-seer has two halves sharing one database (a
 Next.js app behind a serverless Postgres driver, shimmed to a local Postgres; a Python CLI with a
 denylist of commands that write outside the run) and a per-run snapshot for a dev server that
-locks its directory.
+locks its directory; `~/run-insights/.claude/skills/verify-run-insights` is the fullest web app
+(Next.js on Neon and Vercel Blob, both answered by one loopback stand-in, the LLM budget enforced
+where calls leave the process, demo data committed through the app's own review screen).
 
 **Why this exists.** `phase-planner` writes a **Proof** section that names
 `.claude/skills/verify-*`, `/implement` and `/do` run it, and the `verifier` agent re-runs it
@@ -62,6 +64,23 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
   of the run's database, plus a preload (`NODE_OPTIONS=--import`) that routes the driver to it. Do
   not edit app code, and do not give up and point at the hosted service. verify-seer's
   `neon-shim.mjs` is about 100 lines and served every query the app and its seeders sent.
+- **Object stores and other vendor SDKs need a stand-in too.** Look for the SDK's own API-URL
+  override (`@vercel/blob` reads `VERCEL_BLOB_API_URL`, and the browser bundle reads the
+  `NEXT_PUBLIC_` twin, inlined at compile time) and answer that API from the same loopback
+  process. Then follow every path, not only the server's:
+  - The browser's direct upload sends no option headers: the options (random suffix, size cap,
+    content types, expiry) ride inside the signed client token, and the type comes from the file
+    extension. A stand-in that skips them stored unsuffixed names the app then rejected; one that
+    accepts what the vendor would refuse produces false passes. Verify the token and enforce it.
+  - Apps validate URLs against the vendor's host (`*.public.blob.vercel-storage.com`). Keep that
+    host with a fake store id, serve that one host from the stand-in (preload rewrite on the
+    server, `page.route` in the browser), and refuse every other host of the vendor, production's
+    included.
+  - SDKs prefer ambient credentials over the configured token (`VERCEL_OIDC_TOKEN` beats
+    `BLOB_READ_WRITE_TOKEN`). `env -i` drops them; name them in Gotchas anyway.
+- **The migration tool may not reach a local database.** drizzle-kit needs a TCP driver the
+  serverless app never installed. Apply the journal yourself, in order, one transaction per file,
+  and record it where the tool would, so schema-drift checks agree.
 - **Classify every external call by harm, not by price:**
   - *Harmful:* messages real people (chat alerts, SMS, email), writes to production or shared
     systems, moves money, places orders or touches a live broker/exchange account, triggers a
@@ -75,7 +94,8 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
     13 engine commands and 6 lab subcommands this way, including one that git-adds in the main
     checkout even when run from a worktree.
   - *Paid, and the product itself* (the LLM in an LLM app): **real by default**, behind a per-run
-    budget, with journeys targeted at the change. A stub-backed verify of an LLM app is a unit
+    budget counted in vendor calls (see "Count paid calls where they leave"), with journeys
+    targeted at the change. A stub-backed verify of an LLM app is a unit
     test with extra steps: it cannot plan, route or answer. Keep a stub only as `--offline`, for
     plumbing, labelled as not proof.
   - *Paid or external, peripheral* (a data gateway, a search API the feature does not need, an
@@ -161,15 +181,37 @@ Hard-won rules. Each one is a bug we actually hit in `verify-notesd`, `verify-ag
   read (Seer's lab migrates `lab.sqlite` that way). Copy the committed state with the database's
   backup API from a `mode=ro` connection, and hash the protected original before and after the
   proving pass.
-- **Budget the paid core.** The run keeps a counter; each paid drive decrements it, and the
-  script refuses rather than overspends. Record the mode (`real` / `offline`) in the run's
-  metadata and print it from `doctor` and `ls`, so nobody cites an offline run as proof.
+- **Count paid calls where they leave, not per drive command.** In a web app most paid calls are
+  side effects: a commit fires a narrative and a coach's reaction in `after()`, a page view
+  generates prose, a cron fans out. Put the counter in the stand-in and take one call from it in
+  the egress guard before each fetch to a paid host; an empty budget fails the fetch the way a
+  vendor outage does, so the app shows its own failure state. Record the mode (`real` /
+  `offline`) in the run's metadata and print it from `doctor` and `ls`, so nobody cites an
+  offline run as proof. Measure each journey's cost on the proving pass and print the table in
+  the skill (verify-run-insights: an upload 1, a commit 2-3, one coach turn 3-5).
+- **Seeding refuses paid calls; `up` arms the budget last.** Seeding through the app fires the
+  same side effects as using it (25 demo commits fired 49 LLM calls). Refuse them unspent while
+  seeding, arm the budget once `up` is done, and write the residue (failed turn rows, an error log
+  full of refusals) into Gotchas.
+- **Fence the browser as well as the server.** Route every request in the Playwright driver:
+  loopback passes, the fake vendor host is served from the stand-in, everything else is aborted
+  and logged. Grant no permissions (notifications, clipboard) and say in the feature file which
+  fallback path that drives (a refused clipboard shows the share link in a field). A wrapped
+  harness's own browser is not fenced: verify-run-insights reuses the capture harness's seeder but
+  runs its commit pass in the fenced driver, because the harness would have fetched the fake
+  store's URLs from the real vendor.
+- **When the guard cannot see a sink, make it structurally empty.** Web push posts with
+  `node:https`, which a fetch guard never sees. The run's database holds only subscriptions its
+  own browser made, the VAPID pair is minted per run, and `doctor` prints the subscription count:
+  state that argument in Gotchas instead of claiming a fence that is not there.
 - **State drives are read-only.** `sql`, `aql`, `redis` refuse writes (a read-only transaction,
   or a keyword/command allowlist). Writes go through the app's own routes, or they prove nothing.
 - **The agent's shell may not be bash.** The Bash tool can run zsh, which does not word-split
   `$VAR` and refuses functions whose names collide with aliases. Scripts are executables with a
   `#!/usr/bin/env bash` shebang; recipes in the feature map never depend on word splitting or
   inline functions.
+- **`docker exec -i` inside a `while read` loop eats the loop's input.** Only the first of 38
+  migrations ran, silently. Give every `-i` command in a loop `</dev/null` or its own file.
 - **No `| head` inside the script.** Under `set -o pipefail`, a reader that closes early
   SIGPIPEs the writer and `set -e` aborts the drive halfway, here before a body file was renamed.
   Cap output in the producer (a line-limit argument), never in a pipe after it. Likewise give
@@ -189,6 +231,9 @@ Hard-won rules. Each one is a bug we actually hit in `verify-notesd`, `verify-ag
   (`~/.local/state/<app>-verify/<run>/evidence/`), so it survives `down` and worktree deletion,
   and is never committed by accident.
 - **Number evidence files by drive order** (`01-api-...txt`), counting only the primary files.
+  Files `up` writes itself (a seed pass) take a `00-` prefix the counter skips.
+- **Steps files take arguments** (`ui RUN steps.mjs -- <id> <date>`), so a recipe can act on the
+  extraction or run an earlier drive printed instead of hard-coding one.
 
 Make scripts executable, `bash -n` clean, and print usage when called with no arguments.
 
@@ -241,6 +286,16 @@ these four H2s:
 If seed data lacks a precondition a journey needs, the journey reports failure, and the reason
 goes in Gotchas.
 
+- **Seed through the app when the app derives state.** Records, badges and insights computed on
+  commit cannot be inserted honestly by a seeder. Reuse the repo's own seeder for raw inputs, then
+  commit through the real screen in `up` (25 runs took 40 s).
+- **Fixed demo data ages out of time windows.** Crons and digests filter on recency ("a run in the
+  last 60 days"); dated demo data answers `users: 0` forever after. Find the window in the code,
+  and give recipes a user-path way to make data recent (re-date it in the review form).
+- **Wait on the app's own signal, never on the page settling.** A typing indicator going away,
+  a pending card's copy disappearing. A page-text-stability loop stopped early on a static
+  sidebar; a heading predicted from another page ("What happened") never appeared on this one.
+
 ## 5. Prove every recipe before handing over
 
 A skill that was never executed is a draft. Run, for real:
@@ -258,7 +313,8 @@ A skill that was never executed is a draft. Run, for real:
    on it. Only driving the engine on demo data found that.
 4. **Isolation, proven rather than assumed.** Run two instances at once, write through the app in
    one, and read the other's state to show the write did not cross. Hash every file the harness
-   must never touch (a committed database, a shared store's manifest) before and after the pass,
+   must never touch (a committed database, a shared store's manifest, `.env.local`) before the
+   first `up` and after the last `down`,
    and check `git status` on the paths it could have dirtied.
 5. `down`, then confirm the evidence still exists and no process or per-run DB is left behind.
 
@@ -273,6 +329,9 @@ it is the point of the pass.
   the skill and the feature map.
 - Any dev dependency the drives need (Playwright, an HTTP client) goes into the repo's own
   manifest at a pinned version. Prefer browsers and tools already installed on this machine.
+- The repo's own gates cover the new files: its formatter, linter and source guards scan
+  `.claude/` too, and a dead-code scanner (knip) reports every helper `verify.sh` starts by path as
+  an unused file. Run them, and give the scanner a commented ignore for the skill directory.
 - Confirm the scripts are committed executable: `git ls-files -s` shows `100755`. A repo with
   `core.fileMode=false` records `100644` whatever the disk says; fix with
   `git update-index --chmod=+x <file>`.
@@ -304,3 +363,7 @@ End with:
   the bugs the pass found;
 - what the skill deliberately never drives;
 - the commit sha.
+
+When the user asks for a product bug to be fixed, the new skill proves the fix: a failing test
+first, then the journey that found it, on a fresh run (verify-run-insights' first use was its own
+elevation-record finding, `0.12 km` -> `118 m`).
