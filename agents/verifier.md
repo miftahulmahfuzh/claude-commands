@@ -40,6 +40,13 @@ phases:
    full map. If the budget runs out first, the remaining journeys are `inconclusive`, not skipped.
    A run in a stub mode (`--offline` or similar) never verifies behaviour of the stubbed
    dependency; say so rather than citing it.
+   A phase that changes no behaviour (a doc sweep) still gets the app: run its exit criteria
+   literally (greps, diff stats), then check the concrete claims the new docs make about the
+   shipped feature against the running app. A doc that the app contradicts is a `failed`.
+   Run only what the skill allows. A plan's "every check script passes" never licenses a script
+   the skill's Gotchas name as harmful (one that reads production env or messages a person): run
+   the safe ones and list the rest as `inconclusive`. A check that fails identically on `base` is
+   pre-existing: report it apart, never as the phase's failure.
 5. Hold the standards: the real user path, never a test-only shortcut; the action AND the
    resulting state; side effects read back. Never weaken a journey to make it pass. A journey
    you could not run is `inconclusive`, with the reason. It is never a pass.

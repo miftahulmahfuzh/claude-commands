@@ -16,7 +16,10 @@ Next.js app behind a serverless Postgres driver, shimmed to a local Postgres; a 
 denylist of commands that write outside the run) and a per-run snapshot for a dev server that
 locks its directory; `~/run-insights/.claude/skills/verify-run-insights` is the fullest web app
 (Next.js on Neon and Vercel Blob, both answered by one loopback stand-in, the LLM budget enforced
-where calls leave the process, demo data committed through the app's own review screen).
+where calls leave the process, demo data committed through the app's own review screen);
+`~/daily-words/.claude/skills/verify-daily-words` is the one to read for an app with database
+sessions, an owner's pinned dev port, a repo Playwright suite wrapped without editing it, and a
+harmful sink (web push) turned into a fake receiver that proves the success path end to end.
 
 **Why this exists.** `phase-planner` writes a **Proof** section that names
 `.claude/skills/verify-*`, `/implement` and `/do` run it, and the `verifier` agent re-runs it
@@ -39,18 +42,34 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
 - **Existing harnesses first:** e2e suites, smoke scripts, Postman/http files, compose test
   stacks, seed scripts, fixtures. A harness the repo already maintains beats anything you
   invent. Wrap it, don't replace it. Check how it picks its target (a `BASE_URL`-style env var,
-  a flag): wrapping should be "point it at the run". If the target is hardcoded, add the override
-  to the harness itself, a few lines, rather than forking it.
+  a flag): wrapping should be "point it at the run". If the target is hardcoded in a config the
+  harness loads, write a wrapper config into the run's snapshot that imports the repo's and
+  overrides only the target (verify-daily-words: `{...base, use: {...base.use, baseURL}, webServer:
+  undefined}`), so no tracked file changes; edit the harness only when it cannot be wrapped. Drop
+  any "start or reuse a server" block: Playwright's `reuseExistingServer` happily reuses whatever
+  the owner left on the default port. Specs that skip without a session variable
+  (`DW_TEST_SESSION`) should get the run's token, so they run instead of skipping. Under `env -i`
+  with a per-run HOME, Playwright cannot find its browsers: pass `PLAYWRIGHT_BROWSERS_PATH`.
 - **The real client's sequence:** read the frontend, mobile client or the existing e2e client
   for the exact calls a user's action makes: body encoding per API version (multipart on one
   route, JSON on another), polling, which stream it opens, which headers carry auth. The drive
   command replays that sequence; guessing it produces 400s that look like product bugs.
 - **Run:** the exact local start command, ports, env vars, config files, seed data, auth.
+- **The owner's port.** A CLAUDE.md that pins the dev server to one port ("3200 is the only
+  port, never start on another") governs the owner's server, not a verify run, which must still
+  get its own. Decide the coexistence and write it into Gotchas and the CLAUDE.md line: the
+  free-port picker refuses the owner's port, `up` never stops or reuses its holder, `doctor` only
+  reports who holds it, and every run is tracked by process group so none is orphaned.
 - **Auth:** how a signed-in user is recognised, read in the app's session code. Mint a session
   with the app's own encoder and a per-run secret; never add a bypass to the app. Read identity
   rules from the code, not from env alone: a section may admit one hardcoded email on top of the
   allowlist (verify-seer: `/sera` 404'd for the minted user until the run signed in as the address
   `lib/sera/access.ts` names). A 404 or a redirect on first drive is the gate before it is a bug.
+  With **database sessions** (Auth.js `strategy: 'database'`) there is no encoder: a session is a
+  `sessions` row, so insert one per user with a random token and send it as the cookie; replace any
+  fixed token the repo's seeder writes. Seed one user per gate the layout enforces (verify-daily-
+  words: `demo` onboarded with history, `stranger` onboarded and empty, `newcomer` not onboarded),
+  and let every drive take `--as USER` / `--anon`: sharing, claiming and onboarding need them.
 - **Dependencies:** each database, cache, queue and third-party API, and how each can be
   isolated per run (its own Docker container or database name, a local emulator, a fake). Never
   the user's own dev containers. A heavy service with cheap namespaces (Postgres, Arango) gets one
@@ -109,12 +128,19 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
 - **Observe:** what proves behavior: response bodies, DB rows, files written, logs, exit codes,
   screenshots.
 - **Isolate:** can two instances run at once? Port 0 or a free-port picker, per-run data dirs,
-  per-run DB names. Check for per-directory locks too, not only ports: Next 16's `next dev` locks
-  `.next/dev` in the project directory, so a second server on another port still exits. Serve such
+  per-run DB names. Check for per-directory state too, not only ports: Next 16's `next dev` locks
+  `.next/dev` in the project directory, so a second server on another port still exits, and Next
+  15 has no lock but two dev servers would share and clobber one `.next`. Serve such
   a tool from a per-run snapshot of its directory (rsync the sources and hard-link dependencies
   with `cp -al`, which took 0.2 s for 17k files; a symlinked `node_modules` breaks Turbopack). The
   snapshot is a build artifact, so doctor warns when the tree changes. If something cannot be
   isolated, say so in the skill, and make the script refuse to share it.
+- **Address the run by the host the framework believes it is on.** `next dev` reports every
+  request's `req.url` as `http://localhost:PORT` whatever the Host header said, so a route that
+  redirects with `new URL(path, req.url)` moved a browser on `127.0.0.1` to another cookie origin
+  and the claim silently ran signed out (verify-daily-words). Bind loopback only, but hand out
+  `localhost:PORT` as the run's URL, the app's own absolute-URL setting (`APP_URL`) and the cookie
+  domain.
 
 If the checkout does not build or start as-is, fix that first, or stop and report it exactly.
 A skill written against a broken base teaches wrong steps.
@@ -133,14 +159,15 @@ would be awkward). Agents call subcommands; they never hand-write launch sequenc
 | `down RUN` / `down --all` | Kills exactly what `up` started, drops per-run state, keeps evidence. |
 | `ls` | Runs, state, evidence count. |
 
-Hard-won rules. Each one is a bug we actually hit in `verify-notesd`, `verify-agentic` or
-`verify-seer`:
+Hard-won rules. Each one is a bug we actually hit in one of the verify skills named above:
 
 - **Never let the daemon hold the caller's pipe.** Start it with `setsid`, with stdin from
   `/dev/null` and stdout/stderr to a log file, and NOT as part of a `cd && ... &` list (that
   backgrounds a bash wrapper, records the wrong pid, and hangs every `$(verify.sh up)`).
 - **Record the process group, kill the group.** `kill -- -$PGID`. Never `pkill` by name: the
-  user's real instance has the same name.
+  user's real instance has the same name. Wait for the whole group to be gone (`pgrep -g $PGID`),
+  not the leader: `next dev`'s workers outlived it and wrote into the snapshot while `down`'s
+  `rm -rf` ran, which failed under `set -e` and left the run half torn down. Retry the removal.
 - **Doctor checks port ownership** by comparing the listener's process group with the run's,
   not with a pid regex.
 - **Binary responses go to a file** with their size and sha256, never to the terminal. Raw bytes
@@ -162,14 +189,18 @@ Hard-won rules. Each one is a bug we actually hit in `verify-notesd`, `verify-ag
     allowlist of loopback and the services the run may reach.
   - Node: `fetch` ignores proxy env (Node 22). Load a preload with `NODE_OPTIONS=--import` that
     wraps `globalThis.fetch` and rejects every host off the allowlist, logging what it blocked.
-    Next and similar frameworks wrap fetch after the preload, so the guard stays underneath.
+    Next and similar frameworks wrap fetch after the preload, so the guard stays underneath. Wrap
+    `request` and `get` on both `node:http` and `node:https` in the same preload: the module
+    objects are shared with `require()`, and a library that calls `https.request` at call time
+    (web-push does) is refused before a socket opens. Wrap `get` separately: it does not go
+    through the exported `request`.
   - Build tools can need the network, and a dead proxy can break them: behind one, Turbopack could
     not fetch `next/font/google` files and every page answered 500. Allowlist that CDN in the
     guard, leave the proxy off that process, and say so.
   Prove both directions from `doctor` without sending anything out: a probe to a harmful host
   must fail against the dead proxy. After the first real journey, list the hosts the logs mention
-  and confirm each was allowed. State in Gotchas that this is best effort: `node:http(s)` used
-  directly, or a native fetcher, slips past.
+  and confirm each was allowed, and include an `https.request` probe in doctor. State in Gotchas
+  that this is best effort: a raw `net.connect`, a native addon or a Rust-side fetcher slips past.
 - **Compiled apps: build per run, stamp the build.** `up` builds into the run dir from the
   checkout and injects the commit (plus `-dirty`) into whatever the health/version endpoint
   reports. Doctor warns when HEAD **or the working tree** changed since `up`: an edit without a
@@ -188,7 +219,9 @@ Hard-won rules. Each one is a bug we actually hit in `verify-notesd`, `verify-ag
   vendor outage does, so the app shows its own failure state. Record the mode (`real` /
   `offline`) in the run's metadata and print it from `doctor` and `ls`, so nobody cites an
   offline run as proof. Measure each journey's cost on the proving pass and print the table in
-  the skill (verify-run-insights: an upload 1, a commit 2-3, one coach turn 3-5).
+  the skill (verify-run-insights: an upload 1, a commit 2-3, one coach turn 3-5). The counter sees
+  fetches, not logical calls: an SDK with `maxRetries: 1` spends 2 on a call that fails upstream,
+  and an offline run shows 2 refused per attempt. Say so beside the table.
 - **Seeding refuses paid calls; `up` arms the budget last.** Seeding through the app fires the
   same side effects as using it (25 demo commits fired 49 LLM calls). Refuse them unspent while
   seeding, arm the budget once `up` is done, and write the residue (failed turn rows, an error log
@@ -200,16 +233,28 @@ Hard-won rules. Each one is a bug we actually hit in `verify-notesd`, `verify-ag
   harness's own browser is not fenced: verify-run-insights reuses the capture harness's seeder but
   runs its commit pass in the fenced driver, because the harness would have fetched the fake
   store's URLs from the real vendor.
-- **When the guard cannot see a sink, make it structurally empty.** Web push posts with
-  `node:https`, which a fetch guard never sees. The run's database holds only subscriptions its
-  own browser made, the VAPID pair is minted per run, and `doctor` prints the subscription count:
-  state that argument in Gotchas instead of claiming a fence that is not there.
+- **Turn a harmful sink into a fake receiver, so its success path becomes provable.** A sink you
+  only fence (web push, a webhook, an SMS gateway) leaves its feature unproven past the refusal.
+  When the protocol lets the app address an arbitrary endpoint, stand one up on loopback and
+  register it through the app's own route. verify-daily-words' stand-in is a push service on
+  HTTPS with a per-run self-signed certificate the app trusts through `NODE_EXTRA_CA_CERTS`
+  (nothing else trusts it); `push subscribe` mints a device key pair and posts the
+  subscription JSON to `POST /api/push/subscription`, and the sink checks the VAPID `k=` against
+  the run's key and decrypts each payload (RFC 8291 aes128gcm, ~30 lines of `node:crypto`). The
+  hourly tick then proves sent / quiet / no-slot / 410-pruned with the decrypted text as evidence.
+  Keep the structural argument as well (VAPID pair minted per run, the browser never granted
+  notifications, the guard refusing `https.request` elsewhere) and make `doctor` fail when any
+  stored endpoint points outside the run's sink. Where no fake can stand in, fall back to making
+  the sink structurally empty and say so in Gotchas.
 - **State drives are read-only.** `sql`, `aql`, `redis` refuse writes (a read-only transaction,
   or a keyword/command allowlist). Writes go through the app's own routes, or they prove nothing.
+  Give them a bare-value mode for recipes (`ID=$($V sql RUN --value "select id …")`): `psql`'s
+  table output puts the dashes on the line a recipe's `sed -n 3p` expected the id on.
 - **The agent's shell may not be bash.** The Bash tool can run zsh, which does not word-split
   `$VAR` and refuses functions whose names collide with aliases. Scripts are executables with a
   `#!/usr/bin/env bash` shebang; recipes in the feature map never depend on word splitting or
-  inline functions.
+  inline functions, and quote every URL with a `?` (zsh globs it and refuses with "no matches
+  found" before the script runs).
 - **`docker exec -i` inside a `while read` loop eats the loop's input.** Only the first of 38
   migrations ran, silently. Give every `-i` command in a loop `</dev/null` or its own file.
 - **No `| head` inside the script.** Under `set -o pipefail`, a reader that closes early
@@ -219,12 +264,20 @@ Hard-won rules. Each one is a bug we actually hit in `verify-notesd`, `verify-ag
 - **HTML evidence is the visible text.** Server-rendered pages carry a framework payload in
   `<script>` tags, and a regex strip keeps that payload and loses the page. Save the HTML, and print
   the visible text with each `aria-label` inline (`[Mark as done]`) through a real HTML parser.
-  That is what lets a recipe assert on what the user reads without a browser.
+  That is what lets a recipe assert on what the user reads without a browser. It is not the whole
+  page under a dev server: a Next `notFound()` page's copy lived only in the RSC payload, so the
+  text view showed the brand and nothing else. Assert such a status with the HTTP drive and its
+  copy with the browser.
 - **The browser driver must not create its own failures.** Playwright's screenshot hides the
   caret by injecting a style, and mid-hydration React reports that as a hydration mismatch the
   app does not have. Pass `caret: 'initial'` and wait for `networkidle`. Dev-only overlays (Next's
   dev-tools badge) sit on top of real controls and swallow clicks, so hide them with an init
-  script. Resolve the steps-file path before the script `cd`s anywhere.
+  script. Resolve the steps-file path before the script `cd`s anywhere. Give steps an
+  `allow(regex)` for console errors a journey causes on purpose (a revoked link's 404), rather
+  than loosening the rule for everyone. Run the browser in the seeded user's time zone: an app
+  that re-detects the zone from the browser otherwise moves the user's day boundary mid-journey.
+  Headless Chromium answers `Notification.permission === "denied"` with no grant, which is an end
+  state to assert, not a failure.
 - **`down` copies the server log into evidence** before deleting run state: it is the record of
   every decision the run made.
 - **Evidence lives outside the repo and outside the worktree**
@@ -293,8 +346,25 @@ goes in Gotchas.
   last 60 days"); dated demo data answers `users: 0` forever after. Find the window in the code,
   and give recipes a user-path way to make data recent (re-date it in the review form).
 - **Wait on the app's own signal, never on the page settling.** A typing indicator going away,
-  a pending card's copy disappearing. A page-text-stability loop stopped early on a static
-  sidebar; a heading predicted from another page ("What happened") never appeared on this one.
+  a pending card's copy disappearing, a turn meter's aria-label. A page-text-stability loop stopped
+  early on a static sidebar; a heading predicted from another page ("What happened") never
+  appeared on this one. Three more from verify-daily-words, each a recipe that passed or hung for
+  the wrong reason: a "Just added" list that already held seeded words satisfied the wait before
+  the save landed; a form that auto-submits on mount detached the button the steps were clicking;
+  a redirect chain through two gates (`/onboarding` -> `/today` -> `/birthday`, the last compiling
+  on first use) settled the URL twice, so waiting on the URL ended on a blank page. Wait for a
+  screen's content, and never tap a control the page drives itself.
+- **Pick inputs the seed does not already hold.** The first "add a word" recipe used a word the
+  demo seed had; it ended on the duplicate notice and read like a broken save. Point recipes at
+  the seed's own list (`grep` the seeder) when choosing inputs.
+- **Write down one-shot seed state and the order it forces.** Today's card, a user's onboarding,
+  a delivered notification slot happen once per run. Say in each feature file what its journey
+  consumes, and order the proving pass around it (the repo's onboarding spec needs the
+  un-onboarded user, so it runs before the onboarding journey).
+- **Clock windows, not only recency windows.** A scheduled job that only acts between 07:00 and
+  19:59 in the user's zone says nothing at 22:00. Give recipes a user-path way to move the clock
+  instead of waiting: change the user's zone through the app's own route (an `Etc/GMT±N` zone is
+  exact; its sign is POSIX's, inverted: `Etc/GMT-5` is UTC+5).
 
 ## 5. Prove every recipe before handing over
 
@@ -317,6 +387,8 @@ A skill that was never executed is a draft. Run, for real:
    first `up` and after the last `down`,
    and check `git status` on the paths it could have dirtied.
 5. `down`, then confirm the evidence still exists and no process or per-run DB is left behind.
+6. **Re-prove what you changed after the full pass.** Fixes made while writing the feature files
+   (a new drive option, a corrected recipe) get one short run of their own before the commit.
 
 Run `down` after every failed attempt too. Expect this pass to find bugs in your own script:
 it is the point of the pass.
@@ -336,8 +408,12 @@ it is the point of the pass.
   `core.fileMode=false` records `100644` whatever the disk says; fix with
   `git update-index --chmod=+x <file>`.
 - Commit with the repo's conventions (its CHANGELOG under Unreleased if it keeps one, unless its
-  CLAUDE.md reserves the changelog for a release command) and push to the default branch, unless
-  the repo's CLAUDE.md says otherwise.
+  CLAUDE.md reserves the changelog for a release command, or its entries record only product
+  features) and push to the default branch, unless the repo's CLAUDE.md says otherwise. When the
+  user limits the commit to the paths you create, the one-line CLAUDE.md edit this step requires is
+  the only exception: commit it explicitly, skip the changelog, and say both in the report. If the
+  default branch auto-deploys (a `vercel.json` with `deploymentEnabled.main`), note that the push
+  deploys unchanged app code.
 - **The index may hold someone else's staged work.** In a shared checkout (an active swarm or
   orchestration), `git add <your paths> && git commit` also commits whatever a peer has already
   staged. Commit through an isolated index instead, then sync only your paths into the real one:

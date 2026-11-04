@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`create-verification-skill`**, from its fourth run (`verify-daily-words`: Next.js on a TCP
+  Postgres with database sessions, an LLM product, web push): a harmful sink is turned into a
+  loopback fake receiver (an HTTPS push service trusted through `NODE_EXTRA_CA_CERTS`, payloads
+  decrypted) so its success path is proven, and the Node preload guards `node:http(s)` as well as
+  `fetch`; database sessions are minted as rows, one seeded user per layout gate; a repo
+  Playwright suite is wrapped with a generated config instead of an edit; an owner's pinned dev
+  port coexists with verify runs by rule; the run is addressed by the host `next dev` reports;
+  `down` waits for the whole process group; state drives get a bare-value mode; the counter sees
+  fetches, so SDK retries double a failed call; new wait-signal traps, one-shot seed state, clock
+  windows, and a re-proof of anything changed after the full pass
+- **`verifier`**: a no-behaviour phase (a doc sweep) still checks its docs' claims against the
+  running app; a plan's "every check script passes" never licenses a script the skill calls
+  harmful; a check failing identically on `base` is reported apart
 - **`create-verification-skill`**, from its third run (`verify-run-insights`: Next.js on Neon and
   Vercel Blob, an LLM coach): object-store SDKs get a stand-in that honours their API-URL override
   and enforces the browser's signed client-token options, with the vendor host kept for a fake
