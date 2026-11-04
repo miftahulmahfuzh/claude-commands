@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`create-verification-skill`**, from its tenth run (`verify-fast-order`: a stateless Go +
+  Vite LLM app): a runtime with no preload counts its paid calls at a loopback proxy that
+  terminates TLS with a per-run CA only the app trusts (`HTTPS_PROXY` + `SSL_CERT_FILE`), saving
+  each request for a `calls` drive; the fault switch gets `hang` beside `drop`, and a circuit
+  breaker's leftover state goes into the expected end states; validator inputs that would be billed
+  are sent under `fault drop`; the app's own dev config is read like a harness default (its Vite
+  proxy pointed at production) and the shell scripts around a harness are read branch by branch
+  (one could `docker compose down` the owner's stack), as is what a passing harness asserts; cwd
+  dotenv loaders need an empty working directory; Go builds are stamped by `-buildvcs` and checked
+  through `/proc/PID/exe`; docker-proxy ports read as held; the clipboard claim is now "measure it",
+  because Chromium 145 refuses unpermitted writes, the path that found the run's worst bug
 - **`create-verification-skill`**, from its ninth run (`verify-hospital-inspection-forms`: a
   public Neon + Blob Next app with no paid call): copy a sibling's stand-in when the vendor SDK
   versions match; an app with nothing paid still gets fault injection, as a stand-in switch that

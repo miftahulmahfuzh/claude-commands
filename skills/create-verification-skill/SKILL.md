@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Create a verification skill
 
-Adapted from pstack's `create-verification-skill` (`cursor/plugins/pstack`), plus nine runs of
+Adapted from pstack's `create-verification-skill` (`cursor/plugins/pstack`), plus ten runs of
 this skill. Read the sibling closest to your repo's shape before you start:
 
 | Skill | Read it for |
@@ -21,6 +21,7 @@ this skill. Read the sibling closest to your repo's shape before you start:
 | `~/agentic/.claude/skills/verify-agentic-docs` | a static site (Hugo): no database, no auth, no paid call; a per-run snapshot with a `sync` edit loop, a production-`build` drive wrapping the repo's own checks plus a link check, a CDN cache in the browser fence, and an `--offline` mode that again found the worst bug |
 | `~/nvim-config/.claude/skills/verify-nvim-config` | no server at all: a dotfiles repo (Neovim + tmux config) whose "app" is a TUI driven through a run-owned tmux server; a network namespace as the fence; a hard-linked read-only dependency cache built from the owner's lockfile; a `--live` mode on a copy of the owner's real installed environment |
 | `~/hospital-inspection-forms/.claude/skills/verify-hospital-inspection-forms` | a public Neon + Blob app with no paid call: the stand-in copied from a sibling in minutes, a `fault db\|blob` switch as the fault injection, an `export` drive that reads the app's `.xlsx` back cell by cell, a seed built from the app's own form definitions |
+| `~/fast-order/.claude/skills/verify-fast-order` | a stateless Go + Vite LLM app: the paid calls counted by a TLS-intercepting proxy on loopback (the Go client honours `HTTPS_PROXY`), a `fault drop\|hang` switch against an in-process circuit breaker, a Vite wrapper config because the dev proxy pointed at production, clipboard read back in headless Chromium |
 
 **Copy before you write.** When the closest sibling talks to the same vendor SDKs, compare the
 installed versions (`@neondatabase/serverless`, `@vercel/blob` in both `node_modules`); if they
@@ -76,6 +77,19 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
   persistent profile holding the owner's real Google session; wrapping it meant passing the run's
   base, port and a throwaway profile on every call and refusing its `login`/`reset` verbs. A repo
   rule against a browser library ("no Playwright") binds the harness too: wrap the driver it has.
+  The app's own dev config is a default of the same kind: fast-order's `vite.config.ts` proxied
+  `/api` to the production Render backend while the README said it proxied to the local one, so
+  `npm run dev` was a harmful command. Trust the config over the docs; serve the dev server with a
+  wrapper config that imports the repo's and overrides only target, host, port and cache dir, and
+  prove the hop in doctor (a unique path that the run's backend answers 404, plus the repo's own
+  proxy log line naming the target). **Read the shell scripts around a harness, not only its
+  specs**, every branch: fast-order's `test-*.sh` ran `npm install -D` into the checkout,
+  `playwright install --with-deps` (sudo), and, when `docker compose ps` showed nothing up,
+  `deploy-compose.sh` = `docker compose down` + rebuild of the owner's stack. Wrap the inner command
+  (`playwright test` under a wrapper config, the specs copied into the snapshot with their
+  hardcoded owner URLs rewritten), never the script. **Then read what a passing harness asserts:**
+  fast-order's integration spec passed on the clipboard-error stamp (it checked only `length > 50`),
+  so its green proved nothing about the bug the run found. Say so in the feature file.
 - **The real client's sequence:** read the frontend, mobile client or the existing e2e client
   for the exact calls a user's action makes: body encoding per API version (multipart on one
   route, JSON on another), polling, which stream it opens, which headers carry auth. The drive
@@ -274,7 +288,8 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   egress), the namespace is the run's identity: `down` kills every pid whose
   `/proc/PID/ns/net` matches the run's, and nothing else can match.
 - **Doctor checks port ownership** by comparing the listener's process group with the run's,
-  not with a pid regex.
+  not with a pid regex. A port Docker publishes is held by root's `docker-proxy`, so `ss -p` lists
+  the LISTEN with no process: report it as held by the owner, never as free.
 - **Binary responses go to a file** with their size and sha256, never to the terminal. Raw bytes
   corrupt the agent's output and every `grep` after them. Use one `curl -w` (a second `-w`
   silently replaces the first). When the binary is the product (an Excel or PDF export), give it
@@ -295,7 +310,10 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   `VAR=` (set but empty) counts as set: godotenv's `Load` keeps it, some loaders fall back to the
   file or a default. Schema validators split the other way: zod's `z.url().optional()` accepts an
   unset `AUTH_URL` and refuses `AUTH_URL=` at boot. Omit an optional variable, or give it the
-  run's own value; never blank it.
+  run's own value; never blank it. A loader that reads `./.env` from the working directory
+  (godotenv's `Load()`, python-dotenv's default) fills every variable `env -i` left unset from
+  whatever `.env` sits there: start the process in an empty directory of the run's. And every
+  variable with a default is pinned too: fast-order's unset `PORT` falls back to 8080, the owner's.
 - **When the run needs no network at all, take it away.** `unshare --map-current-user -n`
   (unprivileged, uid kept) starts the run in a namespace with only a downed loopback: no route,
   no DNS, so raw sockets, native code and child processes are refused too, which no proxy or
@@ -325,7 +343,13 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
 - **Compiled apps: build per run, stamp the build.** `up` builds into the run dir from the
   checkout and injects the commit (plus `-dirty`) into whatever the health/version endpoint
   reports. Doctor warns when HEAD **or the working tree** changed since `up`: an edit without a
-  commit leaves a stale binary too.
+  commit leaves a stale binary too. When the app has no version endpoint and no variable to
+  `-ldflags -X` into (an `-X` on a missing symbol is silently ignored), let the toolchain stamp it:
+  `go build -buildvcs=true` from the checkout records `vcs.revision` and `vcs.modified`, read back
+  with `go version -m` (lines look like `build	vcs.revision=…`; an awk on field 2 misses them).
+  Doctor then proves the listener runs that binary (`readlink /proc/<listener pid>/exe`). Build
+  offline and leave the owner's caches alone: `GOPROXY=off GOFLAGS=-mod=readonly GOTOOLCHAIN=local`,
+  the owner's module cache read, a `GOCACHE` under the verify state.
 - **Readiness distinguishes "not up yet" from "up and broken".** Poll for the usable state, but
   stop after a few identical 5xx answers and print the log tail. verify-seer's first `up` waited
   4.5 minutes on a page that had been failing the same way since second 5. One exception: a known
@@ -368,6 +392,24 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   too: one action can mint background work that later page views pay for (a jmtarot reading mints
   a chat run that any page with the chat button then advances, 5-9 calls), so a recipe's budget is
   its own calls plus what it leaves pending.
+  **A runtime with no preload (Go, Python) counts at a proxy.** Make the stand-in an HTTP proxy on
+  loopback and point `HTTPS_PROXY` (both cases) at it: CONNECT to the paid host is terminated with
+  a per-run leaf certificate signed by a per-run CA that only the app trusts (Go: `SSL_CERT_FILE`
+  = the CA and `SSL_CERT_DIR` = an empty dir; Python requests: `REQUESTS_CA_BUNDLE`), and each
+  request inside the tunnel is one call: read whole, saved with its credential redacted, counted,
+  forwarded, or refused by destroying the socket. CONNECT to anything else is dropped and logged, so
+  the same process is the fence. This keeps the app's own config path: fast-order's Gemini base URL
+  is a constant in code, so pointing a base-URL variable at the stand-in was not possible without
+  switching providers. Decode `Content-Encoding` for the record only (Go asks for gzip), and give
+  the script a `calls` drive that prints each saved request's model, prompt and reply: it is how a
+  reader sees what the app asks the vendor for.
+- **Give the fault switch `drop` and `hang`, and read the client's resilience code first.** Drop
+  proves the error path, hang proves the timeout (fast-order: a 502 after exactly the handler's
+  30 s context, "printing…" on screen meanwhile). A circuit breaker is per-process state that
+  journeys leave behind: after three dropped calls gobreaker stays open 30 s and a failed half-open
+  probe reopens it, so the next journey fails fast with no call leaving. Write those counts into
+  the expected end state (calls reaching the stand-in per print: 1, 1, 1, then 0), and tell
+  recipes to wait out the timeout or `down` + `up`. Every `ui` ends with `fault none`.
 - **Seeding refuses paid calls; `up` arms the budget last.** Seeding through the app fires the
   same side effects as using it (25 demo commits fired 49 LLM calls). Refuse them unspent while
   seeding, arm the budget once `up` is done, and write the residue (failed turn rows, an error log
@@ -376,11 +418,16 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   the run's own origin passes (not all of loopback: the owner's dev server is loopback too), the
   fake vendor host is served from the stand-in, everything else is aborted and logged and fails
   the drive unless the steps `allow()` it. `context.route` does not see WebSockets, and a service
-  worker's requests bypass it unless the context sets `serviceWorkers: 'block'`. Grant no permissions (notifications, clipboard), and find out which path that really
-  drives before writing it down: headless Chromium lets a focused page *write* the clipboard with
-  no grant, so a share button ends on its "copied" toast, not on the manual-copy fallback the code
-  keeps for refusals. Read the minted token back from the database, and list the fallback as not
-  driven. A wrapped
+  worker's requests bypass it unless the context sets `serviceWorkers: 'block'`. Grant no permissions by default (notifications, clipboard), and **measure** which path that
+  drives before writing it down, because it changes between Chromium builds: in
+  verify-expense-tracking's Chromium a focused page could *write* the clipboard with no grant (its
+  share button ended on the "copied" toast), while Chromium 145 under Playwright 1.58 refused
+  `writeText` with `NotAllowedError`, and that refusal found fast-order's worst bug (the app threw
+  away the order it had just paid an LLM for). Observe every `writeText` with an init script that
+  records the text and the browser's answer and passes the call through (never fake the answer),
+  drive the success path with the grant and read the clipboard back, and drive the refusal path
+  without it. Start the browser from `env -i` so no `DISPLAY`/`WAYLAND_DISPLAY` lets it reach the
+  owner's desktop clipboard (WSLg). A wrapped
   harness's own browser is not fenced: verify-run-insights reuses the capture harness's seeder but
   runs its commit pass in the fenced driver, because the harness would have fetched the fake
   store's URLs from the real vendor. With no request routing (a raw CDP driver), fence Chrome with
@@ -474,7 +521,8 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
 - **Steps files take arguments** (`ui RUN steps.mjs -- <id> <date>`), so a recipe can act on the
   extraction or run an earlier drive printed instead of hard-coding one.
 
-Make scripts executable, `bash -n` clean, and print usage when called with no arguments.
+Make scripts executable, `bash -n` clean, and print usage when called with no arguments. (`bash -n`
+found an apostrophe inside `"${x:+…owner's…}"`, reported as a syntax error at the function's closing brace.)
 
 ## 3. Write the SKILL.md
 
@@ -590,7 +638,11 @@ A skill that was never executed is a draft. Run, for real:
    shown to the admin as a link), and a date check by `Date.parse`, which rolls `2026-02-31` over,
    so Postgres refused it and the user got a 500 blaming the database. Look-alike hosts (the
    trusted host in the path or as a subdomain of another), impossible dates, over-limit counts,
-   unknown keys.
+   unknown keys, whitespace-only required fields, an oversized body. When the input would reach a
+   paid call, send it under `fault drop`: the stand-in reads the whole request before dropping it,
+   so the evidence shows what would have been billed and nothing is (fast-order: a menu of spaces
+   passed validation, and a 2.6 MB body went to the vendor whole). Two drops do not trip a
+   three-failure breaker; mind the third.
 3. **Every journey in every feature file, once.** Fix the recipe when the recipe was wrong
    (wrong arg name, wrong column, wrong route). When the APP is wrong, record it as a product
    bug in the final report and do not paper over it in the map. Before calling a UI failure a
@@ -610,11 +662,13 @@ A skill that was never executed is a draft. Run, for real:
    check `git status`. Pick a probe you have seen rendered: a section's `_index.md` body never
    reached the page, so the first probe read 0 in both runs and proved nothing; its title did.
    Prove the failure path the same way (a broken template must fail `up` and `sync` with the
-   generator's error). Hash every file the harness
+   generator's error). A stateless app still has in-process state: trip one run's circuit breaker
+   and show the other answering 200 at the same moment. Hash every file the harness
    must never touch (a committed database, a shared store's manifest, `.env.local`, an owner's
    browser profile) before the first `up` and after the last `down`, list the user's `~/.cache`
    before and after (that diff caught Chrome writing `dconf` outside the run), and check
-   `git status` on the paths it could have dirtied.
+   `git status` on the paths it could have dirtied. Take these hashes before the script's first
+   `up`, not after it: the tenth run took them after, and could only argue the first run clean.
 6. `down`, then confirm the evidence still exists and no process or per-run DB is left behind.
 7. **Re-prove what you changed after the full pass.** Fixes made while writing the feature files
    (a new drive option, a corrected recipe) get one short run of their own before the commit.
