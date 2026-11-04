@@ -31,15 +31,14 @@ deletes inside `~/.claude/commands/` and is safe to re-run.
 | `/implement` | Executes a plan: creates the tasks, applies the code |
 | `/analyze-orchestrator` | Runs a whole plan set as a swarm — a session per phase, resumable on any machine |
 | `/do` | Executes one existing task by TaskID |
-| `/dbg` | Drives Delve to get runtime truth instead of inferring from logs |
 | `/analyze-package` | Generates a package's code-quality analysis |
 | `/update-readme` | Creates or refreshes `package_readme.md` |
 | `/update-todos` | Creates or refreshes `todos.md` |
 | `/reorganize-todos` | Re-sorts todos by priority |
 | `/postmortem` | Documents what went wrong in a session |
-| `/up-version` | Semver bump + CHANGELOG from commits since the last tag |
-| `/token-maxxing` | Starts a high-consumption session on deliberately useful work; `/token-maxxing N` fans out N of them in parallel |
-| `/token-maxxing-update-docs` | Records that session |
+
+`/dbg`, `/token-maxxing` and `/up-version` stand outside this pipeline — see
+[Other tools](docs/other-tools.md).
 
 ### Session names
 
@@ -54,15 +53,13 @@ session after their errand, as soon as they know it:
 | `/implement` | `impl-<slug>-p<N>` | step 2, phase included when `--phase` gave one; never widening a launch name |
 | `/do <TaskID>` | `do-<TaskID>` | immediately; the id is the argument |
 | `/analyze-orchestrator` | `orch-<slug>` | step 3, once the ledger is verified |
-| `/token-maxxing` | `tokenmax-<idea>` | step 5, with the day's branch |
-| `/token-maxxing N` | `tokenmax-orch-<date>` (coordinator), `tokenmax-<idea>` (each worker) | coordinator step C4; each worker step W1 |
 
 A rename never *widens*: `--no-widen` refuses one whose target is the name already held minus a
 suffix, so a phase session launched as `impl-<slug>-p2` cannot rename itself down to
 `impl-<slug>` and share that address with every other phase of the set.
 
-All six call `skills/task/session.py`, which sends the same `/rename` control message over the
-session's own messaging socket — so the tab title, the `/resume` row and the name peers address
+All of them (and `/token-maxxing`) call `skills/task/session.py`, which sends the same `/rename`
+control message over the session's own messaging socket — so the tab title, the `/resume` row and the name peers address
 change together, instead of a file write the running process would ignore. It renames the **tmux
 window** too, which under tmux is the only one of those actually on screen, since the status line
 covers the terminal's tab title. It can never fail the caller: no socket, no tmux, or a
@@ -273,60 +270,6 @@ The main context never reads `todos.md`, `package_readme.md` or `analysis_report
 runs git. It reads exactly one plan file — the adopted one — and no other `.workflows` file;
 that isolation is the point of the design.
 
-### `/dbg`
-
-Drives **Delve** in batch mode for runtime values — real call sequences, argument values,
-goroutine stacks, post-mortem state — instead of guessing which `log.Debug` fired.
-
-```bash
-/dbg <what you want to debug>
-Context: <symptom>
-Error: <optional logs>
-```
-
-| Script | Purpose |
-|---|---|
-| `dlv_trace.sh` | print every call to matching funcs, with args and return values |
-| `dlv_test.sh` | batch breakpoint-debug one test, scripted |
-| `dlv_core.sh` | post-mortem a crashed or hung server from a core dump |
-
-**This command is different from the others:** the scripts live in the *target Go project*, not
-in `~/.claude/`. Reference copies are in [`cmd/dlv/`](cmd/dlv) — see [setup](#go-debugging-with-dbg).
-
-### `/token-maxxing`
-
-Kicks off a deliberately high-consumption session that still lands real work. It reads the 5
-most recent `docs/token_maxxing/` docs so it doesn't re-propose finished work, surveys the repo,
-and generates 3–5 ranked ideas tagged fresh or continuation — then picks the winner itself, with
-no manual selection step. Work lands on `token-maxxing-YYYY-MM-DD` and is merged to `main`
-automatically once the session doc is written, unless told otherwise. Big ideas get handed to
-`/analyze --no-worktree` rather than freehanded.
-
-```bash
-/token-maxxing            # anything
-/token-maxxing tests      # bias the menu
-/token-maxxing 5          # fan out 5 sessions in parallel, biased toward nothing in particular
-/token-maxxing 5 refactor # same, biased toward refactor ideas
-```
-
-`/token-maxxing-update-docs` writes the session log (achievement first) and maintains a
-newest-first index.
-
-**`/token-maxxing N` (N > 1)** turns this session into a coordinator, borrowing the shape of
-`/analyze-orchestrator` without its machinery: it recalls and surveys once, generates a menu of
-N ideas with disjoint scope so the workers can never collide, cuts one worktree and branch per
-idea, and launches N sessions via `swarm.py launch` — one tmux window each, running this same
-command in `--worker` mode. Each worker rolls its assigned idea, writes its own session doc, and
-reports back instead of merging; the coordinator verifies and lands each one to `main` the moment
-it finishes, rather than waiting for the slowest. There is deliberately no ledger and no
-`--resume` — the N ideas don't depend on each other, so recovering from a dead coordinator is
-just re-running `/token-maxxing` for whichever idea didn't land.
-
-### `/up-version`
-
-Finds the latest tag on main, analyzes commits since, picks the bump, updates `CHANGELOG.md`
-(Keep-a-Changelog), merges, tags, pushes, and returns you to your branch.
-
 ---
 
 ## Agents
@@ -343,6 +286,8 @@ Dispatched by `subagent_type`. `haiku` for mechanical work, `opus` where judgmen
 | `completion-handler` | opus | update `todos.md`, then chain readme-updater and pusher |
 | `readme-updater` | opus | update the most-impacted `package_readme.md`, creating it if absent |
 | `pusher` | haiku | stage, commit with a conventional message, push |
+| `integrator` | opus | merge one wave's branches in dependency order, run the full suite, fast-forward the set branch |
+| `verifier` | sonnet | prove landed phases work by driving the real app through the repo's `verify-*` skill; never edits code |
 
 `pusher` owns **all** git side effects for command-driven work. Invoke it directly by saying
 `run pusher`.
@@ -352,65 +297,9 @@ Dispatched by `subagent_type`. `haiku` for mechanical work, `opus` where judgmen
 ## Skills
 
 Skills live in `skills/<name>/SKILL.md` and are auto-discovered from their `description`
-triggers. Most fire on their own; the task ones are also invocable by name.
-
-### `confluence-writer`
-Getting a document into Confluence with formatting intact, on Server/DC and Cloud. The trick is
-to render the doc as HTML, copy the *rendered* page from a browser, and paste rich text —
-bypassing every markdown and wiki-markup converter. Also fixes literal `##`/`|` from pasted
-markdown and the `conf_wikimarkup_conversion_errors` HTTP 500. Ships `template.html`.
-
-### `confluence-reader`
-The read counterpart. Hits `/rest/api/content` with your credentials and saves the body as text
-plus every inline image as a local file — PDF export and copy-paste both lose the images. Body
-text carries `[IMG: images/<file>]` markers so you only open the ones that matter. Resolves
-`/display/`, `viewpage.action?pageId=`, tiny `/x/…`, Cloud, or a bare id.
-
-Credentials come from `CONFLUENCE_PAT`, `CONFLUENCE_USER`/`CONFLUENCE_PASS`, or a git-ignored
-`~/.config/confluence-reader/credentials`. `confluence_fetch.py` is stdlib-only.
-
-### `spawn-new-cv-test` / `finish-cv-test`
-A two-sided drill for computer-vision live-coding interviews, run against
-`github.com/miftahulmahfuzh/cv-problems`. `spawn-new-cv-test` picks a problem off a twelve-rung
-ladder, builds the data (synthetic plan sheet with exact ground truth, an existing fixture, or
-one you supply), writes a deliberately terse brief, and opens a **fresh Claude Code session in
-its own tmux window** to solve it in. `finish-cv-test`, run inside that window, stops the clock,
-reconstructs your verbatim instructions from the session's own transcript jsonl, checks the
-solution against ground truth, and scores how you *drove the agent* on seven dimensions.
-
-The integrity mechanism is the directory split: the exam session's cwd is
-`attempts/<slug>/workspace/`, and the `CLAUDE.md` written there forbids reading the parent —
-where `PROBLEM.md` and `GROUND_TRUTH.json` live. Without that, "read PROBLEM.md and do it" is a
-valid move and the drill measures nothing.
-
-Trust is propagated, never invented, the same way `swarm` does it: a brand-new workspace path
-would otherwise stop on the folder-trust dialog and eat the opening minutes of a timed run.
-
-### `issue-ticket-reader`
-The Jira counterpart. Pulls the description **and every comment in thread order** — on a
-returning ticket the bug report is usually in the comments — plus linked issues, subtasks, and
-every attachment. Videos are sampled into timestamped JPEG frames via ffmpeg (`--frames N`).
-Extras: `--changelog`, `--all-fields`, `--no-attachments`.
-
-Reuses the `confluence-reader` credentials, so it usually needs zero setup. Stdlib-only.
-
-**Limits:** video audio is never transcribed, so a verbally-explained bug isn't readable from
-frames; sparse sampling can miss a transient error toast; pdf/xlsx are downloaded, not converted.
-
-### `fetch-gdocs-content`
-The Google counterpart. Exports a Doc, Sheet, Slide or Drive file straight from
-`docs.google.com/.../export` into local files you can Read — no browser, no copy-paste.
-Defaults to **markdown** for Docs because the `txt` export silently drops every hyperlink;
-`-f zip` additionally unpacks inline images. Writes `meta.json` with `fetched_at_utc` and a
-`sha256`, because a live doc changes under you mid-analysis.
-
-Public "anyone with the link" docs need no setup. For a private one the user signs in once with
-`gcloud auth login --enable-gdrive-access --no-activate <account>` — `--no-activate` so reading a
-doc doesn't silently switch their active gcloud identity — and the script mints a read-only token
-per call. The token is never printed or stored. Stdlib-only.
-
-Invoked as `/fetch-gdocs-content <url> <what you want to know>`; the notes are the deliverable,
-not the dump.
+triggers. Most fire on their own; the task ones are also invocable by name. Only the skills
+the pipeline uses are described here — readers, writers and one-off utilities (Confluence, Jira,
+Google Docs, PDF and CV editing, Vercel cleanup, …) are in [Other tools](docs/other-tools.md#skills).
 
 ### `task`
 Task cards on GitHub Projects (personal repos) or GitLab Issues (work repos), chosen from the
@@ -522,88 +411,42 @@ index.** The two counts are different altitudes, not rivals: the user names *del
 index; each phase carries its own plan path and `finish --child-of`. GitHub only: GitLab has no
 sub-issues below Premium, and there the phases are already flat TaskIDs that `/do` walks.
 
-### `sync-todos-into-gitlab-board`
-`/sync-todos-into-gitlab-board .workflows/todos.md` — one GitLab issue per live task, in the
-column its stage says. `todos.md` stays the source of truth.
+---
 
-Identity is read from two channels (the title prefix and the `- TaskID:` line), because a title
-edited in the browser would otherwise hide the card and the next run would duplicate it.
-`apply` refuses to write while any duplicate exists, and refuses to create more than
-`--max-create` (default 10) at once — widening what counts as a task once took a file from 26
-entries to 55 and created 28 permanent cards in a shared repo. `plan` is the default and writes
-nothing. Only entries under `## Active Tasks` become issues; the root file has 27 live entries
-and 28 echoes in its summary and activity log.
+## Borrowed from pstack
 
-**Cost, documented rather than discovered:** a closed GitLab issue leaves `status::completed`
-for the Closed column, so finished work sits as an open issue carrying the completed label.
+Two pieces of this pipeline are adapted from Lauren Tan's
+[pstack](https://github.com/cursor/plugins/blob/main/pstack), Cursor's plugin for planning and
+proving agent work. We took the ideas and reshaped them to fit `/analyze` and the swarm.
 
-### `update-ats-cv`
-`/update-ats-cv <input.pdf> <what to change>` — parses the CV for content *and* visual style,
-then redraws it from a `*.cv.yaml` model. The input PDF is never patched, which is what makes
-"shave 4pt off that gap" answerable.
+### `engineering-principles`
 
-The page count is an invariant: `--autofit` walks a ladder of (gap, leading, font) triples and
-takes the first that fits, or **exits non-zero** saying how many lines are over. Every gap is a
-named token, so "those two lines are too far apart" maps to one number. `cv_extract.py`
-identifies the typeface by advance-width matching, because CV builders ship flattened PDFs with
-font names stripped and bold faked by overprinting — it found Lora at 0.65% error where the
-metadata said nothing. Text is emitted in document order; an earlier version batched glyphs by
-color, which rendered identically but made parsers read every heading before any body text.
+Adapted from pstack's
+[engineering principles](https://github.com/cursor/plugins/blob/main/pstack/docs/guide/08-principles.md).
+It holds ten principles grouped as scope, correctness, verification and meta: *subtract before
+you add*, *build the lever*, *make illegal states unrepresentable*, *fix root causes*, *prove it
+works*, and five more. `phase-planner` and `plan-generator` read them **once, while planning**.
+Wherever a principle changes the plan, the change goes under the plan's **Principles applied**
+heading as `<principle>: <the decision it changed>`. A principle with no decision behind it is
+left out. The sessions that implement the plan never load the file. They inherit the decisions,
+so the principles cost one read per plan, not one per agent.
 
-**Limits:** letter-spacing applies to headings only; the layout engine covers a standard
-one-column CV, not a sidebar or two-column body. Needs `pymupdf` + `pyyaml`.
+### `create-verification-skill`
 
-### `edit-pdf-text`
-`/edit-pdf-text <file.pdf> <what to change>` — rewrites text *inside* an existing PDF by
-editing the glyph codes in its content stream, so background art, scans, stamps, photos and
-signatures come through byte-identical. The opposite of `update-ats-cv`, which never patches
-its input: here the input is the only copy there is — a signed surat, a stamped invoice — and
-re-exporting from source is not on the table.
+Adapted from pstack's
+[`create-verification-skill`](https://github.com/cursor/plugins/blob/main/pstack/skills/create-verification-skill/SKILL.md).
+`/create-verification-skill` writes a repo-local `verify-<app>` skill. That skill launches a
+throwaway instance of the app, drives it the way a user would, and saves evidence, along with a
+feature map of what proves each feature. Our version starts by copying the nearest **sibling**,
+a `verify-*` skill already working in another repo. It keeps the detail for each repo shape
+(browser UI, auth and seeding, third-party stand-ins, no-server repos) in `references/`, built up
+over eleven real runs.
 
-Covering the old text with a white box and retyping is the obvious approach and it is wrong:
-it erases whatever the text sat on. `pdftext.py` instead parses the content stream (`Tj`, `TJ`,
-`'`, `"`, Form XObjects, multiple streams), maps codes through the font's `ToUnicode` or
-encoding, and rewrites only the bytes that change.
-
-**Reduces the edit before applying it.** "Loading In" → "Loading out" becomes `In` → `out`.
-Producers emit roughly one show operator per word, each with its own absolute `Tm`, so editing
-only the word that actually changed leaves every other word's position exactly as authored.
-
-**The trap worth knowing:** a producer declares `/Widths` only for characters the document
-actually uses. Introduce a letter the original never contained — a `j`, say — and it draws with
-**zero advance**, so the next letter lands on top of it, while the extracted text reads
-perfectly. `replace` detects this and writes the real advance into `/Widths`, taken from the
-embedded font program or the matching standard metrics.
-
-`verify` is the point of the skill as much as `replace` is: per-page image SHA-1, a rendered
-pixel diff with its bounding box, before/after crop PNGs, and a text diff. "Nothing else
-changed" is a claim about a binary file, and this is what makes it checkable.
-
-**Limits:** text that is pixels in a scan cannot be edited (`find` says so rather than
-guessing); a glyph absent from a subset font is refused outright. Needs `pymupdf`.
-
-### `analyze-and-fix-slow-tmux-pane-creation`
-Finds where new-pane/new-shell time actually goes, instead of blaming tmux, WSL or a memory
-leak. Walks a four-rung ladder — load vs cores and swap vs "used"; `shell -i` vs `shell -f` to
-separate the rc files from tmux; a timestamped-`PS4` xtrace to name the exact rc line (`zprof`
-cannot see external commands and will point elsewhere); then fd exhaustion and runaway
-filesystem scans, which are what turn an ordinary rc command slow. Ships `diagnose.sh`
-(read-only). MEASURED 2026-10-02: 22.9 s per pane, of which 18 s was one `lsof` in a
-double-quoted alias — the quotes made it run at every startup — and the `lsof` was only slow
-because a 2-hour runaway font scan held 95% of the system's file descriptors. Killing the scan
-alone took startup to 0.55 s.
-
-### `reap-orphaned-blobs`
-Deletes Vercel Blob objects under `shots/` that no database row references, for Run Insights.
-
-### `prune-vercel-deployments`
-Clears orphaned per-branch Vercel aliases (the usual reason `--safe` prunes almost nothing —
-Vercel never removes a branch's alias when the branch is deleted from git), deletes stale
-deployments (`vercel remove <project> --safe --yes`, looping through the 200-per-run cap and
-10-minute cooldown), and checks/proposes disabling future preview deployments via
-`vercel.json`'s `git.deploymentEnabled`. General-purpose — works in any Vercel-linked repo on
-the machine, not tied to one project. A *different* quota from `reap-orphaned-blobs`'s Blob
-storage: this one targets the "Deployment Storage" free-tier cap.
+The generated skill is what gives principle 7 (*prove it works*) teeth. A phase plan's **Proof**
+section names its journeys. The implementer runs them. Then the `verifier` agent, which neither
+wrote the code nor read the implementer's reasoning, runs them again and records the verdict:
+once per wave under the orchestrator, or once per set under `/implement` and `/do`. Small sets
+skip the separate verifier and land on the implementers' own evidence.
 
 ---
 
@@ -700,43 +543,12 @@ Read the plan index's **Decisions** before starting — those are the forks reco
 for you, each with the rung that settled it, and they are the morning's review queue. **Open
 Questions** holds only what could not be decided at all. Merge the branch once as a whole.
 
-### Go debugging with `/dbg`
-
-```
-Need the code paths?          → /analyze   (static)
-Need what ACTUALLY happens?   → /dbg       (runtime, via Delve)
-Ready to fix it?              → /implement or /do
-```
-
-One-time setup per Go project — the scripts are committed alongside the code so the team shares
-the same entry points:
-
-```bash
-cp -r ~/claude-commands/cmd/dlv cmd/dlv
-chmod +x cmd/dlv/*.sh
-
-# dlv must be built with the project's Go major version — Go 1.25 emits DWARFv5,
-# which a dlv built with Go <1.25 cannot read
-GOTOOLCHAIN=go1.25.7 go install github.com/go-delve/delve/cmd/dlv@latest
-
-# optional, in .claude/settings.local.json:
-#   "Bash(dlv:*)", "Bash(cmd/dlv/dlv_trace.sh:*)",
-#   "Bash(cmd/dlv/dlv_test.sh:*)", "Bash(cmd/dlv/dlv_core.sh:*)"
-```
-
-For a live crash, capture a core dump the way you'd capture logs:
-
-```bash
-ulimit -c unlimited; go build -o /tmp/agentic .
-GOTRACEBACK=crash /tmp/agentic
-/dbg analyze this core dump   # then hand over the binary + core file
-```
-
 ### Task tracking
 
 An idea arrives away from the keyboard and goes into a notes app Claude Code can't see. `/task`
 makes the browser the front door: file the card anywhere, then `/task 14` picks it up. Going the
-other way, `/sync-todos-into-gitlab-board` populates the board from work already tracked.
+other way, [`/sync-todos-into-gitlab-board`](docs/other-tools.md#sync-todos-into-gitlab-board) populates
+the board from work already tracked.
 
 A card sits in In Progress only while genuinely being worked, and reaches Completed only when
 the repo's gate passed and the host reports the PR merged — a mechanical bar, which is what
@@ -823,39 +635,28 @@ version of what the orchestrator does for you.
 claude-commands/
 ├── commands/                 # slash commands
 │   ├── analyze.md            # archaeology + the implementation plan
+│   ├── analyze-orchestrator.md  # run a plan set as a swarm
 │   ├── analyze-package.md    # package quality analysis
-│   ├── dbg.md                # Delve batch workflows
 │   ├── do.md                 # execute one task by TaskID
 │   ├── implement.md          # plan → tasks → code (no planning of its own)
-│   ├── postmortem.md
-│   ├── reorganize-todos.md
-│   ├── token-maxxing.md
-│   ├── token-maxxing-update-docs.md
-│   ├── update-readme.md
-│   ├── update-todos.md
-│   └── up-version.md
+│   ├── postmortem.md, reorganize-todos.md, update-readme.md, update-todos.md
+│   └── …                     # dbg, token-maxxing, up-version — see docs/other-tools.md
 ├── agents/                   # subagents, dispatched by subagent_type
 │   ├── task-locator.md       ├── phase-planner.md
 │   ├── context-loader.md     ├── plan-reconciler.md
 │   ├── plan-generator.md     ├── readme-updater.md
-│   ├── completion-handler.md └── pusher.md
+│   ├── completion-handler.md ├── pusher.md
+│   ├── integrator.md         └── verifier.md
 ├── skills/                   # each a directory with SKILL.md + assets
-│   ├── confluence-writer/    # SKILL.md, template.html
-│   ├── confluence-reader/    # + confluence_fetch.py, credentials.example
-│   ├── issue-ticket-reader/  # + issue_fetch.py, credentials.example
-│   ├── fetch-gdocs-content/  # + gdocs_fetch.py
 │   ├── create-task/
 │   ├── task/                 # + DESIGN.md, taskcore/task_gh/task_gl/todos/session.py
 │   ├── swarm/                # + swarm.py, plan_graph.py, tests/ — the orchestrator's mechanics
-│   ├── sync-todos-into-gitlab-board/  # + sync_todos.py
-│   ├── reap-orphaned-blobs/
-│   ├── analyze-and-fix-slow-tmux-pane-creation/  # + diagnose.sh
-│   ├── prune-vercel-deployments/  # + scripts/prune-deployments.sh, clear-orphaned-aliases.py
-│   ├── update-ats-cv/        # + SCHEMA.md, cv_render/cv_extract/cv_preview.py, fonts
-│   ├── edit-pdf-text/        # + pdftext.py, run_tests.sh
-│   ├── spawn-new-cv-test/    # CV interview drill — scaffold + spawn
-│   └── finish-cv-test/       # CV interview drill — score the run
-├── cmd/dlv/                  # Delve helpers — copy into your Go project
+│   ├── engineering-principles/     # from pstack — read by the planners
+│   ├── create-verification-skill/  # from pstack — + references/
+│   └── …                     # the standalone skills — see docs/other-tools.md
+├── mods/swarm-deck/          # the /fleet deck mod — loaded from the repo, not synced
+├── docs/                     # other-tools.md, architecture-notes.md, design notes
+├── cmd/dlv/                  # Delve helpers for /dbg — copy into your Go project
 ├── sync.sh
 ├── remove_non_commands.sh
 └── README.md
