@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Create a verification skill
 
-Adapted from pstack's `create-verification-skill` (`cursor/plugins/pstack`), plus seven runs of
+Adapted from pstack's `create-verification-skill` (`cursor/plugins/pstack`), plus eight runs of
 this skill. Read the sibling closest to your repo's shape before you start:
 
 | Skill | Read it for |
@@ -19,6 +19,7 @@ this skill. Read the sibling closest to your repo's shape before you start:
 | `~/expense-tracking/.claude/skills/verify-expense-tracking` | the compact Neon + Blob app whose browser uploads stream (the stand-in serves HTTPS + HTTP/2), harness tools outside the repo |
 | `~/jmtarot/.claude/skills/verify-jmtarot` | a repo that forbids Playwright (its own CDP driver wrapped, whose defaults pointed at production and the owner's profile), JWT sessions minted through a dev-only route, an `--offline` mode that found the worst bug |
 | `~/agentic/.claude/skills/verify-agentic-docs` | a static site (Hugo): no database, no auth, no paid call; a per-run snapshot with a `sync` edit loop, a production-`build` drive wrapping the repo's own checks plus a link check, a CDN cache in the browser fence, and an `--offline` mode that again found the worst bug |
+| `~/nvim-config/.claude/skills/verify-nvim-config` | no server at all: a dotfiles repo (Neovim + tmux config) whose "app" is a TUI driven through a run-owned tmux server; a network namespace as the fence; a hard-linked read-only dependency cache built from the owner's lockfile; a `--live` mode on a copy of the owner's real installed environment |
 
 **Why this exists.** `phase-planner` writes a **Proof** section that names
 `.claude/skills/verify-*`, `/implement` and `/do` run it, and the `verifier` agent re-runs it
@@ -26,11 +27,11 @@ with fresh context before anything lands. Without a verify skill, all of that de
 tests pass". The skill you write is read cold, mid-task, by an agent that has never seen the
 app. Write it for that reader.
 
-**Run unattended.** Answer everything from the repo. Ask the user only what the code cannot
-tell you, and if nobody is there to answer, decide, write the decision into the skill's
-Gotchas, and go on. The one question worth asking up front, when someone is there and the
-arguments do not settle it: if the app's core is a paid dependency (an LLM app), should verify
-run it for real by default? The default below is yes, under a budget.
+**Run unattended, with no human in the loop.** Answer everything from the repo; what the code
+cannot answer, decide, write the decision into the skill's Gotchas, and go on. Never block on a
+question, not even the paid-core one: an app whose core is a paid dependency (an LLM app) runs it
+for real by default, under a budget. If the owner does send a message mid-run (the eighth run's
+"verify against my live config"), fold it into the build and record how.
 
 **Not every section applies.** A static site has no auth, seed, database or budget; a CLI has no
 browser. Skip what the app does not have, say so in one Gotchas line ("no paid or messaging
@@ -72,6 +73,19 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
   for the exact calls a user's action makes: body encoding per API version (multipart on one
   route, JSON on another), polling, which stream it opens, which headers carry auth. The drive
   command replays that sequence; guessing it produces 400s that look like product bugs.
+- **Where it really runs.** The checkout is often not what the owner runs. A dotfiles repo is
+  deployed as a separate clone (`~/.config/nvim` lagged `~/nvim-config` by 4 commits), with its
+  own lockfile and installed plugins that a fresh install no longer reproduces. Find the live
+  copy and offer `up --live`: the checkout's change on a **copy** (never hard links: the owner's
+  files are writable) of the live installed state, plus a read-only `live` drift report (commits
+  and files the live copy lacks, `git --no-optional-locks` so `status` cannot touch its index)
+  that prints the deploy command and never runs it. Fingerprint the live dirs at `up` and compare
+  in `doctor` and `down`. The owner asked for this mid-run in the eighth pass; ask, or offer it.
+- **A config repo's surface is the tool started with that config.** For an editor or shell
+  config: per-run XDG dirs (config, data, state, cache, runtime) and HOME, the config a snapshot
+  of the working tree, the tool inside a run-owned tmux server (`tmux -S <run>/tmux.sock`), a
+  fixture project for it to edit (a git repo whose `origin` is a bare repo in the run, so a push
+  mapping is provable), and state read over the tool's own RPC (`nvim --remote-expr`).
 - **Run:** the exact local start command, ports, env vars, config files, seed data, auth.
 - **The owner's port.** A CLAUDE.md that pins the dev server to one port ("3200 is the only
   port, never start on another") governs the owner's server, not a verify run, which must still
@@ -102,6 +116,14 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
   shared verify container and a database per run; one without them (Redis) gets a container per
   run. Any response or answer cache must be per-run, or a repeated journey replays a cached
   answer instead of exercising the code.
+- **Build the dependency cache from the owner's lock, then diff it against a fresh resolve.**
+  Package managers ignore a lock silently: lazy.nvim skips an entry whose branch differs from the
+  spec's, so an unpinned plugin followed GitHub's new default branch (an incompatible rewrite)
+  while the owner's lock said `master`; and an upstream repo can vanish (`phaazon/hop.nvim`). Pin
+  every package to the lock after install (`git checkout <commit>`), take what no longer
+  downloads from the live install, and log both. What a fresh install resolves to differently
+  (`seed --update`) is a product finding, often the most important one: it is the owner's next
+  update or next machine.
 - **The client library decides, not the URL.** Read how the app opens each connection.
   Serverless drivers (Neon's `@neondatabase/serverless`, PlanetScale, libsql over HTTP, Supabase
   REST) speak HTTP or WebSocket to a vendor proxy, never TCP, so a local Postgres cannot answer
@@ -228,6 +250,10 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   user's real instance has the same name. Wait for the whole group to be gone (`pgrep -g $PGID`),
   not the leader: `next dev`'s workers outlived it and wrote into the snapshot while `down`'s
   `rm -rf` ran, which failed under `set -e` and left the run half torn down. Retry the removal.
+  A daemon that detaches its children escapes the group: a tmux server `setsid`s itself and every
+  pane gets its own session. When everything the run starts lives in one network namespace (see
+  egress), the namespace is the run's identity: `down` kills every pid whose
+  `/proc/PID/ns/net` matches the run's, and nothing else can match.
 - **Doctor checks port ownership** by comparing the listener's process group with the run's,
   not with a pid regex.
 - **Binary responses go to a file** with their size and sha256, never to the terminal. Raw bytes
@@ -247,6 +273,13 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   file or a default. Schema validators split the other way: zod's `z.url().optional()` accepts an
   unset `AUTH_URL` and refuses `AUTH_URL=` at boot. Omit an optional variable, or give it the
   run's own value; never blank it.
+- **When the run needs no network at all, take it away.** `unshare --map-current-user -n`
+  (unprivileged, uid kept) starts the run in a namespace with only a downed loopback: no route,
+  no DNS, so raw sockets, native code and child processes are refused too, which no proxy or
+  fetch wrapper achieves. Unix sockets still cross it, so drive over them. Join it for one-shot
+  drives with `nsenter -t <run's pid> -U -n --preserve-credentials`, and prove it in doctor with a
+  `curl` from inside (exit 6). Downloads then belong to a separate, explicit online step (`seed`)
+  that builds a shared cache.
 - **Blanking a URL is not isolation.** Code falls back to hardcoded hosts when its env var is
   empty (verify-agentic: blanked BE URLs still reached a dev gateway). Add egress control, chosen
   per runtime, because no single mechanism covers them all:
@@ -283,6 +316,18 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   first): reading the log's tail, a successful sync after a fix still found the earlier ERROR and
   failed. `doctor` reports the latest build's errors only (reset at "Change detected") and fails
   when that build failed, because the server keeps serving the build before it.
+- **A shared dependency cache: hard links, read-only files, and a manifest.** `cp -al` gives
+  each run a 570 MB plugin tree in under a second. Make the cache's *files* read-only (directories
+  stay writable), so an in-place write fails in the run instead of writing through; never `chmod
+  -R` a run dir (`down` did, and made the cache writable again through the shared inodes); rewrite
+  a file by writing a new one and renaming it. Installed tools name their install dir by absolute
+  path (Mason's lua-language-server launcher), and the run then executes the cache's copy, which
+  wrote its logs into the cache. Rewrite every text file under the tree that names the source path,
+  for the cache and for `--live` alike. `doctor` compares a manifest of the cache (path, size,
+  mtime) with the one taken when it was built: it caught both leaks.
+- **Unattended installers ask questions.** `:TSInstallSync` asks "reinstall? y/n" for a parser
+  that is already there, and a headless editor waits on it forever. Run every install step under
+  `timeout` with stdin from `/dev/null`, and install only what is missing.
 - **Copy state files with a read-only open.** Some tools migrate a database on connect even for a
   read (Seer's lab migrates `lab.sqlite` that way). Copy the committed state with the database's
   backup API from a `mode=ro` connection, and hash the protected original before and after the
@@ -354,7 +399,9 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   kills a `x="$(ss … | grep pid=…)"` the first time nothing matches: grep exits 1, and doctor
   stopped halfway through its report with no message when the owner's port was free. Every grep
   in a `$(...)` that may match nothing gets `|| true` inside the substitution. Likewise give
-  `curl -w` a separator (`%{http_code}|%{content_type}`): a content type contains a space.
+  `curl -w` a separator (`%{http_code}|%{content_type}`): a content type contains a space. The
+  same SIGPIPE kills the script from outside: `verify.sh seed | sed -n 1,12p` stopped the seed
+  before it locked the cache and wrote its manifest. Send long commands to a file and read it.
 - **HTML evidence is the visible text.** Server-rendered pages carry a framework payload in
   `<script>` tags, and a regex strip keeps that payload and loses the page. Save the HTML, and print
   the visible text with each `aria-label` inline (`[Mark as done]`) through a real HTML parser.
@@ -366,6 +413,16 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   record answered 200 with "Not found" in the title; assert the title and the absence of the other
   user's data (grep the saved HTML for it), and keep 404 assertions for routes without a loading
   screen.
+- **A terminal UI is driven through tmux, read through its RPC.** `send-keys` into the pane is
+  the user's typing; key bindings of tmux itself need an attached client (a `script` pty running
+  `tmux attach` inside the run) and `send-keys -K -c CLIENT`. `capture-pane -p` (and `-e` for an
+  `.ansi` copy) is the screenshot. Read state over the app's own RPC, actions only through keys.
+  Insert text as a bracketed paste (`set-buffer` + `paste-buffer -p`): typed text opens completion
+  menus and fires insert-mode mappings (`jk` saved the file), and blink.cmp's `<Esc>` closes its
+  menu without leaving insert mode, so `:wq` became commit text; leave insert mode with `Escape
+  Escape`. A prompt ("Press ENTER", y/n) eats the next keys, and RPC blocks while the app waits on
+  `input()`: put a timeout on every RPC call and `screen` after any surprise. Give each restart a
+  new socket path: the exiting process removes its socket after the new one already listens on it.
 - **The browser driver must not create its own failures.** Playwright's screenshot hides the
   caret by injecting a style, and mid-hydration React reports that as a hydration mismatch the
   app does not have. Pass `caret: 'initial'` and wait for `networkidle`. Dev-only overlays (Next's
@@ -486,7 +543,11 @@ A skill that was never executed is a draft. Run, for real:
 1. `up`, then `doctor` on the run, and once for each mode flag (`--offline`, rebuild flags). A
    flag you deliberately did not exercise (it would reach an external service) is listed as
    `inconclusive` in the report, never silently skipped.
-2. **Every journey in every feature file, once.** Fix the recipe when the recipe was wrong
+2. **Feed every transform-on-write hook input it must reject.** A formatter, linter or migration
+   that runs on save is where content gets destroyed: verify-nvim-config's worst finding was a
+   Lua file with one syntax error replaced, on disk, by the formatter's error message, because
+   the save hook never read the exit status. A happy-path drive passed on the same hook.
+3. **Every journey in every feature file, once.** Fix the recipe when the recipe was wrong
    (wrong arg name, wrong column, wrong route). When the APP is wrong, record it as a product
    bug in the final report and do not paper over it in the map. Before calling a UI failure a
    product bug under a dev server, rule out the dev mode itself: React StrictMode mounts, unmounts
@@ -494,12 +555,12 @@ A skill that was never executed is a draft. Run, for real:
    aborts the fetch never re-issues it (verify-jmtarot: a translation stuck on "translating", a chat
    loop that went to `stopped` on the aborted request). Read the effect, say "dev-only" in the
    feature file with the reason, and drive the route the effect calls.
-3. **Every surface against every seed mode.** When two halves of the app read the same seed
+4. **Every surface against every seed mode.** When two halves of the app read the same seed
    (a web UI and a CLI or worker), drive each half on it, not only the half the seed was written
    for. Seed scripts drift from the schema the other half needs: Seer's demo seeder, written for
    the UI, omitted the columns migration 006 added after it, and the engine's `paper_check` crashed
    on it. Only driving the engine on demo data found that.
-4. **Isolation, proven rather than assumed.** Run two instances at once, write through the app in
+5. **Isolation, proven rather than assumed.** Run two instances at once, write through the app in
    one, and read the other's state to show the write did not cross. With no write path (a static
    site), make a temporary edit, `sync` it into one run, read both, then `git checkout --` it and
    check `git status`. Pick a probe you have seen rendered: a section's `_index.md` body never
@@ -510,8 +571,8 @@ A skill that was never executed is a draft. Run, for real:
    browser profile) before the first `up` and after the last `down`, list the user's `~/.cache`
    before and after (that diff caught Chrome writing `dconf` outside the run), and check
    `git status` on the paths it could have dirtied.
-5. `down`, then confirm the evidence still exists and no process or per-run DB is left behind.
-6. **Re-prove what you changed after the full pass.** Fixes made while writing the feature files
+6. `down`, then confirm the evidence still exists and no process or per-run DB is left behind.
+7. **Re-prove what you changed after the full pass.** Fixes made while writing the feature files
    (a new drive option, a corrected recipe) get one short run of their own before the commit.
 
 Run `down` after every failed attempt too. Expect this pass to find bugs in your own script:

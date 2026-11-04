@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`create-verification-skill`**, from its eighth run (`verify-nvim-config`: a Neovim + tmux
+  dotfiles repo, no server or port): find where the owner really runs the app and offer `up
+  --live` on a copy of that installed state plus a read-only drift report; a config repo's surface
+  is the tool started with it, in per-run XDG dirs inside a run-owned tmux server; a network
+  namespace (`unshare -n`) is the fence when the run needs no network, and the run's identity for
+  `down` when its daemons escape the process group; the dependency cache is built from the owner's
+  lock and pinned to it (package managers skip lock entries silently), and a fresh resolve that
+  differs is a finding; a hard-linked cache keeps read-only files and a manifest, and installed
+  tools' absolute paths are rewritten (both leaks were caught by that manifest); installers run
+  under `timeout` with no stdin; TUIs are driven by tmux keys and bracketed paste and read over
+  their RPC; every transform-on-write hook gets input it must reject (the run's worst bug: a
+  formatter's error text written over a Lua file); the run never blocks on a question
 - **`create-verification-skill`**, from its seventh run (`verify-agentic-docs`: a Hugo static
   site with no database, auth or paid call): sibling skills are listed as a table by shape, and a
   run skips the sections its app does not have; a static site's production build is a drive of its
