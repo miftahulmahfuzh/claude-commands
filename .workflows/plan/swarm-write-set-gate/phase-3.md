@@ -1,6 +1,6 @@
 # Phase 3: Make the gate a gate: enforce exits 1 and 2
 
-**Plan set:** `.workflows/plan/swarm-write-set-gate/PLAN.md`
+**Plan set:** `.workflows/plan/SWARM_WRITE_SET_GATE_PLAN.md`
 **Analysis:** `.workflows/analyze/20261027-084829-ROCQ_code_analyzer.md`
 **Satisfies:** R2 — the write-set gate refuses to spawn a wave on exit 1 or exit 2 instead of
 reporting and leaving it to an operator who, by construction, is asleep.
@@ -525,7 +525,7 @@ awk '/^## Step 3b:/,/^## Step 4:/' commands/analyze-orchestrator.md \
 
 # 8. The gate's real output matches what Step 3b quotes. Phase 1 has landed by now, so
 #    this set's own index must resolve its worktree root and exit 2 on SKILL.md.
-python3 skills/swarm/plan_graph.py .workflows/plan/swarm-write-set-gate/PLAN.md; echo "exit=$?"
+python3 skills/swarm/plan_graph.py .workflows/plan/SWARM_WRITE_SET_GATE_PLAN.md; echo "exit=$?"
 # expect: exit=2, skills/swarm/SKILL.md written by phases [2, 3], verdict ISOLATE,
 #         and NO "INCOMPLETE" line (all three phase plans are on disk)
 ```

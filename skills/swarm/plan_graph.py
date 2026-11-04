@@ -260,8 +260,9 @@ def parse_files(text):
 # --------------------------------------------------------------------- the repo root
 
 # How far above the index to look when git cannot answer. `/analyze` files the index at
-# `<root>/docs/plans/<SLUG>_PLAN.md` when `docs/` exists and at `<root>/<SLUG>_PLAN.md`
-# when it does not, so the root is zero to two levels above the index's own directory.
+# `<root>/.workflows/plan/<SLUG>_PLAN.md`; older sets have it at
+# `<root>/docs/plans/<SLUG>_PLAN.md` or `<root>/<SLUG>_PLAN.md`, so the root is zero to
+# two levels above the index's own directory.
 # Three gives one level of slack without reaching so far that an unrelated ancestor's
 # `.workflows/` can answer for this plan set.
 ROOT_LOOKUP_DEPTH = 3

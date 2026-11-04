@@ -30,16 +30,18 @@ A collection of **Claude Code slash commands** (`commands/*.md`), **subagents** 
 ├── todos.md                 # task list with TaskIDs (P{0-3}-{SCOPE}-{ID})
 ├── plan/
 │   ├── {TaskID}.md          # the plan a task executes (copied here by /implement)
+│   ├── {SLUG}_PLAN.md       # repo-root .workflows/ only — /analyze plan index
 │   └── {slug}/phase-{N}.md  # repo-root .workflows/ only — /analyze plan sets
+├── analyze/{session-id}_code_analyzer.md  # repo-root .workflows/ only — /analyze
 ├── analysis_report.md
 ├── package_readme.md        # created/updated by /update-readme
 └── postmortem/{TaskID}.md
 ```
-`<session-id>_code_analyzer.md` and `<SLUG>_PLAN.md` live at the repo root, not in `.workflows/`.
+`/analyze` writes nothing at the repo root: the analyzer doc goes to `.workflows/analyze/<session-id>_code_analyzer.md`, the plan index to `.workflows/plan/<SLUG>_PLAN.md` (repo-root `.workflows/` only). Sets planned before 2026-11-04 may have theirs at the root or under `docs/plans/`, so executors take the path they are handed.
 
 ### Who writes implementation plans — **only `/analyze`**
 - `/analyze` → investigation + a complete plan every run (analyzer doc, `<SLUG>_PLAN.md` index with a Requirements table `R1..Rn`, `phase-{N}.md` for N ∈ 1..20) in a worktree it cuts. N=1 launches `/implement -f <PLAN> --phase 1` directly; N>1 launches `/analyze-orchestrator`.
-- `/implement -f <SLUG>_PLAN.md` → executes; one task per phase, plan copied unchanged. Refuses an analysis document. On a set's last phase with no swarm coordinator it lands the branch itself (merge to `main` in a throwaway worktree, push, delete worktree and branch).
+- `/implement -f .workflows/plan/<SLUG>_PLAN.md` → executes; one task per phase, plan copied unchanged. Refuses an analysis document. On a set's last phase with no swarm coordinator it lands the branch itself (merge to `main` in a throwaway worktree, push, delete worktree and branch).
 - `/do <TaskID>` → executes an existing task: adopts its plan file if one exists; builds a brief for EASY/NORMAL without one; runs `/analyze` itself for HARD with no plan (`--no-escalate` prints and stops).
 - Drift from a plan: small → follow intent and note it; large → stop and re-run `/analyze`. Never improvise a replacement plan.
 - Maintenance: `/update-readme`, `/update-todos`, `/reorganize-todos`, `/postmortem`, `/analyze-package`. `/up-version` → semver bump + CHANGELOG.

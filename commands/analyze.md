@@ -81,28 +81,29 @@ Every run, without exception:
 | `<SLUG>_PLAN.md` | `<plans-dir>` | the plan index — phases, order, invariants, open questions |
 | `.workflows/plan/<slug>/phase-{N}.md` | repo/worktree root | one implementation plan per phase, with complete code |
 
-`<analysis-dir>` and `<plans-dir>` are resolved **once, in Step 4**, against the worktree root:
+`<analysis-dir>` and `<plans-dir>` are fixed, and always relative to the worktree root:
 
-| | `docs/` exists at the worktree root | no `docs/` directory |
-|---|---|---|
-| `<analysis-dir>` | `docs/analyzer/` | the worktree root |
-| `<plans-dir>` | `docs/plans/` | the worktree root |
+| | Path |
+|---|---|
+| `<analysis-dir>` | `.workflows/analyze/` |
+| `<plans-dir>` | `.workflows/plan/` — beside the set's own `<slug>/phase-{N}.md` directory |
 
 ```bash
 # from the worktree root, before writing any artifact
-if [ -d docs ]; then analysis_dir=docs/analyzer; plans_dir=docs/plans
-else                 analysis_dir=.;             plans_dir=.; fi
+analysis_dir=.workflows/analyze; plans_dir=.workflows/plan
 mkdir -p "$analysis_dir" "$plans_dir"
 ```
 
-A project that already keeps its documentation under `docs/` gets these filed with the rest of
-it. Twenty sessions leave forty files, and a root carrying forty of them is a root nobody can
-read — the README is in there somewhere. A project with no `docs/` convention is left exactly as
-it was: the root is the right place when there is nowhere better, and `/analyze` does not get to
-invent a documentation tree the project never chose.
+**Never write either one at the repository root, and never under `docs/`.** Every run leaves two
+files, and twenty runs at the root bury the README under forty of them; the older
+`docs/analyzer/` + `docs/plans/` rule only moved the pile into the project's own documentation,
+which it never asked for. `.workflows/` is this ecosystem's directory already — the phase plans,
+`todos.md` and the orchestration ledger live there — so the analysis and the index go with them.
+Sets planned before 2026-11-04 may still have an index at the root or under `docs/plans/`; the
+executors take whatever path they are handed, so those keep working.
 
 This changes where the files land, not how they are named or referenced. **Every path you print
-or hand to a subagent is still absolute**, and the phase plans stay under `.workflows/`.
+or hand to a subagent is still absolute.**
 
 The only thing that varies is **N**, the number of phases (1 to 20). A one-phase plan set has a
 short index and a single plan file; nothing else about the shape changes.
@@ -254,10 +255,10 @@ Choosing `<BASE>`:
 Then:
 - All artifacts are written under the worktree root, by absolute path. The session's own cwd
   does not change — every subagent must be told the worktree root explicitly.
-- **Resolve `<analysis-dir>` and `<plans-dir>` here**, against the worktree root you just picked,
-  by the table in "What You Produce" — and `mkdir -p` both. Resolve them against the *worktree*,
-  never the directory you were invoked from: a fresh worktree of a repo that has `docs/` has it
-  too, and a `--no-worktree` run resolves them against the checkout it writes in place.
+- **Create `<analysis-dir>` and `<plans-dir>` here** (`.workflows/analyze/`, `.workflows/plan/`),
+  under the worktree root you just picked — `mkdir -p` both. Anchor them to the *worktree*, never
+  the directory you were invoked from; a `--no-worktree` run anchors them to the checkout it
+  writes in place.
 - **Skip on `--no-worktree`**, or if this is not a git repo, or if `git worktree add` fails.
   Write in place, and say plainly which branch the plans are pinned to.
 - If already inside a worktree that isn't the default branch, reuse it — do not nest.

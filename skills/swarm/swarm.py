@@ -874,17 +874,18 @@ def spawn_plan(ledger, repo, slug, cwd):
     `/analyze` leaves in the worktree the child runs in, then the durable copy next to
     the ledger. A child is never handed a path nobody looked at.
 
-    The worktree guess is TWO paths, not one: since 2026-10-09 `/analyze` files the
-    index under `docs/plans/` in a repo that has a `docs/` tree, and at the worktree
-    root only in one that does not. Both are tried, `docs/plans/` first, because a repo
-    that has since grown a `docs/` tree can still hold an older set's index at its root
-    -- and a ledger written before that date records the root path in `ledger["plan"]`
-    anyway. Checking both costs one `is_file` and spares the failure this function
-    exists to prevent.
+    The worktree guess is THREE paths, not one: since 2026-11-04 `/analyze` files the
+    index under `.workflows/plan/`; from 2026-10-09 it used `docs/plans/` in a repo with
+    a `docs/` tree and the worktree root otherwise. All three are tried, newest layout
+    first, because a worktree can still hold an older set's index -- and a ledger
+    written before either date records the old path in `ledger["plan"]` anyway.
+    Checking each costs one `is_file` and spares the failure this function exists to
+    prevent.
     """
     candidates = [ledger.get("plan")]
     name = index_name_for(slug)
     if name:
+        candidates.append(str(Path(cwd) / ".workflows" / "plan" / name))
         candidates.append(str(Path(cwd) / "docs" / "plans" / name))
         candidates.append(str(Path(cwd) / name))
     candidates.append(str(orch_dir(repo, slug) / "PLAN.md"))
@@ -2092,6 +2093,12 @@ def selftest():
         (wt / "BRANCH_SORT_ORDER_PLAN.md").unlink()
         eq("finds the docs/plans/ index when the root holds none",
            spawn_plan(gone, repo_dir, "branch-sort-order", wt), str(docs_idx))
+        # Since 2026-11-04 the index lives in .workflows/plan/, beside the phase bodies.
+        wf_idx = wt / ".workflows" / "plan" / "BRANCH_SORT_ORDER_PLAN.md"
+        wf_idx.parent.mkdir(parents=True)
+        wf_idx.write_text("x")
+        eq("prefers .workflows/plan/ over a docs/plans/ index left by an older set",
+           spawn_plan(gone, repo_dir, "branch-sort-order", wt), str(wf_idx))
 
     # Reaping. The gate is the ledger backed by git, never what the pane looks like:
     # a claude that finished its phase sits at an idle prompt rather than exiting.

@@ -4,7 +4,7 @@ Drive a plan set written by `/analyze` across many sessions at once — one per 
 where the DAG allows — and **resume that same set on any machine, at any time.**
 
 ```
-/analyze-orchestrator -f <path>/<SLUG>_PLAN.md   # start driving a fresh plan set
+/analyze-orchestrator -f .workflows/plan/<SLUG>_PLAN.md   # start driving a fresh plan set
 /analyze-orchestrator --resume <slug>            # pick up a set already under way
 /analyze-orchestrator --resume                   # pick up the only unfinished set here
 /analyze-orchestrator --status <slug>            # report, change nothing
@@ -320,7 +320,7 @@ is the one that survives:
 1. **Pick the publisher.** The phase whose `## Files` row for that path says `regenerate`
    publishes last; with no such row, the higher phase number does.
 2. **Edit the Depends on cell** of that phase in **both** copies of the index — the tracked
-   `.workflows/orchestration/<slug>/PLAN.md` and the worktree's `<SLUG>_PLAN.md`. They are one
+   `.workflows/orchestration/<slug>/PLAN.md` and the worktree's `.workflows/plan/<SLUG>_PLAN.md`. They are one
    document in two places, and a resume on another machine reads the tracked one.
 3. **Re-read the table:**
    ```bash

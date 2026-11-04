@@ -88,8 +88,8 @@ Every run produces the same three things, in a worktree it cuts off `origin/main
 
 | Artifact | What it is |
 |---|---|
-| `<session-id>_code_analyzer.md` | the analysis — descriptive, what exists today |
-| `<SLUG>_PLAN.md` | the plan index — phases, order, invariants, open questions |
+| `.workflows/analyze/<session-id>_code_analyzer.md` | the analysis — descriptive, what exists today |
+| `.workflows/plan/<SLUG>_PLAN.md` | the plan index — phases, order, invariants, open questions |
 | `.workflows/plan/<slug>/phase-{N}.md` | one implementation plan per phase, with complete code |
 
 The only thing that varies is **N**, the number of phases (1–20). A bug fix gets N=1 — same
@@ -138,7 +138,7 @@ what may be deleted and what may not.
 ### `/implement`
 
 ```bash
-/implement -f <SLUG>_PLAN.md [--phase N] [--all] [-note <note>]
+/implement -f .workflows/plan/<SLUG>_PLAN.md [--phase N] [--all] [-note <note>]
 ```
 
 Executes the plan. It creates one task per phase across the packages the plan names, copies each
@@ -200,7 +200,7 @@ merging the set is a thirty-second decision in the morning and not worth doing u
 ### `/analyze-orchestrator`
 
 ```bash
-/analyze-orchestrator -f <SLUG>_PLAN.md      # drive a fresh plan set
+/analyze-orchestrator -f .workflows/plan/<SLUG>_PLAN.md   # drive a fresh plan set
 /analyze-orchestrator --resume <slug>        # pick it up again — any machine, any time
 /analyze-orchestrator --status <slug>        # report, change nothing
 ```
@@ -618,11 +618,11 @@ Context: Citations missing in aggregated responses
 Files:
 @tools/toolcore/caller.go
 # → worktree feature/fix-citation-aggregation, the analysis doc,
-#   FIX_CITATION_AGGREGATION_PLAN.md, and one phase plan
+#   .workflows/plan/FIX_CITATION_AGGREGATION_PLAN.md, and one phase plan
 
 # Session 2 — execute
 cd ~/.worktrees/<repo>/fix-citation-aggregation
-/implement -f FIX_CITATION_AGGREGATION_PLAN.md
+/implement -f .workflows/plan/FIX_CITATION_AGGREGATION_PLAN.md
 ```
 
 Session 1's exploration tokens are thrown away; session 2 pays only for implementation, since
@@ -678,12 +678,12 @@ trust to its worktree, and refuses rather than inventing trust if the repo itsel
 # Session 1 — planning
 /analyze
 <what you want changed, and why it's worth doing>
-# → worktree feature/<slug>, an analysis doc, PURGE_..._PLAN.md, and
+# → worktree feature/<slug>, an analysis doc, .workflows/plan/PURGE_..._PLAN.md, and
 #   .workflows/plan/<slug>/phase-N.md for each phase, reconciled against each other
 
 # Session 2 — phase 1, which also creates one task per phase
 cd ~/.worktrees/<repo>/<slug>
-/implement -f PURGE_..._PLAN.md --phase 1
+/implement -f .workflows/plan/PURGE_..._PLAN.md --phase 1
 
 # Session 3..N — one phase each
 cd ~/.worktrees/<repo>/<slug>
@@ -871,11 +871,12 @@ your-project/
 │   ├── analysis_report.md    # quality analysis
 │   ├── plan/{TaskID}.md
 │   └── postmortem/{TaskID}.md
-├── .workflows/plan/<slug>/phase-N.md      # repo root, one per phase
-├── .workflows/swarm.json                  # repo root, optional — this repo's generated
-│                                          #   and binary paths, and its full suite
-├── 20250108-164512-A3F7_code_analyzer.md  # repo root
-└── PURGE_..._PLAN.md                      # repo root, the plan index
+└── .workflows/                            # repo root — /analyze writes nothing outside it
+    ├── analyze/20250108-164512-A3F7_code_analyzer.md
+    ├── plan/PURGE_..._PLAN.md             # the plan index
+    ├── plan/<slug>/phase-N.md             # one per phase
+    └── swarm.json                         # optional — this repo's generated and binary
+                                           #   paths, and its full suite
 ```
 
 TaskIDs are `P{0-3}-{SCOPE}-{ID}` (e.g. `P0-DB-A236`), unique across every `todos.md` in the

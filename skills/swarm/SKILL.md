@@ -304,7 +304,7 @@ rather than leaving a pasteable command on screen until somebody wakes up.
 ```bash
 python3 ~/.claude/skills/swarm/swarm.py launch \
     --name orch-<slug> --cwd <worktree> --permission-mode <this session's mode> \
-    --prompt "/analyze-orchestrator -f <SLUG>_PLAN.md --permission-mode <same>"
+    --prompt "/analyze-orchestrator -f .workflows/plan/<SLUG>_PLAN.md --permission-mode <same>"
 ```
 
 The mode is passed twice on purpose: once to launch the session on it, once *inside* the prompt
@@ -344,7 +344,7 @@ ids in `todos.md` and duplicated `.workflows/plan/*.md` files before continuing.
 ## The orchestrator loop
 
 ```bash
-python3 ~/.claude/skills/swarm/swarm.py init  --plan <SLUG>_PLAN.md --coordinator orch-<slug>
+python3 ~/.claude/skills/swarm/swarm.py init  --plan .workflows/plan/<SLUG>_PLAN.md --coordinator orch-<slug>
 python3 ~/.claude/skills/swarm/swarm.py waves --slug <slug>      # -> runnable_now: [1, 3]
 ```
 

@@ -59,18 +59,17 @@ terminating branch in this file is a stop; there are no blocks.
 
 **Arguments:**
 - `-f` — the plan index written by `/analyze` (required). Pass the **path**, not a bare
-  filename: `/analyze` files the index under `docs/plans/` in a repo that has a `docs/`
-  directory and at the repo root otherwise, and every path you report downstream must be the
-  one you were handed here.
+  filename: `/analyze` files the index under `.workflows/plan/` (older sets: `docs/plans/` or
+  the repo root), and every path you report downstream must be the one you were handed here.
 - `--phase N` — implement phase N instead of the next unfinished one
 - `--all` — continue through every remaining phase in this session
 - `-note` — extra context for implementation; it never overrides the plan
 
 **Examples:**
 ```bash
-/implement -f docs/plans/PURGE_DIRECT_STREAMING_TOOL_PLAN.md
-/implement -f docs/plans/FIX_CITATION_AGGREGATION_PLAN.md --phase 2
-/implement -f FIX_CITATION_AGGREGATION_PLAN.md --phase 2   # repo with no docs/ tree
+/implement -f .workflows/plan/PURGE_DIRECT_STREAMING_TOOL_PLAN.md
+/implement -f .workflows/plan/FIX_CITATION_AGGREGATION_PLAN.md --phase 2
+/implement -f docs/plans/FIX_CITATION_AGGREGATION_PLAN.md --phase 2   # a set planned before 2026-11-04
 ```
 
 ### Wrong input

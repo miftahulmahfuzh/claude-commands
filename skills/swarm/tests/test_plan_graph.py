@@ -220,6 +220,11 @@ def _worktree_case(label, index_rel):
 
 
 @case
+def test_worktree_workflows_plan_index():
+    _worktree_case("worktree + .workflows/plan index", ".workflows/plan/DEMO_PLAN.md")
+
+
+@case
 def test_worktree_docs_plans_index():
     _worktree_case("worktree + docs/plans index", "docs/plans/DEMO_PLAN.md")
 

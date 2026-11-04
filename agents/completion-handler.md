@@ -36,8 +36,8 @@ You finalize completed tasks. You orchestrate — you delegate README work to re
 
 2b. **If `plan_set` is present**:
    - Tick the phase's row in the plan index — **open it at `plan_set.file`, the path you were
-     given, and do not assume the repo root**; `/analyze` files it under `docs/plans/` in a repo
-     that has a `docs/` tree — and set `**Status:**` to
+     given, and do not assume the repo root**; `/analyze` files it under `.workflows/plan/`, and
+     older sets keep theirs under `docs/plans/` or at the root — and set `**Status:**` to
      `phase {N}/{total} complete` (or `complete` on the last phase).
    - Find `next_task_id` in its own package's todos.md and flip `- **Status**: blocked` to
      `open`. Its plan assumed this phase had landed, and it has.

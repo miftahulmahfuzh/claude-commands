@@ -639,7 +639,7 @@ says so out loud, because a silently shorter run reads like a step was skipped b
 ✅ Task Completed: P1-TC-A001
 📦 Package: toolcore
 📄 Modified: caller.go, caller_test.go
-📝 Updated: todos.md, docs/plans/PURGE_DIRECT_STREAMING_TOOL_PLAN.md
+📝 Updated: todos.md, .workflows/plan/PURGE_DIRECT_STREAMING_TOOL_PLAN.md
 💾 Commit: abc1234
 🌿 Branch: feature/purge-direct-streaming-tool
 
@@ -686,8 +686,7 @@ as arguments to the slash command. `/implement` and `/analyze` print the same sh
   /do does not write implementation plans. Run /analyze first,
   then /implement -f <the path /analyze reports> — the plan index, never
   the <session-id>_code_analyzer.md, which /implement refuses. /analyze
-  files them under docs/plans/ and docs/analyzer/ when the repo has a
-  docs/ tree, and at the repo root when it does not.
+  files them under .workflows/plan/ and .workflows/analyze/.
   Without --no-escalate this is not an error: Step 1c runs /analyze itself.
 
 ✗ P1-TC-A002 depends on P1-TC-A001 (phase 1), which is not complete.

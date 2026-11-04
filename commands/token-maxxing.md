@@ -147,7 +147,7 @@ verbose; exhaustive-but-correct is the goal, not terse.
 It decomposes the work into phases, fans out one planner per phase, and reconciles their plans
 against each other before anything is implemented. `--no-worktree` keeps the work on today's
 `token-maxxing-<DATE>` branch instead of cutting a second one. Then implement with
-`/implement -f <SLUG>_PLAN.md`, one phase at a time.
+`/implement -f .workflows/plan/<SLUG>_PLAN.md`, one phase at a time.
 
 This is also high burn spent well: N planners in parallel plus a reconciliation pass, on work
 that ends in a reviewed plan rather than a half-finished refactor.
