@@ -19,7 +19,10 @@ locks its directory; `~/run-insights/.claude/skills/verify-run-insights` is the 
 where calls leave the process, demo data committed through the app's own review screen);
 `~/daily-words/.claude/skills/verify-daily-words` is the one to read for an app with database
 sessions, an owner's pinned dev port, a repo Playwright suite wrapped without editing it, and a
-harmful sink (web push) turned into a fake receiver that proves the success path end to end.
+harmful sink (web push) turned into a fake receiver that proves the success path end to end;
+`~/expense-tracking/.claude/skills/verify-expense-tracking` is the compact Neon + Blob web app
+whose browser uploads stream (the stand-in serves the browser over HTTPS + HTTP/2) and whose
+harness tools live outside the repo.
 
 **Why this exists.** `phase-planner` writes a **Proof** section that names
 `.claude/skills/verify-*`, `/implement` and `/do` run it, and the `verifier` agent re-runs it
@@ -59,7 +62,9 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
   port, never start on another") governs the owner's server, not a verify run, which must still
   get its own. Decide the coexistence and write it into Gotchas and the CLAUDE.md line: the
   free-port picker refuses the owner's port, `up` never stops or reuses its holder, `doctor` only
-  reports who holds it, and every run is tracked by process group so none is orphaned.
+  reports who holds it, and every run is tracked by process group so none is orphaned. When
+  nothing pins a port, the owner's `npm run dev` still takes the framework's default (3000 for
+  Next): treat that one as the owner's by the same rules, and say so.
 - **Auth:** how a signed-in user is recognised, read in the app's session code. Mint a session
   with the app's own encoder and a per-run secret; never add a bypass to the app. Read identity
   rules from the code, not from env alone: a section may admit one hardcoded email on top of the
@@ -95,6 +100,17 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
     host with a fake store id, serve that one host from the stand-in (preload rewrite on the
     server, `page.route` in the browser), and refuse every other host of the vendor, production's
     included.
+  - The browser's upload may need HTTP/2. `@vercel/blob/client`'s `upload()` streams its PUT body
+    whenever the caller passes `onUploadProgress`, and Chromium sends a streamed request body only
+    over HTTP/2: against a plain HTTP/1.1 stand-in every PUT failed with
+    `net::ERR_ALPN_NEGOTIATION_FAILED` while the token step answered 200, which reads as a product
+    bug. Give the stand-in a second listener on HTTPS + h2 (`node:http2` `createSecureServer`,
+    `allowHTTP1`, a per-run self-signed certificate), point the browser's `NEXT_PUBLIC_` twin at it,
+    and let only the run's Playwright context accept it (`ignoreHTTPSErrors`). Read the SDK's
+    request code for every condition that changes its transport (progress callbacks, multipart
+    thresholds) rather than assuming one: verify-run-insights' uploads passed over HTTP/1.1 only
+    because no caller asked for progress yet. A curl replay of the browser's sequence cannot find
+    any of this; each browser-direct path needs one browser journey.
   - SDKs prefer ambient credentials over the configured token (`VERCEL_OIDC_TOKEN` beats
     `BLOB_READ_WRITE_TOKEN`). `env -i` drops them; name them in Gotchas anyway.
 - **The migration tool may not reach a local database.** drizzle-kit needs a TCP driver the
@@ -181,7 +197,9 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   what the classification above keeps off.
   Check how the app's config loader merges env and files before trusting this, including whether
   `VAR=` (set but empty) counts as set: godotenv's `Load` keeps it, some loaders fall back to the
-  file or a default.
+  file or a default. Schema validators split the other way: zod's `z.url().optional()` accepts an
+  unset `AUTH_URL` and refuses `AUTH_URL=` at boot. Omit an optional variable, or give it the
+  run's own value; never blank it.
 - **Blanking a URL is not isolation.** Code falls back to hardcoded hosts when its env var is
   empty (verify-agentic: blanked BE URLs still reached a dev gateway). Add egress control, chosen
   per runtime, because no single mechanism covers them all:
@@ -228,8 +246,11 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   full of refusals) into Gotchas.
 - **Fence the browser as well as the server.** Route every request in the Playwright driver:
   loopback passes, the fake vendor host is served from the stand-in, everything else is aborted
-  and logged. Grant no permissions (notifications, clipboard) and say in the feature file which
-  fallback path that drives (a refused clipboard shows the share link in a field). A wrapped
+  and logged. Grant no permissions (notifications, clipboard), and find out which path that really
+  drives before writing it down: headless Chromium lets a focused page *write* the clipboard with
+  no grant, so a share button ends on its "copied" toast, not on the manual-copy fallback the code
+  keeps for refusals. Read the minted token back from the database, and list the fallback as not
+  driven. A wrapped
   harness's own browser is not fenced: verify-run-insights reuses the capture harness's seeder but
   runs its commit pass in the fenced driver, because the harness would have fetched the fake
   store's URLs from the real vendor.
@@ -267,7 +288,11 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   That is what lets a recipe assert on what the user reads without a browser. It is not the whole
   page under a dev server: a Next `notFound()` page's copy lived only in the RSC payload, so the
   text view showed the brand and nothing else. Assert such a status with the HTTP drive and its
-  copy with the browser.
+  copy with the browser. And the status itself lies when the route has a `loading.tsx`: the
+  loading screen streams first, so `notFound()` arrives after a 200 was sent. Another user's
+  record answered 200 with "Not found" in the title; assert the title and the absence of the other
+  user's data (grep the saved HTML for it), and keep 404 assertions for routes without a loading
+  screen.
 - **The browser driver must not create its own failures.** Playwright's screenshot hides the
   caret by injecting a style, and mid-hydration React reports that as a hydration mismatch the
   app does not have. Pass `caret: 'initial'` and wait for `networkidle`. Dev-only overlays (Next's
@@ -277,7 +302,9 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   than loosening the rule for everyone. Run the browser in the seeded user's time zone: an app
   that re-detects the zone from the browser otherwise moves the user's day boundary mid-journey.
   Headless Chromium answers `Notification.permission === "denied"` with no grant, which is an end
-  state to assert, not a failure.
+  state to assert, not a failure. Log `requestfailed` with its URL: the console only says "Failed
+  to load resource", and the URL is what told verify-expense-tracking the Blob PUT was the one
+  failing.
 - **`down` copies the server log into evidence** before deleting run state: it is the record of
   every decision the run made.
 - **Evidence lives outside the repo and outside the worktree**
@@ -344,7 +371,11 @@ goes in Gotchas.
   commit through the real screen in `up` (25 runs took 40 s).
 - **Fixed demo data ages out of time windows.** Crons and digests filter on recency ("a run in the
   last 60 days"); dated demo data answers `users: 0` forever after. Find the window in the code,
-  and give recipes a user-path way to make data recent (re-date it in the review form).
+  and give recipes a user-path way to make data recent (re-date it in the review form). Better,
+  when the seeder is yours: date rows relative to today in the user's zone, so every window has
+  data on any day. Then cap every timestamp at now: a seed that stamped today's row at 12:00 put
+  it in the future before noon, and the app's freshness watermark (`max(updated_at)`) went
+  *backwards* after a real edit.
 - **Wait on the app's own signal, never on the page settling.** A typing indicator going away,
   a pending card's copy disappearing, a turn meter's aria-label. A page-text-stability loop stopped
   early on a static sidebar; a heading predicted from another page ("What happened") never
@@ -400,7 +431,11 @@ it is the point of the pass.
 - Add one line to the repo's `CLAUDE.md` (Conventions, or wherever commands live) pointing at
   the skill and the feature map.
 - Any dev dependency the drives need (Playwright, an HTTP client) goes into the repo's own
-  manifest at a pinned version. Prefer browsers and tools already installed on this machine.
+  manifest at a pinned version. Prefer browsers and tools already installed on this machine. When
+  the commit is limited to the paths you create (the manifest is not one), or the stand-in needs a
+  driver the app does not ship (a Neon-only app has no `pg` or `ws`), install them pinned into a
+  tool directory under the verify state (`$VERIFY_HOME/.tools`, installed once by `up`) and load
+  them with `createRequire` from there; the app's processes never see it.
 - The repo's own gates cover the new files: its formatter, linter and source guards scan
   `.claude/` too, and a dead-code scanner (knip) reports every helper `verify.sh` starts by path as
   an unused file. Run them, and give the scanner a commented ignore for the skill directory.
@@ -435,6 +470,9 @@ End with:
   its evidence path;
 - product bugs found (app wrong, not recipe wrong), each with a one-line root cause when you
   found it, so the user can say "fix it" without a second investigation;
+- a harness lesson that implicates a sibling verify skill only after reproducing it there. The
+  fifth run reported verify-run-insights' uploads as "probably broken the same way"; reproduced,
+  they passed, because the failure needed a condition (`onUploadProgress`) that app never met;
 - failures that were already on the base (a red test unrelated to the skill), kept apart from
   the bugs the pass found;
 - what the skill deliberately never drives;

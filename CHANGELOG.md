@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`create-verification-skill`**, from its fifth run (`verify-expense-tracking`: Next.js on Neon
+  and Vercel Blob, z.ai parsing every pasted expense): a Blob stand-in serves the browser over
+  HTTPS + HTTP/2, because `upload()` streams its body when given `onUploadProgress` and Chromium
+  streams only over h2 (and `verify-run-insights` gained the same listener before it needed it);
+  the clipboard advice is corrected (headless Chromium writes it with no grant, so the "copied"
+  path is what runs); a `loading.tsx` makes `notFound()` answer 200; seeds dated relative to today
+  and never in the future; an unpinned owner port defaults to the framework's; `VAR=` fails an
+  optional URL schema; harness tools can live in a pinned tool dir outside the repo; log failed
+  request URLs; reproduce a sibling-skill finding before reporting it
 - **`create-verification-skill`**, from its fourth run (`verify-daily-words`: Next.js on a TCP
   Postgres with database sessions, an LLM product, web push): a harmful sink is turned into a
   loopback fake receiver (an HTTPS push service trusted through `NODE_EXTRA_CA_CERTS`, payloads
