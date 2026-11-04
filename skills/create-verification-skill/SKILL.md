@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Create a verification skill
 
-Adapted from pstack's `create-verification-skill` (`cursor/plugins/pstack`), plus eight runs of
+Adapted from pstack's `create-verification-skill` (`cursor/plugins/pstack`), plus nine runs of
 this skill. Read the sibling closest to your repo's shape before you start:
 
 | Skill | Read it for |
@@ -20,6 +20,13 @@ this skill. Read the sibling closest to your repo's shape before you start:
 | `~/jmtarot/.claude/skills/verify-jmtarot` | a repo that forbids Playwright (its own CDP driver wrapped, whose defaults pointed at production and the owner's profile), JWT sessions minted through a dev-only route, an `--offline` mode that found the worst bug |
 | `~/agentic/.claude/skills/verify-agentic-docs` | a static site (Hugo): no database, no auth, no paid call; a per-run snapshot with a `sync` edit loop, a production-`build` drive wrapping the repo's own checks plus a link check, a CDN cache in the browser fence, and an `--offline` mode that again found the worst bug |
 | `~/nvim-config/.claude/skills/verify-nvim-config` | no server at all: a dotfiles repo (Neovim + tmux config) whose "app" is a TUI driven through a run-owned tmux server; a network namespace as the fence; a hard-linked read-only dependency cache built from the owner's lockfile; a `--live` mode on a copy of the owner's real installed environment |
+| `~/hospital-inspection-forms/.claude/skills/verify-hospital-inspection-forms` | a public Neon + Blob app with no paid call: the stand-in copied from a sibling in minutes, a `fault db\|blob` switch as the fault injection, an `export` drive that reads the app's `.xlsx` back cell by cell, a seed built from the app's own form definitions |
+
+**Copy before you write.** When the closest sibling talks to the same vendor SDKs, compare the
+installed versions (`@neondatabase/serverless`, `@vercel/blob` in both `node_modules`); if they
+match, copy its stand-in, preload, browser driver and HTML-text helper, rename the env prefix, and
+spend the time on the journeys. The ninth run's harness answered its first `up` 7 minutes into the
+session this way, and every bug it found came from journeys, not from the plumbing.
 
 **Why this exists.** `phase-planner` writes a **Proof** section that names
 `.claude/skills/verify-*`, `/implement` and `/do` run it, and the `verifier` agent re-runs it
@@ -154,6 +161,8 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
     thresholds) rather than assuming one: verify-run-insights' uploads passed over HTTP/1.1 only
     because no caller asked for progress yet. A curl replay of the browser's sequence cannot find
     any of this; each browser-direct path needs one browser journey.
+  - Make the HTTP drive decode a client token it receives into its options (types, size cap,
+    suffix, expiry): that proves what the app asks the vendor to enforce without a browser.
   - SDKs prefer ambient credentials over the configured token (`VERCEL_OIDC_TOKEN` beats
     `BLOB_READ_WRITE_TOKEN`). `env -i` drops them; name them in Gotchas anyway.
 - **The migration tool may not reach a local database.** drizzle-kit needs a TCP driver the
@@ -184,6 +193,16 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
     page lost every popup and handler, because its inline script began with an unguarded call
     into the CDN's mermaid. One ReferenceError left a later `let` in its temporal dead zone, so
     every hoisted handler threw. Two runs in a row, `--offline` found the run's worst bug.
+  - *Nothing paid or external at runtime?* The stand-in is still the fault injector. Give it a
+    `fault db|blob|none` switch that **drops the connection** (destroy the socket, close the h2
+    stream) rather than answering 5xx: that is what a dead network looks like, and SDKs retry the
+    two differently. Expose it to steps files too (`fault('db')` mid-journey, `none` in the
+    driver's `finally`), so outage and recovery are one journey. Then read each SDK's retry
+    policy before writing the expected end state: `@vercel/blob/client` retries a failed PUT 10
+    times with exponential backoff, so in verify-hospital-inspection-forms an upload on a dead
+    connection showed "Mengunggah…" for ~17 minutes with no error. The recipe that waited for the
+    error timed out; the finding was the missing timeout. Two of that run's four product findings
+    came from this switch.
   - *Public, version-pinned assets the page loads at runtime* (a CDN's script, webfonts): neither
     harmful nor paid. Let the browser fence GET them from an allowlist of those hosts through a
     cache shared across runs (fetched once, then served from disk), so drives are deterministic
@@ -258,7 +277,11 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   not with a pid regex.
 - **Binary responses go to a file** with their size and sha256, never to the terminal. Raw bytes
   corrupt the agent's output and every `grep` after them. Use one `curl -w` (a second `-w`
-  silently replaces the first).
+  silently replaces the first). When the binary is the product (an Excel or PDF export), give it
+  its own drive that saves the file and prints what a reader sees, parsed with the app's own
+  library from the run's snapshot (`createRequire(<snapshot>/package.json)('exceljs')`): sheets,
+  header, rows, which cells are coloured, the filename from `Content-Disposition`. A sha256
+  proves nothing about the content.
 - **Real env beats config files, and `env -i` beats both.** Start every process the run owns
   from `env -i` plus the run's own values (PATH, HOME, locale, then the pinned settings), so no
   secret exported in the caller's shell leaks in. If the app reads a dotenv file, point it at a
@@ -434,7 +457,13 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   Headless Chromium answers `Notification.permission === "denied"` with no grant, which is an end
   state to assert, not a failure. Log `requestfailed` with its URL: the console only says "Failed
   to load resource", and the URL is what told verify-expense-tracking the Blob PUT was the one
-  failing.
+  failing. In a Next app, `getByRole('alert')` also matches `<next-route-announcer>`, which holds
+  the page title, so a wrong-password check "read" the title; locate the app's own alert
+  (`p[role=alert]`, or filter by text). Keep a short `DEV_ONLY` list of page errors that only
+  `next dev` produces, logged as "dev-only, not counted", and admit an entry only after grepping
+  the production bundle for its source: React's development client times server components with
+  `performance.measure`, and a server `redirect()` mid-navigation throws "cannot have a negative
+  time stamp" in about half the runs; `react-dom-client.production.js` has no such call.
 - **`down` copies the server log into evidence** before deleting run state: it is the record of
   every decision the run made.
 - **Evidence lives outside the repo and outside the worktree**
@@ -499,6 +528,14 @@ goes in Gotchas.
 - **Seed through the app when the app derives state.** Records, badges and insights computed on
   commit cannot be inserted honestly by a seeder. Reuse the repo's own seeder for raw inputs, then
   commit through the real screen in `up` (25 runs took 40 s).
+- **Build the seed from the app's own definitions, and still wrap the repo's seeder.** A seed that
+  imports the app's schema or form definitions (`node --experimental-strip-types` on
+  `src/lib/forms.ts`) and posts through the app's own write route follows every later change to
+  the questions. Wrap the repo's seeder as a drive anyway, aimed at the run: in the ninth run it
+  failed on base (it answered required file questions with plain text, added after it was
+  written), which is a finding, and the reason the harness seeds itself. An app that creates its
+  own schema on first use (`ensureSchema`) has two-step readiness: the page answers, then the seed
+  goes in through the app, then the page shows the seed.
 - **Fixed demo data ages out of time windows.** Crons and digests filter on recency ("a run in the
   last 60 days"); dated demo data answers `users: 0` forever after. Find the window in the code,
   and give recipes a user-path way to make data recent (re-date it in the review form). Better,
@@ -543,10 +580,17 @@ A skill that was never executed is a draft. Run, for real:
 1. `up`, then `doctor` on the run, and once for each mode flag (`--offline`, rebuild flags). A
    flag you deliberately did not exercise (it would reach an external service) is listed as
    `inconclusive` in the report, never silently skipped.
-2. **Feed every transform-on-write hook input it must reject.** A formatter, linter or migration
-   that runs on save is where content gets destroyed: verify-nvim-config's worst finding was a
-   Lua file with one syntax error replaced, on disk, by the formatter's error message, because
-   the save hook never read the exit status. A happy-path drive passed on the same hook.
+2. **Feed every transform-on-write hook and every write validator input it must reject.** A
+   formatter, linter or migration that runs on save is where content gets destroyed:
+   verify-nvim-config's worst finding was a Lua file with one syntax error replaced, on disk, by
+   the formatter's error message, because the save hook never read the exit status. A happy-path
+   drive passed on the same hook. A public write route is the same kind of door: send it the
+   inputs the browser cannot produce. Two of the ninth run's findings: a file-URL check that was a
+   substring test (`https://evil.example/.public.blob.vercel-storage.com/x.jpg` was stored and
+   shown to the admin as a link), and a date check by `Date.parse`, which rolls `2026-02-31` over,
+   so Postgres refused it and the user got a 500 blaming the database. Look-alike hosts (the
+   trusted host in the path or as a subdomain of another), impossible dates, over-limit counts,
+   unknown keys.
 3. **Every journey in every feature file, once.** Fix the recipe when the recipe was wrong
    (wrong arg name, wrong column, wrong route). When the APP is wrong, record it as a product
    bug in the final report and do not paper over it in the map. Before calling a UI failure a

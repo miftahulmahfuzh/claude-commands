@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`create-verification-skill`**, from its ninth run (`verify-hospital-inspection-forms`: a
+  public Neon + Blob Next app with no paid call): copy a sibling's stand-in when the vendor SDK
+  versions match; an app with nothing paid still gets fault injection, as a stand-in switch that
+  drops connections (and the SDK's retry policy decides the expected end state: a Blob upload on a
+  dead link spun ~17 minutes); the HTTP drive decodes Blob client tokens; a binary that is the
+  product (an Excel export) gets its own drive reading it with the app's own library; Next's route
+  announcer is an `alert`, and dev-only page errors go on a short list checked against the
+  production bundle; the seed is built from the app's own definitions while the repo's seeder is
+  still wrapped (it failed on base); public write validators get inputs the browser cannot send
+  (a substring host check and a `Date.parse` rollover were that run's findings)
 - **`create-verification-skill`**, from its eighth run (`verify-nvim-config`: a Neovim + tmux
   dotfiles repo, no server or port): find where the owner really runs the app and offer `up
   --live` on a copy of that installed state plus a read-only drift report; a config repo's surface
