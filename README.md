@@ -4,6 +4,38 @@ Slash commands, subagents, skills, and a mod for [Claude Code](https://claude.ai
 every file is a prompt, not a program — there is nothing to build or run. The one exception is
 [`mods/swarm-deck`](mods/swarm-deck), which is JavaScript that runs inside Claude Code itself.
 
+## Contents
+
+- [Install](#install)
+- [Commands](#commands)
+  - [Session names](#session-names)
+  - [`/analyze`](#analyze)
+  - [`/implement`](#implement)
+  - [Unattended: `/analyze` orchestrates by default](#unattended-analyze-orchestrates-by-default)
+  - [`/analyze-orchestrator`](#analyze-orchestrator)
+  - [`/do`](#do)
+- [Agents](#agents)
+- [Skills](#skills)
+  - [`task`](#task)
+  - [`swarm`](#swarm)
+  - [`create-task`](#create-task)
+- [Borrowed from pstack](#borrowed-from-pstack)
+  - [`engineering-principles`](#engineering-principles)
+  - [`create-verification-skill`](#create-verification-skill)
+- [Workflows](#workflows)
+  - [Bug → fix](#bug--fix)
+  - [A plan set as a swarm](#a-plan-set-as-a-swarm)
+  - [Large refactor or purge](#large-refactor-or-purge)
+  - [Task tracking](#task-tracking)
+  - [Cards and `/analyze` in one prompt](#cards-and-analyze-in-one-prompt)
+- [`/implement` vs `/do` vs `/analyze-orchestrator`](#implement-vs-do-vs-analyze-orchestrator)
+- [Layout](#layout)
+- [Mods](#mods)
+  - [`mods/swarm-deck`](#modsswarm-deck)
+- [Contributing](#contributing)
+- [License](#license)
+- [Other tools →](docs/other-tools.md) — `/dbg`, `/token-maxxing`, `/up-version` and the standalone skills
+
 ## Install
 
 ```bash
