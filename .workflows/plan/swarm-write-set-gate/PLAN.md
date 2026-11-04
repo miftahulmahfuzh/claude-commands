@@ -2,7 +2,7 @@
 
 **Slug:** swarm-write-set-gate
 **Date:** 2026-10-27 08:48:29
-**Analysis:** `20261027-084829-ROCQ_code_analyzer.md`
+**Analysis:** `.workflows/analyze/20261027-084829-ROCQ_code_analyzer.md`
 **Worktree:** `~/.worktrees/claude-commands/swarm-write-set-gate`
 **Branch:** `feature/swarm-write-set-gate` (base: `origin/main` @ `471d34a`)
 **Phases:** 3
@@ -370,13 +370,13 @@ warns about.
 
 Execute the phases one at a time, starting at phase 1:
 
-    /implement -f SWARM_WRITE_SET_GATE_PLAN.md --phase 1
+    /implement -f .workflows/plan/swarm-write-set-gate/PLAN.md --phase 1
 
 Or run the whole set as a swarm — a session per phase, concurrent wherever `Depends on` allows,
 resumable on any machine:
 
-    /analyze-orchestrator -f SWARM_WRITE_SET_GATE_PLAN.md
+    /analyze-orchestrator -f .workflows/plan/swarm-write-set-gate/PLAN.md
 
 Or put them on the board first (GitHub repos only):
 
-    /create-task --from-plan SWARM_WRITE_SET_GATE_PLAN.md
+    /create-task --from-plan .workflows/plan/swarm-write-set-gate/PLAN.md

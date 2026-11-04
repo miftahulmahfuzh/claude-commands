@@ -3,7 +3,7 @@
 **Type:** Bug Investigation (R1, R4) + Feature Update (R2, R3)
 **Date:** 2026-10-27 08:48:29
 **Session ID:** 20261027-084829-ROCQ
-**Plan:** `SWARM_WRITE_SET_GATE_PLAN.md` (3 phases)
+**Plan:** `.workflows/plan/swarm-write-set-gate/PLAN.md` (3 phases)
 **Worktree:** `~/.worktrees/claude-commands/swarm-write-set-gate` — branch `feature/swarm-write-set-gate`, base `origin/main` @ `471d34a`
 
 ---

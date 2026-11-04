@@ -1,7 +1,7 @@
 # Phase 1: Gate correctness: worktree root discovery + severity selection
 
-**Plan set:** `SWARM_WRITE_SET_GATE_PLAN.md`
-**Analysis:** `20261027-084829-ROCQ_code_analyzer.md`
+**Plan set:** `.workflows/plan/swarm-write-set-gate/PLAN.md`
+**Analysis:** `.workflows/analyze/20261027-084829-ROCQ_code_analyzer.md`
 **Satisfies:** R1 (the gate finds the repo root inside a worktree, stops printing an all-clear over an analysis that never ran, and is regression-tested on both), R4 (the dead `kinds` comprehension becomes the most-severe-wins rule it was reaching for)
 **Depends on:** none
 **Difficulty:** NORMAL

@@ -1,7 +1,7 @@
 # Phase 2: Per-repo artifact classes and test commands
 
-**Plan set:** `SWARM_WRITE_SET_GATE_PLAN.md`
-**Analysis:** `20261027-084829-ROCQ_code_analyzer.md`
+**Plan set:** `.workflows/plan/swarm-write-set-gate/PLAN.md`
+**Analysis:** `.workflows/analyze/20261027-084829-ROCQ_code_analyzer.md`
 **Satisfies:** R3 — the generated/binary artifact list and the integrator's test commands become per-repo, so a global tool stops running one project's suite and one project's filenames against every repo on the machine. Also **R1 (one line only)**: the `README.md` Project Structure line that indexes `skills/swarm/tests/`, the harness phase 1 ships — assigned here by the reconciler because `README.md` is this phase's file and phase 1 edits no markdown. Nothing else in this phase serves R1.
 **Depends on:** Phase 1 (landed and synced before this starts)
 **Difficulty:** HARD
