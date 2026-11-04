@@ -7,7 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-11-04
+
+Verification and planning principles, adapted from Lauren Tan's pstack (`cursor/plugins/pstack`).
+Unit tests alone no longer count as done. A plan says how the real app proves each claim,
+and an agent that did not write the code checks it.
+
+This release also makes the swarm's no-ask rule enforced in code through a Claude Code mod,
+and moves `/analyze` output off the repo root.
+
+### Added
+- **`create-verification-skill` skill**: generates a repo-local `verify-<app>` skill (one script with `up`, `doctor`, drive commands, `down`, numbered evidence outside the repo) plus a feature map, then proves every recipe before handing it over. Built from pstack's generator and the bugs we hit building `verify-notesd`
+- **`verifier` agent** (Sonnet). It drives the repo's verification skill against landed work
+  with fresh context, never edits code, and returns `verified | failed | inconclusive` per phase,
+  with an evidence file for each claim and repro commands for each failure
+- **`engineering-principles` skill**: ten principles (subtract before you add, laziness, build
+  the lever, boundary discipline, illegal states unrepresentable, root causes / attack the
+  premise, prove it works, verifiable units, behavior-not-implementation tests, encode lessons
+  in structure). It is hidden from the skill list and read only by planners, once per plan,
+  so implementers pay nothing
+- **swarm-deck mod** (loaded through `CLAUDE_CODE_PLUGIN_DIRS`, not `sync.sh`): Iron rule 4 is
+  now enforced in code, not just in the prompt. Inside a swarm, a phase session's `AskUserQuestion` is refused
+  (the hook fails closed) and the precedence ladder comes back as the tool result. Interactive shell commands
+  (editors, pagers) are refused too. Each phase writes its own heartbeat row into `$.store` every 15 seconds
+  without spending a turn, and records every refused fork as it happens. `/fleet` opens a live deck while
+  Claude is working. Every report is copied to `swarm/<slug>/sent/<n>`, so a message held for approval slows
+  the set down instead of stalling it. The mod does nothing outside a swarm. The design is in `docs/`
+- **swarm-deck status vocabulary**: sessions report `starting`, `working`, `finalizing`, `idle`
+  or `done`. `QUIET` now means a silence nobody has explained in the last two hours, so older rows read
+  `stale` and a session that ended cleanly never reads quiet
+- **`tools/termshot.py`**: turns a tmux pane into a PNG, or a series of captures into a GIF, so the
+  swarm-deck screenshots in the README can be made again
+- **`swarm.py spawn`** passes `CC_PARENT_SESSION` to every spawned session, so mcp-notes can record
+  which session is the parent instead of guessing it from a reused name
+
 ### Changed
+- **`phase-planner`**: `Manual check` is replaced by **Proof** (harness, feature-map entries,
+  journeys with pass conditions, a neighbor check). The new **Principles applied** section records
+  the decision each principle changed. Bug fixes must reproduce first, and user-facing changes
+  must update the feature map
+- **`plan-generator`**: briefs carry `principles` and `validation.proof`
+- **`create-verification-skill`**, from its first real run (`verify-agentic`, agentic_golang):
+  external calls are classified by harm, not price, and an LLM app verifies on the real LLM by
+  default under a per-run budget with targeted journeys (a stub is `--offline`, never proof);
+  new rules for egress control (blanked URLs still hit hardcoded fallbacks), set-but-empty env,
+  per-run build stamping for compiled apps, per-run caches, read-only state drives, zsh-safe
+  recipes and executable bits under `core.fileMode=false`; feature files are written from driven
+  journeys, not predicted ones
+- **`verifier`** respects a harness budget (Proof + one neighbor) and never cites a stub-mode run;
+  **`phase-planner`** Proof sections state their paid-drive cost
+- **`/implement`** runs the Proof journeys and reports evidence per claim. Solo landings dispatch
+  `verifier` first: `failed` blocks the landing after one fix-and-retry
+- **`/do`** runs Proof itself and labels the result `self-verified`, with no extra agent, to keep
+  small tasks cheap
+- **`/analyze-orchestrator` and `swarm`**: step 6b sends one `verifier` per wave. A failed phase
+  is marked failed and its dependents stall. Landing requires every phase to be `verified`, or
+  `inconclusive` with a stated reason
 - **`create-verification-skill`** split for token cost: `SKILL.md` is now the short form (213
   lines, 14 KB, down from 748 lines and 64 KB) with a sibling table and a "copy a sibling first"
   step; the detail and the case behind every rule moved verbatim into seven topic files under
@@ -109,44 +164,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   phase's own Proof `verified` in one pass, lands on its implementers' evidence. Reports and the
   ledger record it as `self-verified (small-set rule)`. Measured 2026-11-03 on mcp-notes: small
   sets cost about $5/phase before the verifier and about $9/phase with it
+- **`/analyze` files its output under `.workflows/`, never the repo root**: the analyzer doc goes to
+  `.workflows/analyze/<session-id>_code_analyzer.md` and the plan index to
+  `.workflows/plan/<SLUG>_PLAN.md`, next to the phase plans. `swarm.py` and the executors still
+  find indexes from older sets at the root or in `docs/plans/`
+- **`create-verification-skill`**, from its eleventh run (`verify-lunch-delivery`): a network
+  namespace with exits (a Unix-socket bridge for the database, the counting proxy, the host URL) for a
+  hardcoded port that another process holds; email as a fake receiver (STARTTLS for Go's `PlainAuth`);
+  unsigned cookie sessions get a `--cookie` forgery drive; screenshots with `animations: 'disabled'`;
+  one seeded user per journey that uses one up; unit suites count as harnesses; the report says
+  whether the push runs CI
+- **Swarm ledger timestamps** are in WIB (UTC+7) instead of UTC
+- **`finish-cv-test`** does its cold read with `cvtest.py coldread` (a headless `claude -p` run at the
+  repo root) instead of a subagent, because a subagent picked up the workspace CLAUDE.md and
+  refused to score
+- **`CLAUDE.md`** now holds only the rules (21.7 KB down to 8.1 KB). The incident write-ups behind them
+  moved unchanged to `docs/architecture-notes.md`
+- **README** covers only the pipeline and has a clickable table of contents. The standalone tools moved
+  to `docs/other-tools.md`, and a "Borrowed from pstack" section was added
 
-Verification and planning principles, adapted from Lauren Tan's pstack (`cursor/plugins/pstack`).
-Unit tests alone no longer count as done. A plan says how the real app proves each claim,
-and an agent that did not write the code checks it.
-
-### Added
-- **`create-verification-skill` skill**: generates a repo-local `verify-<app>` skill (one script with `up`, `doctor`, drive commands, `down`, numbered evidence outside the repo) plus a feature map, then proves every recipe before handing it over. Built from pstack's generator and the bugs we hit building `verify-notesd`
-- **`verifier` agent** (Sonnet). It drives the repo's verification skill against landed work
-  with fresh context, never edits code, and returns `verified | failed | inconclusive` per phase,
-  with an evidence file for each claim and repro commands for each failure
-- **`engineering-principles` skill**: ten principles (subtract before you add, laziness, build
-  the lever, boundary discipline, illegal states unrepresentable, root causes / attack the
-  premise, prove it works, verifiable units, behavior-not-implementation tests, encode lessons
-  in structure). It is hidden from the skill list and read only by planners, once per plan,
-  so implementers pay nothing
-
-### Changed
-- **`phase-planner`**: `Manual check` is replaced by **Proof** (harness, feature-map entries,
-  journeys with pass conditions, a neighbor check). The new **Principles applied** section records
-  the decision each principle changed. Bug fixes must reproduce first, and user-facing changes
-  must update the feature map
-- **`plan-generator`**: briefs carry `principles` and `validation.proof`
-- **`create-verification-skill`**, from its first real run (`verify-agentic`, agentic_golang):
-  external calls are classified by harm, not price, and an LLM app verifies on the real LLM by
-  default under a per-run budget with targeted journeys (a stub is `--offline`, never proof);
-  new rules for egress control (blanked URLs still hit hardcoded fallbacks), set-but-empty env,
-  per-run build stamping for compiled apps, per-run caches, read-only state drives, zsh-safe
-  recipes and executable bits under `core.fileMode=false`; feature files are written from driven
-  journeys, not predicted ones
-- **`verifier`** respects a harness budget (Proof + one neighbor) and never cites a stub-mode run;
-  **`phase-planner`** Proof sections state their paid-drive cost
-- **`/implement`** runs the Proof journeys and reports evidence per claim. Solo landings dispatch
-  `verifier` first: `failed` blocks the landing after one fix-and-retry
-- **`/do`** runs Proof itself and labels the result `self-verified`, with no extra agent, to keep
-  small tasks cheap
-- **`/analyze-orchestrator` and `swarm`**: step 6b sends one `verifier` per wave. A failed phase
-  is marked failed and its dependents stall. Landing requires every phase to be `verified`, or
-  `inconclusive` with a stated reason
+### Fixed
+- **swarm-deck**: a coordinator's deck kept refreshing only inside phase sessions, so it froze after
+  the first snapshot. It now refreshes in every session. Finding a set to display (read-only) is a
+  separate lookup from the identity that turns the guards on
+- **`/fleet`** shows the set this session coordinates and skips sets that already landed. Before,
+  it could pick up a set that landed an hour earlier, and with exactly one set it said "several sets
+  here"
 
 ## [4.0.0] - 2026-10-27
 
@@ -647,6 +690,7 @@ a real run rather than imagined.
 ### Project Milestone
 This represents the initial release of the Claude Commands Collection, providing a complete foundation for custom Claude Code command management with professional documentation and automated installation.
 
+[4.1.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v4.1.0
 [4.0.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v4.0.0
 [3.0.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v3.0.0
 [2.0.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v2.0.0
