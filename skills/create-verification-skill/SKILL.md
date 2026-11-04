@@ -6,26 +6,19 @@ disable-model-invocation: true
 
 # Create a verification skill
 
-Adapted from pstack's `create-verification-skill` (`cursor/plugins/pstack`), plus what building
-`~/mcp-notes/.claude/skills/verify-notesd`, `~/agentic_golang/.claude/skills/verify-agentic` and
-`~/seer/.claude/skills/verify-seer` taught us. Read the one closest to your repo before you start:
-verify-notesd is the small example (Node daemon, one Postgres, Playwright UI); verify-agentic is the
-heavy one (compiled Go server, Docker-isolated Arango + Redis, real LLM under a budget, egress
-control, an existing e2e harness wrapped); verify-seer has two halves sharing one database (a
-Next.js app behind a serverless Postgres driver, shimmed to a local Postgres; a Python CLI with a
-denylist of commands that write outside the run) and a per-run snapshot for a dev server that
-locks its directory; `~/run-insights/.claude/skills/verify-run-insights` is the fullest web app
-(Next.js on Neon and Vercel Blob, both answered by one loopback stand-in, the LLM budget enforced
-where calls leave the process, demo data committed through the app's own review screen);
-`~/daily-words/.claude/skills/verify-daily-words` is the one to read for an app with database
-sessions, an owner's pinned dev port, a repo Playwright suite wrapped without editing it, and a
-harmful sink (web push) turned into a fake receiver that proves the success path end to end;
-`~/expense-tracking/.claude/skills/verify-expense-tracking` is the compact Neon + Blob web app
-whose browser uploads stream (the stand-in serves the browser over HTTPS + HTTP/2) and whose
-harness tools live outside the repo; `~/jmtarot/.claude/skills/verify-jmtarot` is the one for a repo
-that forbids Playwright (it wraps the repo's own CDP driver, whose defaults pointed at production
-and at the owner's signed-in profile), JWT sessions minted through the app's own dev-only route, and
-an `--offline` mode that found the run's worst bug.
+Adapted from pstack's `create-verification-skill` (`cursor/plugins/pstack`), plus seven runs of
+this skill. Read the sibling closest to your repo's shape before you start:
+
+| Skill | Read it for |
+|---|---|
+| `~/mcp-notes/.claude/skills/verify-notesd` | the small example: a Node daemon, one Postgres, a Playwright UI |
+| `~/agentic_golang/.claude/skills/verify-agentic` | the heavy one: a compiled Go server, Docker-isolated Arango + Redis, a real LLM under a budget, egress control, an existing e2e harness wrapped |
+| `~/seer/.claude/skills/verify-seer` | two halves sharing one database (Next.js behind a serverless Postgres driver shimmed to a local Postgres; a Python CLI with a denylist of commands that write outside the run), a per-run snapshot for a dev server that locks its directory |
+| `~/run-insights/.claude/skills/verify-run-insights` | the fullest web app: Neon and Vercel Blob answered by one loopback stand-in, the LLM budget enforced where calls leave the process, demo data committed through the app's own review screen |
+| `~/daily-words/.claude/skills/verify-daily-words` | database sessions, an owner's pinned dev port, a repo Playwright suite wrapped without editing it, a harmful sink (web push) turned into a fake receiver |
+| `~/expense-tracking/.claude/skills/verify-expense-tracking` | the compact Neon + Blob app whose browser uploads stream (the stand-in serves HTTPS + HTTP/2), harness tools outside the repo |
+| `~/jmtarot/.claude/skills/verify-jmtarot` | a repo that forbids Playwright (its own CDP driver wrapped, whose defaults pointed at production and the owner's profile), JWT sessions minted through a dev-only route, an `--offline` mode that found the worst bug |
+| `~/agentic/.claude/skills/verify-agentic-docs` | a static site (Hugo): no database, no auth, no paid call; a per-run snapshot with a `sync` edit loop, a production-`build` drive wrapping the repo's own checks plus a link check, a CDN cache in the browser fence, and an `--offline` mode that again found the worst bug |
 
 **Why this exists.** `phase-planner` writes a **Proof** section that names
 `.claude/skills/verify-*`, `/implement` and `/do` run it, and the `verifier` agent re-runs it
@@ -39,19 +32,33 @@ Gotchas, and go on. The one question worth asking up front, when someone is ther
 arguments do not settle it: if the app's core is a paid dependency (an LLM app), should verify
 run it for real by default? The default below is yes, under a budget.
 
+**Not every section applies.** A static site has no auth, seed, database or budget; a CLI has no
+browser. Skip what the app does not have, say so in one Gotchas line ("no paid or messaging
+dependency, so no budget and no `--real` flag"), and do not build machinery for it. The process,
+fence, evidence and proving rules apply to every shape.
+
 ## 1. Interview the repo
 
 Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose files, CI config:
 
 - **Surface:** what a user actually touches: HTTP API, web UI, CLI/TUI, MCP, a bot, a queue
-  consumer. Pick the primary one; note the rest.
+  consumer. Pick the primary one; note the rest. For a static site or docs generator the surface
+  is the rendered pages in a browser **and** the production build: the dev server is not what
+  ships (`--minify`, a production environment, CI's exact flags), so the build is a drive of its
+  own, and a docs site's link check (every internal `href`/`src` and `#anchor` resolving in the
+  build) belongs in it. A base path without its trailing slash (`/agentic`) is the site root, not
+  a broken link.
 - **Existing harnesses first:** e2e suites, smoke scripts, Postman/http files, compose test
   stacks, seed scripts, fixtures. A harness the repo already maintains beats anything you
   invent. Wrap it, don't replace it. Check how it picks its target (a `BASE_URL`-style env var,
   a flag): wrapping should be "point it at the run". If the target is hardcoded in a config the
   harness loads, write a wrapper config into the run's snapshot that imports the repo's and
   overrides only the target (verify-daily-words: `{...base, use: {...base.use, baseURL}, webServer:
-  undefined}`), so no tracked file changes; edit the harness only when it cannot be wrapped. Drop
+  undefined}`), so no tracked file changes; edit the harness only when it cannot be wrapped.
+  When a wrapped check reports the whole suite missing, suspect its input before the product:
+  verify-agentic-docs fed the repo's popup checker the minified build through its `--index`
+  shortcut and it reported all 51 popups MISSING; it parses unminified HTML. Let a harness run in
+  its own default mode, inside the run's snapshot, with its temp dir under the run. Drop
   any "start or reuse a server" block: Playwright's `reuseExistingServer` happily reuses whatever
   the owner left on the default port. Specs that skip without a session variable
   (`DW_TEST_SESSION`) should get the run's token, so they run instead of skipping. Under `env -i`
@@ -150,7 +157,16 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
     fault injection, and it deserves one journey:** drive the product's core action offline and
     read the end state. A vendor outage is a feature no real-mode run exercises; verify-jmtarot's
     offline reading came back HTTP 200, empty, stored as `ok` (a race in the moderation gate
-    swallowed the provider error), the worst bug that pass found.
+    swallowed the provider error), the worst bug that pass found. It is not only for paid APIs:
+    refuse whatever the product loads from outside at runtime. verify-agentic-docs' offline home
+    page lost every popup and handler, because its inline script began with an unguarded call
+    into the CDN's mermaid. One ReferenceError left a later `let` in its temporal dead zone, so
+    every hoisted handler threw. Two runs in a row, `--offline` found the run's worst bug.
+  - *Public, version-pinned assets the page loads at runtime* (a CDN's script, webfonts): neither
+    harmful nor paid. Let the browser fence GET them from an allowlist of those hosts through a
+    cache shared across runs (fetched once, then served from disk), so drives are deterministic
+    and go online only on a miss. `--offline` refuses them, and that is fault injection too: it is
+    what any reader behind a blocking network sees.
   - *Paid or external, peripheral* (a data gateway, a search API the feature does not need, an
     LLM that only decorates a non-LLM app): off unless a flag opts in. Note any free-tier quota the
     production cron shares, and when that cron runs, so opted-in drives stay clear of it.
@@ -167,8 +183,13 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
   15 has no lock but two dev servers would share and clobber one `.next`. Serve such
   a tool from a per-run snapshot of its directory (rsync the sources and hard-link dependencies
   with `cp -al`, which took 0.2 s for 17k files; a symlinked `node_modules` breaks Turbopack). The
-  snapshot is a build artifact, so doctor warns when the tree changes. If something cannot be
-  isolated, say so in the skill, and make the script refuse to share it.
+  snapshot is a build artifact, so doctor warns when the tree changes. Site generators need the
+  same treatment for a different reason: they write into their source directory. `hugo server`
+  rewrote the tracked `assets/jsconfig.json` and the committed `resources/_gen` mtimes, left
+  `.hugo_build.lock`, and `hugo --gc` deletes `resources/_gen` outright. Serve from a snapshot,
+  and exclude the paths the tool rewrites from both the re-sync and the "tree changed" hash, or
+  every sync reports changes and doctor warns forever. If something cannot be isolated, say so
+  in the skill, and make the script refuse to share it.
 - **Address the run by the host the framework believes it is on.** `next dev` reports every
   request's `req.url` as `http://localhost:PORT` whatever the Host header said, so a route that
   redirects with `new URL(path, req.url)` moved a browser on `127.0.0.1` to another cookie origin
@@ -192,6 +213,11 @@ would be awkward). Agents call subcommands; they never hand-write launch sequenc
 | `note RUN "text"` | Appends a line to `evidence/LOG.md`, the human summary of what was proven. |
 | `down RUN` / `down --all` | Kills exactly what `up` started, drops per-run state, keeps evidence. |
 | `ls` | Runs, state, evidence count. |
+
+Optional, when they fit: `sync RUN` when the run serves a snapshot (re-copy the working tree and
+wait for the rebuild: an edit loop of 50 ms instead of `down` + `up`, and the way to drive base
+and fix on one run with `git stash`); `build RUN` when what ships is a build distinct from what
+the dev server serves (CI's command minus destructive flags, then the repo's own checks).
 
 Hard-won rules. Each one is a bug we actually hit in one of the verify skills named above:
 
@@ -251,6 +277,12 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   which ignores DNS options and proxies, failed once in five `up`s and every page answered 500
   until a restart). Match its log signature and restart the server, bounded (three tries), keeping
   each failed log.
+- **A done line in a log is not success, and an old error is not news.** Hugo prints `Total in
+  N ms` after a failed rebuild as well as a good one, so `sync` waits for the done line and then
+  checks for an error. It reads only the bytes written after it started (record the log's size
+  first): reading the log's tail, a successful sync after a fix still found the earlier ERROR and
+  failed. `doctor` reports the latest build's errors only (reset at "Change detected") and fails
+  when that build failed, because the server keeps serving the build before it.
 - **Copy state files with a read-only open.** Some tools migrate a database on connect even for a
   read (Seer's lab migrates `lab.sqlite` that way). Copy the committed state with the database's
   backup API from a `mode=ro` connection, and hash the protected original before and after the
@@ -273,8 +305,10 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   seeding, arm the budget once `up` is done, and write the residue (failed turn rows, an error log
   full of refusals) into Gotchas.
 - **Fence the browser as well as the server.** Route every request in the Playwright driver:
-  loopback passes, the fake vendor host is served from the stand-in, everything else is aborted
-  and logged. Grant no permissions (notifications, clipboard), and find out which path that really
+  the run's own origin passes (not all of loopback: the owner's dev server is loopback too), the
+  fake vendor host is served from the stand-in, everything else is aborted and logged and fails
+  the drive unless the steps `allow()` it. `context.route` does not see WebSockets, and a service
+  worker's requests bypass it unless the context sets `serviceWorkers: 'block'`. Grant no permissions (notifications, clipboard), and find out which path that really
   drives before writing it down: headless Chromium lets a focused page *write* the clipboard with
   no grant, so a share button ends on its "copied" toast, not on the manual-copy fallback the code
   keeps for refusals. Read the minted token back from the database, and list the fallback as not
@@ -316,7 +350,10 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   migrations ran, silently. Give every `-i` command in a loop `</dev/null` or its own file.
 - **No `| head` inside the script.** Under `set -o pipefail`, a reader that closes early
   SIGPIPEs the writer and `set -e` aborts the drive halfway, here before a body file was renamed.
-  Cap output in the producer (a line-limit argument), never in a pipe after it. Likewise give
+  Cap output in the producer (a line-limit argument), never in a pipe after it. The same pair
+  kills a `x="$(ss … | grep pid=…)"` the first time nothing matches: grep exits 1, and doctor
+  stopped halfway through its report with no message when the owner's port was free. Every grep
+  in a `$(...)` that may match nothing gets `|| true` inside the substitution. Likewise give
   `curl -w` a separator (`%{http_code}|%{content_type}`): a content type contains a space.
 - **HTML evidence is the visible text.** Server-rendered pages carry a framework payload in
   `<script>` tags, and a regex strip keeps that payload and loses the page. Save the HTML, and print
@@ -426,6 +463,10 @@ goes in Gotchas.
   a redirect chain through two gates (`/onboarding` -> `/today` -> `/birthday`, the last compiling
   on first use) settled the URL twice, so waiting on the URL ended on a blank page. Wait for a
   screen's content, and never tap a control the page drives itself.
+- **Record the base's known failures as counts.** When a drive fails on the base for a reason
+  outside the change (16 dead links in one generated page), write the count into the feature
+  file and the index ("pass if broken stays at 16 and anchors at 0"), so the next agent compares
+  counts instead of reading a red exit code as theirs.
 - **Pick inputs the seed does not already hold.** The first "add a word" recipe used a word the
   demo seed had; it ended on the duplicate notice and read like a broken save. Point recipes at
   the seed's own list (`grep` the seeder) when choosing inputs.
@@ -459,7 +500,12 @@ A skill that was never executed is a draft. Run, for real:
    the UI, omitted the columns migration 006 added after it, and the engine's `paper_check` crashed
    on it. Only driving the engine on demo data found that.
 4. **Isolation, proven rather than assumed.** Run two instances at once, write through the app in
-   one, and read the other's state to show the write did not cross. Hash every file the harness
+   one, and read the other's state to show the write did not cross. With no write path (a static
+   site), make a temporary edit, `sync` it into one run, read both, then `git checkout --` it and
+   check `git status`. Pick a probe you have seen rendered: a section's `_index.md` body never
+   reached the page, so the first probe read 0 in both runs and proved nothing; its title did.
+   Prove the failure path the same way (a broken template must fail `up` and `sync` with the
+   generator's error). Hash every file the harness
    must never touch (a committed database, a shared store's manifest, `.env.local`, an owner's
    browser profile) before the first `up` and after the last `down`, list the user's `~/.cache`
    before and after (that diff caught Chrome writing `dconf` outside the run), and check
@@ -486,9 +532,14 @@ it is the point of the pass.
 - The repo's own gates cover the new files: its formatter, linter and source guards scan
   `.claude/` too, and a dead-code scanner (knip) reports every helper `verify.sh` starts by path as
   an unused file. Run them, and give the scanner a commented ignore for the skill directory.
-- Confirm the scripts are committed executable: `git ls-files -s` shows `100755`. A repo with
-  `core.fileMode=false` records `100644` whatever the disk says; fix with
-  `git update-index --chmod=+x <file>`.
+- Confirm the scripts are committed executable **before the first commit**: `git ls-files -s`
+  shows `100755`. A repo with `core.fileMode=false` records `100644` whatever the disk says; run
+  `git update-index --chmod=+x <file>` right after the `git add` (checking only after the commit
+  cost verify-agentic-docs a second commit).
+- Name the skill and its state directory so neither collides with a sibling: `ls
+  ~/.local/state/*-verify` first. `~/agentic` could not use `agentic-verify`, which
+  `~/agentic_golang`'s verify-agentic owns, so it became `verify-agentic-docs` /
+  `agentic-docs-verify`.
 - Commit with the repo's conventions (its CHANGELOG under Unreleased if it keeps one, unless its
   CLAUDE.md reserves the changelog for a release command, or its entries record only product
   features) and push to the default branch, unless the repo's CLAUDE.md says otherwise. When the

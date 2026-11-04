@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`create-verification-skill`**, from its seventh run (`verify-agentic-docs`: a Hugo static
+  site with no database, auth or paid call): sibling skills are listed as a table by shape, and a
+  run skips the sections its app does not have; a static site's production build is a drive of its
+  own (CI's command, the repo's checks, a link check), next to an optional `sync` edit loop on a
+  snapshot; site generators that write into their source directory are snapshotted, with the
+  paths they rewrite excluded from the re-sync and the tree hash; a wrapped harness that reports
+  everything missing gets its own default mode instead of a shortcut input; public pinned CDN
+  assets go through a cache in the browser fence, and `--offline` refuses them (an unguarded CDN
+  call had disabled every handler on the home page, the second worst-bug-by-`--offline` in a
+  row); a log's done line is not success and `sync` reads only the log it caused; a grep with no
+  match inside `$(...)` gets `|| true`; the fence passes only the run's own origin, and WebSockets
+  and service workers are named as its gaps; a temporary-edit isolation probe must be one that
+  renders; known base failures are recorded as counts; scripts get `+x` before the first commit;
+  a state directory is checked for collisions with a sibling's
 - **`create-verification-skill`**, from its sixth run (`verify-jmtarot`: Next.js on a TCP
   Postgres with JWT sessions, z.ai readings and a group chat, a repo that forbids Playwright): a
   repo harness's defaults are classified like external calls (its own CDP driver defaulted to
