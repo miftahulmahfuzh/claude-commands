@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`create-verification-skill`**, from its sixth run (`verify-jmtarot`: Next.js on a TCP
+  Postgres with JWT sessions, z.ai readings and a group chat, a repo that forbids Playwright): a
+  repo harness's defaults are classified like external calls (its own CDP driver defaulted to
+  production and to the owner's signed-in profile), and a browser without request routing is
+  fenced with a dead proxy, proved in a throwaway tab rather than by an in-page fetch the CSP also
+  refuses; `--offline` is the run's fault injection and gets one journey (it found the worst bug);
+  an app's dev-only mint route is used rather than an encoder, and stale JWT claims get a
+  `session` re-mint; `until` polls a value, and every wait is keyed on the row the action created;
+  a redacted `vercel env pull` file is read placeholder-aware with `VERCEL` never passed; a sticky
+  transient compile failure gets a bounded restart; follow-on spend is budgeted; React StrictMode
+  is ruled out before a dev-server UI failure is called a bug; `~/.cache` is diffed in the
+  isolation proof; findings state their run count, a vendor SDK is reproduced in isolation before
+  it is blamed, and a fix is driven on base and fix with the input that forces a race's branch
 - **`create-verification-skill`**, from its fifth run (`verify-expense-tracking`: Next.js on Neon
   and Vercel Blob, z.ai parsing every pasted expense): a Blob stand-in serves the browser over
   HTTPS + HTTP/2, because `upload()` streams its body when given `onUploadProgress` and Chromium

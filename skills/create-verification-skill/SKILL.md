@@ -22,7 +22,10 @@ sessions, an owner's pinned dev port, a repo Playwright suite wrapped without ed
 harmful sink (web push) turned into a fake receiver that proves the success path end to end;
 `~/expense-tracking/.claude/skills/verify-expense-tracking` is the compact Neon + Blob web app
 whose browser uploads stream (the stand-in serves the browser over HTTPS + HTTP/2) and whose
-harness tools live outside the repo.
+harness tools live outside the repo; `~/jmtarot/.claude/skills/verify-jmtarot` is the one for a repo
+that forbids Playwright (it wraps the repo's own CDP driver, whose defaults pointed at production
+and at the owner's signed-in profile), JWT sessions minted through the app's own dev-only route, and
+an `--offline` mode that found the run's worst bug.
 
 **Why this exists.** `phase-planner` writes a **Proof** section that names
 `.claude/skills/verify-*`, `/implement` and `/do` run it, and the `verifier` agent re-runs it
@@ -53,6 +56,11 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
   the owner left on the default port. Specs that skip without a session variable
   (`DW_TEST_SESSION`) should get the run's token, so they run instead of skipping. Under `env -i`
   with a per-run HOME, Playwright cannot find its browsers: pass `PLAYWRIGHT_BROWSERS_PATH`.
+  **Read every default the harness falls back to, and classify each like an external call.**
+  jmtarot's `tools/e2e/chrome.mjs` defaulted to the production URL, to CDP port 9222, and to a
+  persistent profile holding the owner's real Google session; wrapping it meant passing the run's
+  base, port and a throwaway profile on every call and refusing its `login`/`reset` verbs. A repo
+  rule against a browser library ("no Playwright") binds the harness too: wrap the driver it has.
 - **The real client's sequence:** read the frontend, mobile client or the existing e2e client
   for the exact calls a user's action makes: body encoding per API version (multipart on one
   route, JSON on another), polling, which stream it opens, which headers carry auth. The drive
@@ -75,6 +83,12 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
   fixed token the repo's seeder writes. Seed one user per gate the layout enforces (verify-daily-
   words: `demo` onboarded with history, `stranger` onboarded and empty, `newcomer` not onboarded),
   and let every drive take `--as USER` / `--anon`: sharing, claiming and onboarding need them.
+  If the app already ships a dev-only mint route (jmtarot's `POST /api/auth/dev-session`, gated on
+  a flag and `NODE_ENV !== 'production'`), use it: it runs the real sign-in upsert, it is not a
+  bypass you added, and any new `--as NAME` becomes a fresh user on first use. **JWT claims go
+  stale:** a session that carries state (`onb`, a locale) keeps the old value after a drive changes
+  it through an API, and the gate then redirects as if nothing happened. Give the script a
+  `session RUN USER` that re-mints, and say in each recipe when it is needed.
 - **Dependencies:** each database, cache, queue and third-party API, and how each can be
   isolated per run (its own Docker container or database name, a local emulator, a fake). Never
   the user's own dev containers. A heavy service with cheap namespaces (Postgres, Arango) gets one
@@ -132,7 +146,11 @@ Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose fil
     budget counted in vendor calls (see "Count paid calls where they leave"), with journeys
     targeted at the change. A stub-backed verify of an LLM app is a unit
     test with extra steps: it cannot plan, route or answer. Keep a stub only as `--offline`, for
-    plumbing, labelled as not proof.
+    plumbing, labelled as not proof of anything that needs a model. **It is, however, the run's
+    fault injection, and it deserves one journey:** drive the product's core action offline and
+    read the end state. A vendor outage is a feature no real-mode run exercises; verify-jmtarot's
+    offline reading came back HTTP 200, empty, stored as `ok` (a race in the moderation gate
+    swallowed the provider error), the worst bug that pass found.
   - *Paid or external, peripheral* (a data gateway, a search API the feature does not need, an
     LLM that only decorates a non-LLM app): off unless a flag opts in. Note any free-tier quota the
     production cron shares, and when that cron runs, so opted-in drives stay clear of it.
@@ -194,7 +212,10 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   secret exported in the caller's shell leaks in. If the app reads a dotenv file, point it at a
   file the run generates (`SEER_ENV_FILE`-style) instead of letting it find the real one. Pin every
   path and endpoint the app reads (DB URL, data dir, home dirs, ports) to per-run values, and blank
-  what the classification above keeps off.
+  what the classification above keeps off. A `.env.local` written by `vercel env pull` holds literal
+  `[SENSITIVE]` for redacted values and `VERCEL="1"`: read a value from it only when it is not the
+  placeholder, fall back to what CLAUDE.md documents, and never let `VERCEL` through (apps branch on
+  it for TLS and migrations; `VERCEL=0` is truthy).
   Check how the app's config loader merges env and files before trusting this, including whether
   `VAR=` (set but empty) counts as set: godotenv's `Load` keeps it, some loaders fall back to the
   file or a default. Schema validators split the other way: zod's `z.url().optional()` accepts an
@@ -225,7 +246,11 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   commit leaves a stale binary too.
 - **Readiness distinguishes "not up yet" from "up and broken".** Poll for the usable state, but
   stop after a few identical 5xx answers and print the log tail. verify-seer's first `up` waited
-  4.5 minutes on a page that had been failing the same way since second 5.
+  4.5 minutes on a page that had been failing the same way since second 5. One exception: a known
+  transient failure that sticks until the server restarts (Turbopack's `next/font/google` fetch,
+  which ignores DNS options and proxies, failed once in five `up`s and every page answered 500
+  until a restart). Match its log signature and restart the server, bounded (three tries), keeping
+  each failed log.
 - **Copy state files with a read-only open.** Some tools migrate a database on connect even for a
   read (Seer's lab migrates `lab.sqlite` that way). Copy the committed state with the database's
   backup API from a `mode=ro` connection, and hash the protected original before and after the
@@ -239,7 +264,10 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   offline run as proof. Measure each journey's cost on the proving pass and print the table in
   the skill (verify-run-insights: an upload 1, a commit 2-3, one coach turn 3-5). The counter sees
   fetches, not logical calls: an SDK with `maxRetries: 1` spends 2 on a call that fails upstream,
-  and an offline run shows 2 refused per attempt. Say so beside the table.
+  and an offline run shows 2 refused per attempt. Say so beside the table. List the follow-on spend
+  too: one action can mint background work that later page views pay for (a jmtarot reading mints
+  a chat run that any page with the chat button then advances, 5-9 calls), so a recipe's budget is
+  its own calls plus what it leaves pending.
 - **Seeding refuses paid calls; `up` arms the budget last.** Seeding through the app fires the
   same side effects as using it (25 demo commits fired 49 LLM calls). Refuse them unspent while
   seeding, arm the budget once `up` is done, and write the residue (failed turn rows, an error log
@@ -253,7 +281,13 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
   driven. A wrapped
   harness's own browser is not fenced: verify-run-insights reuses the capture harness's seeder but
   runs its commit pass in the fenced driver, because the harness would have fetched the fake
-  store's URLs from the real vendor.
+  store's URLs from the real vendor. With no request routing (a raw CDP driver), fence Chrome with
+  a dead proxy in its environment (`all_proxy`/`https_proxy`/`http_proxy` and the upper-case
+  twins = `http://127.0.0.1:9`, `no_proxy=localhost,127.0.0.1`): Chromium on Linux reads them and
+  bypasses loopback itself. Prove it by opening a harmful host in a throwaway tab and requiring
+  `ERR_PROXY_CONNECTION_FAILED` on the error page, not with an in-page `fetch`: the app's CSP
+  refuses that too, so "Failed to fetch" proves nothing. Give Chrome the run's HOME, or it writes
+  `~/.cache/dconf` into the user's home.
 - **Turn a harmful sink into a fake receiver, so its success path becomes provable.** A sink you
   only fence (web push, a webhook, an SMS gateway) leaves its feature unproven past the refusal.
   When the protocol lets the app address an arbitrary endpoint, stand one up on loopback and
@@ -270,7 +304,9 @@ Hard-won rules. Each one is a bug we actually hit in one of the verify skills na
 - **State drives are read-only.** `sql`, `aql`, `redis` refuse writes (a read-only transaction,
   or a keyword/command allowlist). Writes go through the app's own routes, or they prove nothing.
   Give them a bare-value mode for recipes (`ID=$($V sql RUN --value "select id …")`): `psql`'s
-  table output puts the dashes on the line a recipe's `sed -n 3p` expected the id on.
+  table output puts the dashes on the line a recipe's `sed -n 3p` expected the id on. And an
+  `until RUN "select one value" EXPECTED [SECONDS]` that polls it, so a recipe waits on the
+  database's state (a run's status, a row written in `after()`) instead of a sleep or page text.
 - **The agent's shell may not be bash.** The Bash tool can run zsh, which does not word-split
   `$VAR` and refuses functions whose names collide with aliases. Scripts are executables with a
   `#!/usr/bin/env bash` shebang; recipes in the feature map never depend on word splitting or
@@ -376,6 +412,11 @@ goes in Gotchas.
   data on any day. Then cap every timestamp at now: a seed that stamped today's row at 12:00 put
   it in the future before noon, and the app's freshness watermark (`max(updated_at)`) went
   *backwards* after a real edit.
+- **Key every wait and every read-back on the row YOUR action created**, never on "the latest".
+  A repo seeder you do not own may date rows later than now: verify-jmtarot's `until … order by
+  created_at desc limit 1` found the seed's finished chat run and returned in 4 s, before the
+  posted message's run existed. Join through the id the action produced (`trigger_message_id`,
+  the question text you typed).
 - **Wait on the app's own signal, never on the page settling.** A typing indicator going away,
   a pending card's copy disappearing, a turn meter's aria-label. A page-text-stability loop stopped
   early on a static sidebar; a heading predicted from another page ("What happened") never
@@ -406,7 +447,12 @@ A skill that was never executed is a draft. Run, for real:
    `inconclusive` in the report, never silently skipped.
 2. **Every journey in every feature file, once.** Fix the recipe when the recipe was wrong
    (wrong arg name, wrong column, wrong route). When the APP is wrong, record it as a product
-   bug in the final report and do not paper over it in the map.
+   bug in the final report and do not paper over it in the map. Before calling a UI failure a
+   product bug under a dev server, rule out the dev mode itself: React StrictMode mounts, unmounts
+   and remounts every component, and an effect that guards with a `started` ref while its cleanup
+   aborts the fetch never re-issues it (verify-jmtarot: a translation stuck on "translating", a chat
+   loop that went to `stopped` on the aborted request). Read the effect, say "dev-only" in the
+   feature file with the reason, and drive the route the effect calls.
 3. **Every surface against every seed mode.** When two halves of the app read the same seed
    (a web UI and a CLI or worker), drive each half on it, not only the half the seed was written
    for. Seed scripts drift from the schema the other half needs: Seer's demo seeder, written for
@@ -414,9 +460,10 @@ A skill that was never executed is a draft. Run, for real:
    on it. Only driving the engine on demo data found that.
 4. **Isolation, proven rather than assumed.** Run two instances at once, write through the app in
    one, and read the other's state to show the write did not cross. Hash every file the harness
-   must never touch (a committed database, a shared store's manifest, `.env.local`) before the
-   first `up` and after the last `down`,
-   and check `git status` on the paths it could have dirtied.
+   must never touch (a committed database, a shared store's manifest, `.env.local`, an owner's
+   browser profile) before the first `up` and after the last `down`, list the user's `~/.cache`
+   before and after (that diff caught Chrome writing `dconf` outside the run), and check
+   `git status` on the paths it could have dirtied.
 5. `down`, then confirm the evidence still exists and no process or per-run DB is left behind.
 6. **Re-prove what you changed after the full pass.** Fixes made while writing the feature files
    (a new drive option, a corrected recipe) get one short run of their own before the commit.
@@ -469,7 +516,11 @@ End with:
 - the feature-map entries, and which journeys were proven, failed, or inconclusive, each with
   its evidence path;
 - product bugs found (app wrong, not recipe wrong), each with a one-line root cause when you
-  found it, so the user can say "fix it" without a second investigation;
+  found it, so the user can say "fix it" without a second investigation. State how many runs each
+  was seen in: an LLM-dependent finding drawn from one run is a hypothesis (verify-jmtarot's
+  "translation never stored" became "stored after a repair, sometimes" on the second run). Before
+  blaming a vendor SDK, reproduce its behaviour in a ten-line script: that one showed the SDK's
+  iterator did throw, which moved the root cause into the app's own gate;
 - a harness lesson that implicates a sibling verify skill only after reproducing it there. The
   fifth run reported verify-run-insights' uploads as "probably broken the same way"; reproduced,
   they passed, because the failure needed a condition (`onUploadProgress`) that app never met;
@@ -480,4 +531,8 @@ End with:
 
 When the user asks for a product bug to be fixed, the new skill proves the fix: a failing test
 first, then the journey that found it, on a fresh run (verify-run-insights' first use was its own
-elevation-record finding, `0.12 km` -> `118 m`).
+elevation-record finding, `0.12 km` -> `118 m`). Drive the same input on the base and on the fix
+(`git stash`, run, `stash pop`) and keep both end states. For a race, first find the input that
+forces the branch: verify-jmtarot's first re-drive took the other side of the race (a clean 500)
+and proved nothing; a reading with no question settles the verdict at once and hits the fixed path
+every time.
