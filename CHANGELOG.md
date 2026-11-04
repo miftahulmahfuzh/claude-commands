@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`create-verification-skill`** split for token cost: `SKILL.md` is now the short form (213
+  lines, 14 KB, down from 748 lines and 64 KB) with a sibling table and a "copy a sibling first"
+  step; the detail and the case behind every rule moved verbatim into seven topic files under
+  `references/` (harnesses, browser, auth-and-seed, stand-ins, no-server-shapes, process-and-env,
+  proving-and-report), each read only when the repo has that shape
 - **`create-verification-skill`**, from its tenth run (`verify-fast-order`: a stateless Go +
   Vite LLM app): a runtime with no preload counts its paid calls at a loopback proxy that
   terminates TLS with a per-run CA only the app trusts (`HTTPS_PROXY` + `SSL_CERT_FILE`), saving

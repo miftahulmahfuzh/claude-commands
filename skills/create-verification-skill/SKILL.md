@@ -7,708 +7,190 @@ disable-model-invocation: true
 # Create a verification skill
 
 Adapted from pstack's `create-verification-skill` (`cursor/plugins/pstack`), plus ten runs of
-this skill. Read the sibling closest to your repo's shape before you start:
+this skill. This file is the short form. The detail, and the case behind every rule, is in
+`references/`; read a reference only when the repo has that shape:
 
-| Skill | Read it for |
+| Reference | Read when the repo has |
 |---|---|
-| `~/mcp-notes/.claude/skills/verify-notesd` | the small example: a Node daemon, one Postgres, a Playwright UI |
-| `~/agentic_golang/.claude/skills/verify-agentic` | the heavy one: a compiled Go server, Docker-isolated Arango + Redis, a real LLM under a budget, egress control, an existing e2e harness wrapped |
-| `~/seer/.claude/skills/verify-seer` | two halves sharing one database (Next.js behind a serverless Postgres driver shimmed to a local Postgres; a Python CLI with a denylist of commands that write outside the run), a per-run snapshot for a dev server that locks its directory |
-| `~/run-insights/.claude/skills/verify-run-insights` | the fullest web app: Neon and Vercel Blob answered by one loopback stand-in, the LLM budget enforced where calls leave the process, demo data committed through the app's own review screen |
-| `~/daily-words/.claude/skills/verify-daily-words` | database sessions, an owner's pinned dev port, a repo Playwright suite wrapped without editing it, a harmful sink (web push) turned into a fake receiver |
-| `~/expense-tracking/.claude/skills/verify-expense-tracking` | the compact Neon + Blob app whose browser uploads stream (the stand-in serves HTTPS + HTTP/2), harness tools outside the repo |
-| `~/jmtarot/.claude/skills/verify-jmtarot` | a repo that forbids Playwright (its own CDP driver wrapped, whose defaults pointed at production and the owner's profile), JWT sessions minted through a dev-only route, an `--offline` mode that found the worst bug |
-| `~/agentic/.claude/skills/verify-agentic-docs` | a static site (Hugo): no database, no auth, no paid call; a per-run snapshot with a `sync` edit loop, a production-`build` drive wrapping the repo's own checks plus a link check, a CDN cache in the browser fence, and an `--offline` mode that again found the worst bug |
-| `~/nvim-config/.claude/skills/verify-nvim-config` | no server at all: a dotfiles repo (Neovim + tmux config) whose "app" is a TUI driven through a run-owned tmux server; a network namespace as the fence; a hard-linked read-only dependency cache built from the owner's lockfile; a `--live` mode on a copy of the owner's real installed environment |
-| `~/hospital-inspection-forms/.claude/skills/verify-hospital-inspection-forms` | a public Neon + Blob app with no paid call: the stand-in copied from a sibling in minutes, a `fault db\|blob` switch as the fault injection, an `export` drive that reads the app's `.xlsx` back cell by cell, a seed built from the app's own form definitions |
-| `~/fast-order/.claude/skills/verify-fast-order` | a stateless Go + Vite LLM app: the paid calls counted by a TLS-intercepting proxy on loopback (the Go client honours `HTTPS_PROXY`), a `fault drop\|hang` switch against an in-process circuit breaker, a Vite wrapper config because the dev proxy pointed at production, clipboard read back in headless Chromium |
+| `references/harnesses.md` | an e2e suite, smoke/capture/seed scripts, a dev server with a proxy |
+| `references/browser.md` | a web UI |
+| `references/auth-and-seed.md` | sign-in, a database to seed, journeys that wait on async work |
+| `references/stand-ins.md` | any third-party API, a serverless DB driver, an object store, an LLM, a sink that messages people |
+| `references/no-server-shapes.md` | a static site, a config/dotfiles repo, a TUI, a run that needs no network |
+| `references/process-and-env.md` | always while writing `verify.sh` in a runtime no sibling used |
+| `references/proving-and-report.md` | a proving step that surprises you; before the report |
 
-**Copy before you write.** When the closest sibling talks to the same vendor SDKs, compare the
-installed versions (`@neondatabase/serverless`, `@vercel/blob` in both `node_modules`); if they
-match, copy its stand-in, preload, browser driver and HTML-text helper, rename the env prefix, and
-spend the time on the journeys. The ninth run's harness answered its first `up` 7 minutes into the
-session this way, and every bug it found came from journeys, not from the plumbing.
+## 0. Copy a sibling first
 
-**Why this exists.** `phase-planner` writes a **Proof** section that names
-`.claude/skills/verify-*`, `/implement` and `/do` run it, and the `verifier` agent re-runs it
-with fresh context before anything lands. Without a verify skill, all of that degrades to "the
-tests pass". The skill you write is read cold, mid-task, by an agent that has never seen the
-app. Write it for that reader.
+The siblings are working code. Pick the closest, read its `SKILL.md` and `scripts/`, and copy
+its `verify.sh`, stand-in, preload and browser driver, renaming the env prefix; they already
+embody most rules below. When the vendor SDK versions match (compare `node_modules`), the
+stand-in copies as is: the ninth run answered its first `up` 7 minutes in, and every bug came
+from journeys, not plumbing.
 
-**Run unattended, with no human in the loop.** Answer everything from the repo; what the code
-cannot answer, decide, write the decision into the skill's Gotchas, and go on. Never block on a
-question, not even the paid-core one: an app whose core is a paid dependency (an LLM app) runs it
-for real by default, under a budget. If the owner does send a message mid-run (the eighth run's
-"verify against my live config"), fold it into the build and record how.
+| Sibling (`~/<repo>/.claude/skills/…`) | Shape |
+|---|---|
+| `mcp-notes/…/verify-notesd` | small: Node daemon, one Postgres, Playwright UI |
+| `agentic_golang/…/verify-agentic` | compiled Go server, Docker Arango + Redis, real LLM, wrapped e2e harness |
+| `seer/…/verify-seer` | Next.js on a Neon shim + a Python CLI with a write denylist; per-run snapshot |
+| `run-insights/…/verify-run-insights` | Neon + Blob stand-in, LLM budget at egress, seed through the app's screen |
+| `daily-words/…/verify-daily-words` | database sessions, owner's pinned port, wrapped Playwright, web push as fake receiver |
+| `expense-tracking/…/verify-expense-tracking` | compact Neon + Blob, HTTPS + h2 stand-in, tools outside the repo |
+| `jmtarot/…/verify-jmtarot` | "no Playwright" (own CDP driver wrapped), dev-only session route, `--offline` found the worst bug |
+| `agentic/…/verify-agentic-docs` | Hugo static site: snapshot + `sync`, production `build` drive, link check |
+| `nvim-config/…/verify-nvim-config` | dotfiles TUI via tmux, network namespace, read-only dep cache, `--live` |
+| `hospital-inspection-forms/…/verify-hospital-inspection-forms` | Neon + Blob, no paid call, `fault db\|blob`, `.xlsx` read back |
+| `fast-order/…/verify-fast-order` | stateless Go + Vite LLM app: TLS-intercepting egress proxy counts calls, `fault drop\|hang`, breaker |
 
-**Not every section applies.** A static site has no auth, seed, database or budget; a CLI has no
-browser. Skip what the app does not have, say so in one Gotchas line ("no paid or messaging
-dependency, so no budget and no `--real` flag"), and do not build machinery for it. The process,
-fence, evidence and proving rules apply to every shape.
+**Why this exists.** `phase-planner` writes a **Proof** section naming `.claude/skills/verify-*`,
+`/implement` and `/do` run it, the `verifier` agent re-runs it cold. Without it all of that is
+"the tests pass". Write for a reader who has never seen the app.
+
+**Unattended.** Answer from the repo; decide what the code cannot answer, record it in Gotchas,
+go on. Never block, not even on the paid core: an LLM app runs its LLM for real, under a budget.
+A mid-run message from the owner gets folded in and recorded.
+
+**Skip what does not apply** (a static site has no auth or budget), with one Gotchas line each.
+Process, fence, evidence and proving rules apply to every shape.
 
 ## 1. Interview the repo
 
-Answer these from code, README, CLAUDE.md, Makefile/package scripts, compose files, CI config:
+From code, README, CLAUDE.md, scripts, compose and CI files. Trust the config over the docs.
 
-- **Surface:** what a user actually touches: HTTP API, web UI, CLI/TUI, MCP, a bot, a queue
-  consumer. Pick the primary one; note the rest. For a static site or docs generator the surface
-  is the rendered pages in a browser **and** the production build: the dev server is not what
-  ships (`--minify`, a production environment, CI's exact flags), so the build is a drive of its
-  own, and a docs site's link check (every internal `href`/`src` and `#anchor` resolving in the
-  build) belongs in it. A base path without its trailing slash (`/agentic`) is the site root, not
-  a broken link.
-- **Existing harnesses first:** e2e suites, smoke scripts, Postman/http files, compose test
-  stacks, seed scripts, fixtures. A harness the repo already maintains beats anything you
-  invent. Wrap it, don't replace it. Check how it picks its target (a `BASE_URL`-style env var,
-  a flag): wrapping should be "point it at the run". If the target is hardcoded in a config the
-  harness loads, write a wrapper config into the run's snapshot that imports the repo's and
-  overrides only the target (verify-daily-words: `{...base, use: {...base.use, baseURL}, webServer:
-  undefined}`), so no tracked file changes; edit the harness only when it cannot be wrapped.
-  When a wrapped check reports the whole suite missing, suspect its input before the product:
-  verify-agentic-docs fed the repo's popup checker the minified build through its `--index`
-  shortcut and it reported all 51 popups MISSING; it parses unminified HTML. Let a harness run in
-  its own default mode, inside the run's snapshot, with its temp dir under the run. Drop
-  any "start or reuse a server" block: Playwright's `reuseExistingServer` happily reuses whatever
-  the owner left on the default port. Specs that skip without a session variable
-  (`DW_TEST_SESSION`) should get the run's token, so they run instead of skipping. Under `env -i`
-  with a per-run HOME, Playwright cannot find its browsers: pass `PLAYWRIGHT_BROWSERS_PATH`.
-  **Read every default the harness falls back to, and classify each like an external call.**
-  jmtarot's `tools/e2e/chrome.mjs` defaulted to the production URL, to CDP port 9222, and to a
-  persistent profile holding the owner's real Google session; wrapping it meant passing the run's
-  base, port and a throwaway profile on every call and refusing its `login`/`reset` verbs. A repo
-  rule against a browser library ("no Playwright") binds the harness too: wrap the driver it has.
-  The app's own dev config is a default of the same kind: fast-order's `vite.config.ts` proxied
-  `/api` to the production Render backend while the README said it proxied to the local one, so
-  `npm run dev` was a harmful command. Trust the config over the docs; serve the dev server with a
-  wrapper config that imports the repo's and overrides only target, host, port and cache dir, and
-  prove the hop in doctor (a unique path that the run's backend answers 404, plus the repo's own
-  proxy log line naming the target). **Read the shell scripts around a harness, not only its
-  specs**, every branch: fast-order's `test-*.sh` ran `npm install -D` into the checkout,
-  `playwright install --with-deps` (sudo), and, when `docker compose ps` showed nothing up,
-  `deploy-compose.sh` = `docker compose down` + rebuild of the owner's stack. Wrap the inner command
-  (`playwright test` under a wrapper config, the specs copied into the snapshot with their
-  hardcoded owner URLs rewritten), never the script. **Then read what a passing harness asserts:**
-  fast-order's integration spec passed on the clipboard-error stamp (it checked only `length > 50`),
-  so its green proved nothing about the bug the run found. Say so in the feature file.
-- **The real client's sequence:** read the frontend, mobile client or the existing e2e client
-  for the exact calls a user's action makes: body encoding per API version (multipart on one
-  route, JSON on another), polling, which stream it opens, which headers carry auth. The drive
-  command replays that sequence; guessing it produces 400s that look like product bugs.
-- **Where it really runs.** The checkout is often not what the owner runs. A dotfiles repo is
-  deployed as a separate clone (`~/.config/nvim` lagged `~/nvim-config` by 4 commits), with its
-  own lockfile and installed plugins that a fresh install no longer reproduces. Find the live
-  copy and offer `up --live`: the checkout's change on a **copy** (never hard links: the owner's
-  files are writable) of the live installed state, plus a read-only `live` drift report (commits
-  and files the live copy lacks, `git --no-optional-locks` so `status` cannot touch its index)
-  that prints the deploy command and never runs it. Fingerprint the live dirs at `up` and compare
-  in `doctor` and `down`. The owner asked for this mid-run in the eighth pass; ask, or offer it.
-- **A config repo's surface is the tool started with that config.** For an editor or shell
-  config: per-run XDG dirs (config, data, state, cache, runtime) and HOME, the config a snapshot
-  of the working tree, the tool inside a run-owned tmux server (`tmux -S <run>/tmux.sock`), a
-  fixture project for it to edit (a git repo whose `origin` is a bare repo in the run, so a push
-  mapping is provable), and state read over the tool's own RPC (`nvim --remote-expr`).
-- **Run:** the exact local start command, ports, env vars, config files, seed data, auth.
-- **The owner's port.** A CLAUDE.md that pins the dev server to one port ("3200 is the only
-  port, never start on another") governs the owner's server, not a verify run, which must still
-  get its own. Decide the coexistence and write it into Gotchas and the CLAUDE.md line: the
-  free-port picker refuses the owner's port, `up` never stops or reuses its holder, `doctor` only
-  reports who holds it, and every run is tracked by process group so none is orphaned. When
-  nothing pins a port, the owner's `npm run dev` still takes the framework's default (3000 for
-  Next): treat that one as the owner's by the same rules, and say so.
-- **Auth:** how a signed-in user is recognised, read in the app's session code. Mint a session
-  with the app's own encoder and a per-run secret; never add a bypass to the app. Read identity
-  rules from the code, not from env alone: a section may admit one hardcoded email on top of the
-  allowlist (verify-seer: `/sera` 404'd for the minted user until the run signed in as the address
-  `lib/sera/access.ts` names). A 404 or a redirect on first drive is the gate before it is a bug.
-  With **database sessions** (Auth.js `strategy: 'database'`) there is no encoder: a session is a
-  `sessions` row, so insert one per user with a random token and send it as the cookie; replace any
-  fixed token the repo's seeder writes. Seed one user per gate the layout enforces (verify-daily-
-  words: `demo` onboarded with history, `stranger` onboarded and empty, `newcomer` not onboarded),
-  and let every drive take `--as USER` / `--anon`: sharing, claiming and onboarding need them.
-  If the app already ships a dev-only mint route (jmtarot's `POST /api/auth/dev-session`, gated on
-  a flag and `NODE_ENV !== 'production'`), use it: it runs the real sign-in upsert, it is not a
-  bypass you added, and any new `--as NAME` becomes a fresh user on first use. **JWT claims go
-  stale:** a session that carries state (`onb`, a locale) keeps the old value after a drive changes
-  it through an API, and the gate then redirects as if nothing happened. Give the script a
-  `session RUN USER` that re-mints, and say in each recipe when it is needed.
-- **Dependencies:** each database, cache, queue and third-party API, and how each can be
-  isolated per run (its own Docker container or database name, a local emulator, a fake). Never
-  the user's own dev containers. A heavy service with cheap namespaces (Postgres, Arango) gets one
-  shared verify container and a database per run; one without them (Redis) gets a container per
-  run. Any response or answer cache must be per-run, or a repeated journey replays a cached
-  answer instead of exercising the code.
-- **Build the dependency cache from the owner's lock, then diff it against a fresh resolve.**
-  Package managers ignore a lock silently: lazy.nvim skips an entry whose branch differs from the
-  spec's, so an unpinned plugin followed GitHub's new default branch (an incompatible rewrite)
-  while the owner's lock said `master`; and an upstream repo can vanish (`phaazon/hop.nvim`). Pin
-  every package to the lock after install (`git checkout <commit>`), take what no longer
-  downloads from the live install, and log both. What a fresh install resolves to differently
-  (`seed --update`) is a product finding, often the most important one: it is the owner's next
-  update or next machine.
-- **The client library decides, not the URL.** Read how the app opens each connection.
-  Serverless drivers (Neon's `@neondatabase/serverless`, PlanetScale, libsql over HTTP, Supabase
-  REST) speak HTTP or WebSocket to a vendor proxy, never TCP, so a local Postgres cannot answer
-  them. Build the stand-in into the harness: a small shim that speaks the vendor protocol in front
-  of the run's database, plus a preload (`NODE_OPTIONS=--import`) that routes the driver to it. Do
-  not edit app code, and do not give up and point at the hosted service. verify-seer's
-  `neon-shim.mjs` is about 100 lines and served every query the app and its seeders sent.
-- **Object stores and other vendor SDKs need a stand-in too.** Look for the SDK's own API-URL
-  override (`@vercel/blob` reads `VERCEL_BLOB_API_URL`, and the browser bundle reads the
-  `NEXT_PUBLIC_` twin, inlined at compile time) and answer that API from the same loopback
-  process. Then follow every path, not only the server's:
-  - The browser's direct upload sends no option headers: the options (random suffix, size cap,
-    content types, expiry) ride inside the signed client token, and the type comes from the file
-    extension. A stand-in that skips them stored unsuffixed names the app then rejected; one that
-    accepts what the vendor would refuse produces false passes. Verify the token and enforce it.
-  - Apps validate URLs against the vendor's host (`*.public.blob.vercel-storage.com`). Keep that
-    host with a fake store id, serve that one host from the stand-in (preload rewrite on the
-    server, `page.route` in the browser), and refuse every other host of the vendor, production's
-    included.
-  - The browser's upload may need HTTP/2. `@vercel/blob/client`'s `upload()` streams its PUT body
-    whenever the caller passes `onUploadProgress`, and Chromium sends a streamed request body only
-    over HTTP/2: against a plain HTTP/1.1 stand-in every PUT failed with
-    `net::ERR_ALPN_NEGOTIATION_FAILED` while the token step answered 200, which reads as a product
-    bug. Give the stand-in a second listener on HTTPS + h2 (`node:http2` `createSecureServer`,
-    `allowHTTP1`, a per-run self-signed certificate), point the browser's `NEXT_PUBLIC_` twin at it,
-    and let only the run's Playwright context accept it (`ignoreHTTPSErrors`). Read the SDK's
-    request code for every condition that changes its transport (progress callbacks, multipart
-    thresholds) rather than assuming one: verify-run-insights' uploads passed over HTTP/1.1 only
-    because no caller asked for progress yet. A curl replay of the browser's sequence cannot find
-    any of this; each browser-direct path needs one browser journey.
-  - Make the HTTP drive decode a client token it receives into its options (types, size cap,
-    suffix, expiry): that proves what the app asks the vendor to enforce without a browser.
-  - SDKs prefer ambient credentials over the configured token (`VERCEL_OIDC_TOKEN` beats
-    `BLOB_READ_WRITE_TOKEN`). `env -i` drops them; name them in Gotchas anyway.
-- **The migration tool may not reach a local database.** drizzle-kit needs a TCP driver the
-  serverless app never installed. Apply the journal yourself, in order, one transaction per file,
-  and record it where the tool would, so schema-drift checks agree.
-- **Classify every external call by harm, not by price:**
-  - *Harmful:* messages real people (chat alerts, SMS, email), writes to production or shared
-    systems, moves money, places orders or touches a live broker/exchange account, triggers a
-    production CI workflow, anything irreversible. Pinned off in `up`, with no flag that turns it
-    on.
-  - *Harmful to integrity, though nothing leaves the machine:* writes to tracked or frozen repo
-    files, to shared local stores other sessions read, git operations aimed at another checkout,
-    and spending or peeking at a sealed or budgeted dataset (a held-out test window). For a CLI,
-    list every subcommand by what it writes (the run's own state / shared local state / tracked
-    files / external) and refuse the last three by name in the drive command. verify-seer refuses
-    13 engine commands and 6 lab subcommands this way, including one that git-adds in the main
-    checkout even when run from a worktree.
-  - *Paid, and the product itself* (the LLM in an LLM app): **real by default**, behind a per-run
-    budget counted in vendor calls (see "Count paid calls where they leave"), with journeys
-    targeted at the change. A stub-backed verify of an LLM app is a unit
-    test with extra steps: it cannot plan, route or answer. Keep a stub only as `--offline`, for
-    plumbing, labelled as not proof of anything that needs a model. **It is, however, the run's
-    fault injection, and it deserves one journey:** drive the product's core action offline and
-    read the end state. A vendor outage is a feature no real-mode run exercises; verify-jmtarot's
-    offline reading came back HTTP 200, empty, stored as `ok` (a race in the moderation gate
-    swallowed the provider error), the worst bug that pass found. It is not only for paid APIs:
-    refuse whatever the product loads from outside at runtime. verify-agentic-docs' offline home
-    page lost every popup and handler, because its inline script began with an unguarded call
-    into the CDN's mermaid. One ReferenceError left a later `let` in its temporal dead zone, so
-    every hoisted handler threw. Two runs in a row, `--offline` found the run's worst bug.
-  - *Nothing paid or external at runtime?* The stand-in is still the fault injector. Give it a
-    `fault db|blob|none` switch that **drops the connection** (destroy the socket, close the h2
-    stream) rather than answering 5xx: that is what a dead network looks like, and SDKs retry the
-    two differently. Expose it to steps files too (`fault('db')` mid-journey, `none` in the
-    driver's `finally`), so outage and recovery are one journey. Then read each SDK's retry
-    policy before writing the expected end state: `@vercel/blob/client` retries a failed PUT 10
-    times with exponential backoff, so in verify-hospital-inspection-forms an upload on a dead
-    connection showed "Mengunggah…" for ~17 minutes with no error. The recipe that waited for the
-    error timed out; the finding was the missing timeout. Two of that run's four product findings
-    came from this switch.
-  - *Public, version-pinned assets the page loads at runtime* (a CDN's script, webfonts): neither
-    harmful nor paid. Let the browser fence GET them from an allowlist of those hosts through a
-    cache shared across runs (fetched once, then served from disk), so drives are deterministic
-    and go online only on a miss. `--offline` refuses them, and that is fault injection too: it is
-    what any reader behind a blocking network sees.
-  - *Paid or external, peripheral* (a data gateway, a search API the feature does not need, an
-    LLM that only decorates a non-LLM app): off unless a flag opts in. Note any free-tier quota the
-    production cron shares, and when that cron runs, so opted-in drives stay clear of it.
-  - **Follow each feature's success path to its last write.** When it passes through a pinned-off
-    sink, the success state cannot be produced locally, whatever else you enable. Say so in the
-    feature's Gotchas, prove the refusal end state plus the unit tests, and do not pay for the
-    paid step in front of it (verify-seer: a receipt is saved only after its image is committed to
-    a GitHub branch, so a billed vision read would still end in "not kept").
-- **Observe:** what proves behavior: response bodies, DB rows, files written, logs, exit codes,
-  screenshots.
-- **Isolate:** can two instances run at once? Port 0 or a free-port picker, per-run data dirs,
-  per-run DB names. Check for per-directory state too, not only ports: Next 16's `next dev` locks
-  `.next/dev` in the project directory, so a second server on another port still exits, and Next
-  15 has no lock but two dev servers would share and clobber one `.next`. Serve such
-  a tool from a per-run snapshot of its directory (rsync the sources and hard-link dependencies
-  with `cp -al`, which took 0.2 s for 17k files; a symlinked `node_modules` breaks Turbopack). The
-  snapshot is a build artifact, so doctor warns when the tree changes. Site generators need the
-  same treatment for a different reason: they write into their source directory. `hugo server`
-  rewrote the tracked `assets/jsconfig.json` and the committed `resources/_gen` mtimes, left
-  `.hugo_build.lock`, and `hugo --gc` deletes `resources/_gen` outright. Serve from a snapshot,
-  and exclude the paths the tool rewrites from both the re-sync and the "tree changed" hash, or
-  every sync reports changes and doctor warns forever. If something cannot be isolated, say so
-  in the skill, and make the script refuse to share it.
-- **Address the run by the host the framework believes it is on.** `next dev` reports every
-  request's `req.url` as `http://localhost:PORT` whatever the Host header said, so a route that
-  redirects with `new URL(path, req.url)` moved a browser on `127.0.0.1` to another cookie origin
-  and the claim silently ran signed out (verify-daily-words). Bind loopback only, but hand out
-  `localhost:PORT` as the run's URL, the app's own absolute-URL setting (`APP_URL`) and the cookie
-  domain.
+- **Surface:** what a user touches (HTTP, web UI, CLI/TUI, MCP, bot, worker). For a site the
+  production build is a surface too.
+- **Existing harnesses:** wrap them, pointed at the run (wrapper config in the snapshot, specs
+  copied with hardcoded owner URLs rewritten). Read every default they fall back to, every branch
+  of the shell script around them (installs into the checkout, `sudo`, `docker compose down` of
+  the owner's stack), and what a passing spec actually asserts. → `harnesses.md`
+- **The real client's sequence:** the exact requests a user action makes (encoding, polling,
+  streams, auth headers). Guessing produces 400s that look like bugs.
+- **Where it really runs:** a deployed clone or installed state that differs from the checkout
+  gets an `up --live` on a copy. → `no-server-shapes.md`
+- **Run:** start command, ports, env, config files, seed, auth. A dev config may point at
+  production (a Vite proxy to Render): that command is harmful.
+- **The owner's ports:** documented ports, compose-published ports, framework defaults (3000,
+  5173, 4173) and the app's own fallback `PORT` are the owner's. The free-port picker refuses
+  them, `up` never stops or reuses their holder, `doctor` only reports it. A hardcoded port goes
+  in a network namespace, not an app edit. Say the decision in Gotchas and the CLAUDE.md line.
+- **Auth:** mint sessions with the app's own encoder or dev-only route and a per-run secret;
+  never add a bypass. One seeded user per gate. → `auth-and-seed.md`
+- **Dependencies:** each store and API, isolated per run (shared verify container with a
+  database per run; a container per run for Redis-like stores; never the owner's containers).
+  Caches per run. The client library decides what can answer it (a serverless driver speaks
+  HTTP, not TCP). → `stand-ins.md`
+- **Classify every external call by harm, not price:**
+  - *Harmful* (messages people, writes production or shared systems, money, orders, production
+    CI, deploys, the owner's accounts): pinned off, no flag. Turn the sink into a fake receiver
+    when the protocol allows, so its success path is provable.
+  - *Harmful to integrity* (tracked files, shared local stores, git in another checkout, sealed
+    datasets): refuse by name in the drive commands.
+  - *Paid and the product* (the LLM): real by default under a per-run budget counted where
+    calls leave; `--offline` is fault injection and gets one journey (it found the worst bug in
+    several runs).
+  - *Nothing paid:* the stand-in still gets a fault switch that drops connections.
+  - *Public pinned assets* (CDN scripts, fonts): an allowlisted shared cache; `--offline` refuses.
+  - *Peripheral paid:* off unless a flag opts in.
+  - Follow each success path to its last write; through a pinned-off sink it cannot be produced
+    locally, so prove the refusal and say so.
+- **Observe:** bodies, rows, files, logs, exit codes, screenshots.
+- **Isolate:** free ports, per-run data, and per-directory state (a dev server that locks or
+  rewrites its directory runs from a per-run snapshot: rsync + `cp -al` dependencies).
 
-If the checkout does not build or start as-is, fix that first, or stop and report it exactly.
-A skill written against a broken base teaches wrong steps.
+If the checkout does not build or start, fix that first or stop and report it.
 
-## 2. Build the lever: one script, many subcommands
+## 2. One script, many subcommands
 
-Write `.claude/skills/verify-<app>/scripts/verify.sh` (or the repo's language, if a shell script
-would be awkward). Agents call subcommands; they never hand-write launch sequences. Required:
+`.claude/skills/verify-<app>/scripts/verify.sh`. Agents call subcommands, never launch by hand.
 
 | Subcommand | Does |
 |---|---|
-| `up [flags]` | Starts a fresh instance from the CURRENT checkout (works in any worktree). Prints `RUN=`, `URL=` (or the equivalent handle) and `EVIDENCE=`. Returns only when the app is usable, not merely when a process answers. |
-| `doctor RUN` | Read-only: process alive, health answers, the port belongs to THIS run, dependencies answer, which commit it serves, and a warning if HEAD moved since `up`. |
-| drive commands | One per surface (`api`, `cli`, `ui`, `mcp`, `sql`, ...). Each saves its request and its response as a numbered evidence file and prints it. |
-| `note RUN "text"` | Appends a line to `evidence/LOG.md`, the human summary of what was proven. |
-| `down RUN` / `down --all` | Kills exactly what `up` started, drops per-run state, keeps evidence. |
-| `ls` | Runs, state, evidence count. |
+| `up [flags]` | fresh instance from the CURRENT checkout; prints `RUN=`, `URL=`, `EVIDENCE=`, mode; returns when usable |
+| `doctor RUN` | read-only: alive, health, port owned by this run's process group, deps, commit served, HEAD/tree drift, egress probes both ways |
+| drive commands | one per surface; each saves request + response as a numbered evidence file and prints it |
+| `note RUN "text"` | appends to `evidence/LOG.md` |
+| `down RUN` / `--all` | kills exactly what `up` started, keeps evidence (logs copied in first) |
+| `ls` | runs, state, mode, evidence count |
 
-Optional, when they fit: `sync RUN` when the run serves a snapshot (re-copy the working tree and
-wait for the rebuild: an edit loop of 50 ms instead of `down` + `up`, and the way to drive base
-and fix on one run with `git stash`); `build RUN` when what ships is a build distinct from what
-the dev server serves (CI's command minus destructive flags, then the repo's own checks).
+Optional: `sync RUN` for a snapshot edit loop, `build RUN` when what ships differs from dev,
+`fault RUN …`, `calls RUN` (what the app sent a paid vendor), `budget RUN`.
 
-Hard-won rules. Each one is a bug we actually hit in one of the verify skills named above:
+Rules (each was a bug once; details in `process-and-env.md`):
 
-- **Never let the daemon hold the caller's pipe.** Start it with `setsid`, with stdin from
-  `/dev/null` and stdout/stderr to a log file, and NOT as part of a `cd && ... &` list (that
-  backgrounds a bash wrapper, records the wrong pid, and hangs every `$(verify.sh up)`).
-- **Record the process group, kill the group.** `kill -- -$PGID`. Never `pkill` by name: the
-  user's real instance has the same name. Wait for the whole group to be gone (`pgrep -g $PGID`),
-  not the leader: `next dev`'s workers outlived it and wrote into the snapshot while `down`'s
-  `rm -rf` ran, which failed under `set -e` and left the run half torn down. Retry the removal.
-  A daemon that detaches its children escapes the group: a tmux server `setsid`s itself and every
-  pane gets its own session. When everything the run starts lives in one network namespace (see
-  egress), the namespace is the run's identity: `down` kills every pid whose
-  `/proc/PID/ns/net` matches the run's, and nothing else can match.
-- **Doctor checks port ownership** by comparing the listener's process group with the run's,
-  not with a pid regex. A port Docker publishes is held by root's `docker-proxy`, so `ss -p` lists
-  the LISTEN with no process: report it as held by the owner, never as free.
-- **Binary responses go to a file** with their size and sha256, never to the terminal. Raw bytes
-  corrupt the agent's output and every `grep` after them. Use one `curl -w` (a second `-w`
-  silently replaces the first). When the binary is the product (an Excel or PDF export), give it
-  its own drive that saves the file and prints what a reader sees, parsed with the app's own
-  library from the run's snapshot (`createRequire(<snapshot>/package.json)('exceljs')`): sheets,
-  header, rows, which cells are coloured, the filename from `Content-Disposition`. A sha256
-  proves nothing about the content.
-- **Real env beats config files, and `env -i` beats both.** Start every process the run owns
-  from `env -i` plus the run's own values (PATH, HOME, locale, then the pinned settings), so no
-  secret exported in the caller's shell leaks in. If the app reads a dotenv file, point it at a
-  file the run generates (`SEER_ENV_FILE`-style) instead of letting it find the real one. Pin every
-  path and endpoint the app reads (DB URL, data dir, home dirs, ports) to per-run values, and blank
-  what the classification above keeps off. A `.env.local` written by `vercel env pull` holds literal
-  `[SENSITIVE]` for redacted values and `VERCEL="1"`: read a value from it only when it is not the
-  placeholder, fall back to what CLAUDE.md documents, and never let `VERCEL` through (apps branch on
-  it for TLS and migrations; `VERCEL=0` is truthy).
-  Check how the app's config loader merges env and files before trusting this, including whether
-  `VAR=` (set but empty) counts as set: godotenv's `Load` keeps it, some loaders fall back to the
-  file or a default. Schema validators split the other way: zod's `z.url().optional()` accepts an
-  unset `AUTH_URL` and refuses `AUTH_URL=` at boot. Omit an optional variable, or give it the
-  run's own value; never blank it. A loader that reads `./.env` from the working directory
-  (godotenv's `Load()`, python-dotenv's default) fills every variable `env -i` left unset from
-  whatever `.env` sits there: start the process in an empty directory of the run's. And every
-  variable with a default is pinned too: fast-order's unset `PORT` falls back to 8080, the owner's.
-- **When the run needs no network at all, take it away.** `unshare --map-current-user -n`
-  (unprivileged, uid kept) starts the run in a namespace with only a downed loopback: no route,
-  no DNS, so raw sockets, native code and child processes are refused too, which no proxy or
-  fetch wrapper achieves. Unix sockets still cross it, so drive over them. Join it for one-shot
-  drives with `nsenter -t <run's pid> -U -n --preserve-credentials`, and prove it in doctor with a
-  `curl` from inside (exit 6). Downloads then belong to a separate, explicit online step (`seed`)
-  that builds a shared cache.
-- **Blanking a URL is not isolation.** Code falls back to hardcoded hosts when its env var is
-  empty (verify-agentic: blanked BE URLs still reached a dev gateway). Add egress control, chosen
-  per runtime, because no single mechanism covers them all:
-  - Go, Python (urllib, requests), curl: a dead `HTTP(S)_PROXY` (both cases) plus a `NO_PROXY`
-    allowlist of loopback and the services the run may reach.
-  - Node: `fetch` ignores proxy env (Node 22). Load a preload with `NODE_OPTIONS=--import` that
-    wraps `globalThis.fetch` and rejects every host off the allowlist, logging what it blocked.
-    Next and similar frameworks wrap fetch after the preload, so the guard stays underneath. Wrap
-    `request` and `get` on both `node:http` and `node:https` in the same preload: the module
-    objects are shared with `require()`, and a library that calls `https.request` at call time
-    (web-push does) is refused before a socket opens. Wrap `get` separately: it does not go
-    through the exported `request`.
-  - Build tools can need the network, and a dead proxy can break them: behind one, Turbopack could
-    not fetch `next/font/google` files and every page answered 500. Allowlist that CDN in the
-    guard, leave the proxy off that process, and say so.
-  Prove both directions from `doctor` without sending anything out: a probe to a harmful host
-  must fail against the dead proxy. After the first real journey, list the hosts the logs mention
-  and confirm each was allowed, and include an `https.request` probe in doctor. State in Gotchas
-  that this is best effort: a raw `net.connect`, a native addon or a Rust-side fetcher slips past.
-- **Compiled apps: build per run, stamp the build.** `up` builds into the run dir from the
-  checkout and injects the commit (plus `-dirty`) into whatever the health/version endpoint
-  reports. Doctor warns when HEAD **or the working tree** changed since `up`: an edit without a
-  commit leaves a stale binary too. When the app has no version endpoint and no variable to
-  `-ldflags -X` into (an `-X` on a missing symbol is silently ignored), let the toolchain stamp it:
-  `go build -buildvcs=true` from the checkout records `vcs.revision` and `vcs.modified`, read back
-  with `go version -m` (lines look like `build	vcs.revision=…`; an awk on field 2 misses them).
-  Doctor then proves the listener runs that binary (`readlink /proc/<listener pid>/exe`). Build
-  offline and leave the owner's caches alone: `GOPROXY=off GOFLAGS=-mod=readonly GOTOOLCHAIN=local`,
-  the owner's module cache read, a `GOCACHE` under the verify state.
-- **Readiness distinguishes "not up yet" from "up and broken".** Poll for the usable state, but
-  stop after a few identical 5xx answers and print the log tail. verify-seer's first `up` waited
-  4.5 minutes on a page that had been failing the same way since second 5. One exception: a known
-  transient failure that sticks until the server restarts (Turbopack's `next/font/google` fetch,
-  which ignores DNS options and proxies, failed once in five `up`s and every page answered 500
-  until a restart). Match its log signature and restart the server, bounded (three tries), keeping
-  each failed log.
-- **A done line in a log is not success, and an old error is not news.** Hugo prints `Total in
-  N ms` after a failed rebuild as well as a good one, so `sync` waits for the done line and then
-  checks for an error. It reads only the bytes written after it started (record the log's size
-  first): reading the log's tail, a successful sync after a fix still found the earlier ERROR and
-  failed. `doctor` reports the latest build's errors only (reset at "Change detected") and fails
-  when that build failed, because the server keeps serving the build before it.
-- **A shared dependency cache: hard links, read-only files, and a manifest.** `cp -al` gives
-  each run a 570 MB plugin tree in under a second. Make the cache's *files* read-only (directories
-  stay writable), so an in-place write fails in the run instead of writing through; never `chmod
-  -R` a run dir (`down` did, and made the cache writable again through the shared inodes); rewrite
-  a file by writing a new one and renaming it. Installed tools name their install dir by absolute
-  path (Mason's lua-language-server launcher), and the run then executes the cache's copy, which
-  wrote its logs into the cache. Rewrite every text file under the tree that names the source path,
-  for the cache and for `--live` alike. `doctor` compares a manifest of the cache (path, size,
-  mtime) with the one taken when it was built: it caught both leaks.
-- **Unattended installers ask questions.** `:TSInstallSync` asks "reinstall? y/n" for a parser
-  that is already there, and a headless editor waits on it forever. Run every install step under
-  `timeout` with stdin from `/dev/null`, and install only what is missing.
-- **Copy state files with a read-only open.** Some tools migrate a database on connect even for a
-  read (Seer's lab migrates `lab.sqlite` that way). Copy the committed state with the database's
-  backup API from a `mode=ro` connection, and hash the protected original before and after the
-  proving pass.
-- **Count paid calls where they leave, not per drive command.** In a web app most paid calls are
-  side effects: a commit fires a narrative and a coach's reaction in `after()`, a page view
-  generates prose, a cron fans out. Put the counter in the stand-in and take one call from it in
-  the egress guard before each fetch to a paid host; an empty budget fails the fetch the way a
-  vendor outage does, so the app shows its own failure state. Record the mode (`real` /
-  `offline`) in the run's metadata and print it from `doctor` and `ls`, so nobody cites an
-  offline run as proof. Measure each journey's cost on the proving pass and print the table in
-  the skill (verify-run-insights: an upload 1, a commit 2-3, one coach turn 3-5). The counter sees
-  fetches, not logical calls: an SDK with `maxRetries: 1` spends 2 on a call that fails upstream,
-  and an offline run shows 2 refused per attempt. Say so beside the table. List the follow-on spend
-  too: one action can mint background work that later page views pay for (a jmtarot reading mints
-  a chat run that any page with the chat button then advances, 5-9 calls), so a recipe's budget is
-  its own calls plus what it leaves pending.
-  **A runtime with no preload (Go, Python) counts at a proxy.** Make the stand-in an HTTP proxy on
-  loopback and point `HTTPS_PROXY` (both cases) at it: CONNECT to the paid host is terminated with
-  a per-run leaf certificate signed by a per-run CA that only the app trusts (Go: `SSL_CERT_FILE`
-  = the CA and `SSL_CERT_DIR` = an empty dir; Python requests: `REQUESTS_CA_BUNDLE`), and each
-  request inside the tunnel is one call: read whole, saved with its credential redacted, counted,
-  forwarded, or refused by destroying the socket. CONNECT to anything else is dropped and logged, so
-  the same process is the fence. This keeps the app's own config path: fast-order's Gemini base URL
-  is a constant in code, so pointing a base-URL variable at the stand-in was not possible without
-  switching providers. Decode `Content-Encoding` for the record only (Go asks for gzip), and give
-  the script a `calls` drive that prints each saved request's model, prompt and reply: it is how a
-  reader sees what the app asks the vendor for.
-- **Give the fault switch `drop` and `hang`, and read the client's resilience code first.** Drop
-  proves the error path, hang proves the timeout (fast-order: a 502 after exactly the handler's
-  30 s context, "printing…" on screen meanwhile). A circuit breaker is per-process state that
-  journeys leave behind: after three dropped calls gobreaker stays open 30 s and a failed half-open
-  probe reopens it, so the next journey fails fast with no call leaving. Write those counts into
-  the expected end state (calls reaching the stand-in per print: 1, 1, 1, then 0), and tell
-  recipes to wait out the timeout or `down` + `up`. Every `ui` ends with `fault none`.
-- **Seeding refuses paid calls; `up` arms the budget last.** Seeding through the app fires the
-  same side effects as using it (25 demo commits fired 49 LLM calls). Refuse them unspent while
-  seeding, arm the budget once `up` is done, and write the residue (failed turn rows, an error log
-  full of refusals) into Gotchas.
-- **Fence the browser as well as the server.** Route every request in the Playwright driver:
-  the run's own origin passes (not all of loopback: the owner's dev server is loopback too), the
-  fake vendor host is served from the stand-in, everything else is aborted and logged and fails
-  the drive unless the steps `allow()` it. `context.route` does not see WebSockets, and a service
-  worker's requests bypass it unless the context sets `serviceWorkers: 'block'`. Grant no permissions by default (notifications, clipboard), and **measure** which path that
-  drives before writing it down, because it changes between Chromium builds: in
-  verify-expense-tracking's Chromium a focused page could *write* the clipboard with no grant (its
-  share button ended on the "copied" toast), while Chromium 145 under Playwright 1.58 refused
-  `writeText` with `NotAllowedError`, and that refusal found fast-order's worst bug (the app threw
-  away the order it had just paid an LLM for). Observe every `writeText` with an init script that
-  records the text and the browser's answer and passes the call through (never fake the answer),
-  drive the success path with the grant and read the clipboard back, and drive the refusal path
-  without it. Start the browser from `env -i` so no `DISPLAY`/`WAYLAND_DISPLAY` lets it reach the
-  owner's desktop clipboard (WSLg). A wrapped
-  harness's own browser is not fenced: verify-run-insights reuses the capture harness's seeder but
-  runs its commit pass in the fenced driver, because the harness would have fetched the fake
-  store's URLs from the real vendor. With no request routing (a raw CDP driver), fence Chrome with
-  a dead proxy in its environment (`all_proxy`/`https_proxy`/`http_proxy` and the upper-case
-  twins = `http://127.0.0.1:9`, `no_proxy=localhost,127.0.0.1`): Chromium on Linux reads them and
-  bypasses loopback itself. Prove it by opening a harmful host in a throwaway tab and requiring
-  `ERR_PROXY_CONNECTION_FAILED` on the error page, not with an in-page `fetch`: the app's CSP
-  refuses that too, so "Failed to fetch" proves nothing. Give Chrome the run's HOME, or it writes
-  `~/.cache/dconf` into the user's home.
-- **Turn a harmful sink into a fake receiver, so its success path becomes provable.** A sink you
-  only fence (web push, a webhook, an SMS gateway) leaves its feature unproven past the refusal.
-  When the protocol lets the app address an arbitrary endpoint, stand one up on loopback and
-  register it through the app's own route. verify-daily-words' stand-in is a push service on
-  HTTPS with a per-run self-signed certificate the app trusts through `NODE_EXTRA_CA_CERTS`
-  (nothing else trusts it); `push subscribe` mints a device key pair and posts the
-  subscription JSON to `POST /api/push/subscription`, and the sink checks the VAPID `k=` against
-  the run's key and decrypts each payload (RFC 8291 aes128gcm, ~30 lines of `node:crypto`). The
-  hourly tick then proves sent / quiet / no-slot / 410-pruned with the decrypted text as evidence.
-  Keep the structural argument as well (VAPID pair minted per run, the browser never granted
-  notifications, the guard refusing `https.request` elsewhere) and make `doctor` fail when any
-  stored endpoint points outside the run's sink. Where no fake can stand in, fall back to making
-  the sink structurally empty and say so in Gotchas.
-- **State drives are read-only.** `sql`, `aql`, `redis` refuse writes (a read-only transaction,
-  or a keyword/command allowlist). Writes go through the app's own routes, or they prove nothing.
-  Give them a bare-value mode for recipes (`ID=$($V sql RUN --value "select id …")`): `psql`'s
-  table output puts the dashes on the line a recipe's `sed -n 3p` expected the id on. And an
-  `until RUN "select one value" EXPECTED [SECONDS]` that polls it, so a recipe waits on the
-  database's state (a run's status, a row written in `after()`) instead of a sleep or page text.
-- **The agent's shell may not be bash.** The Bash tool can run zsh, which does not word-split
-  `$VAR` and refuses functions whose names collide with aliases. Scripts are executables with a
-  `#!/usr/bin/env bash` shebang; recipes in the feature map never depend on word splitting or
-  inline functions, and quote every URL with a `?` (zsh globs it and refuses with "no matches
-  found" before the script runs).
-- **`docker exec -i` inside a `while read` loop eats the loop's input.** Only the first of 38
-  migrations ran, silently. Give every `-i` command in a loop `</dev/null` or its own file.
-- **No `| head` inside the script.** Under `set -o pipefail`, a reader that closes early
-  SIGPIPEs the writer and `set -e` aborts the drive halfway, here before a body file was renamed.
-  Cap output in the producer (a line-limit argument), never in a pipe after it. The same pair
-  kills a `x="$(ss … | grep pid=…)"` the first time nothing matches: grep exits 1, and doctor
-  stopped halfway through its report with no message when the owner's port was free. Every grep
-  in a `$(...)` that may match nothing gets `|| true` inside the substitution. Likewise give
-  `curl -w` a separator (`%{http_code}|%{content_type}`): a content type contains a space. The
-  same SIGPIPE kills the script from outside: `verify.sh seed | sed -n 1,12p` stopped the seed
-  before it locked the cache and wrote its manifest. Send long commands to a file and read it.
-- **HTML evidence is the visible text.** Server-rendered pages carry a framework payload in
-  `<script>` tags, and a regex strip keeps that payload and loses the page. Save the HTML, and print
-  the visible text with each `aria-label` inline (`[Mark as done]`) through a real HTML parser.
-  That is what lets a recipe assert on what the user reads without a browser. It is not the whole
-  page under a dev server: a Next `notFound()` page's copy lived only in the RSC payload, so the
-  text view showed the brand and nothing else. Assert such a status with the HTTP drive and its
-  copy with the browser. And the status itself lies when the route has a `loading.tsx`: the
-  loading screen streams first, so `notFound()` arrives after a 200 was sent. Another user's
-  record answered 200 with "Not found" in the title; assert the title and the absence of the other
-  user's data (grep the saved HTML for it), and keep 404 assertions for routes without a loading
-  screen.
-- **A terminal UI is driven through tmux, read through its RPC.** `send-keys` into the pane is
-  the user's typing; key bindings of tmux itself need an attached client (a `script` pty running
-  `tmux attach` inside the run) and `send-keys -K -c CLIENT`. `capture-pane -p` (and `-e` for an
-  `.ansi` copy) is the screenshot. Read state over the app's own RPC, actions only through keys.
-  Insert text as a bracketed paste (`set-buffer` + `paste-buffer -p`): typed text opens completion
-  menus and fires insert-mode mappings (`jk` saved the file), and blink.cmp's `<Esc>` closes its
-  menu without leaving insert mode, so `:wq` became commit text; leave insert mode with `Escape
-  Escape`. A prompt ("Press ENTER", y/n) eats the next keys, and RPC blocks while the app waits on
-  `input()`: put a timeout on every RPC call and `screen` after any surprise. Give each restart a
-  new socket path: the exiting process removes its socket after the new one already listens on it.
-- **The browser driver must not create its own failures.** Playwright's screenshot hides the
-  caret by injecting a style, and mid-hydration React reports that as a hydration mismatch the
-  app does not have. Pass `caret: 'initial'` and wait for `networkidle`. Dev-only overlays (Next's
-  dev-tools badge) sit on top of real controls and swallow clicks, so hide them with an init
-  script. Resolve the steps-file path before the script `cd`s anywhere. Give steps an
-  `allow(regex)` for console errors a journey causes on purpose (a revoked link's 404), rather
-  than loosening the rule for everyone. Run the browser in the seeded user's time zone: an app
-  that re-detects the zone from the browser otherwise moves the user's day boundary mid-journey.
-  Headless Chromium answers `Notification.permission === "denied"` with no grant, which is an end
-  state to assert, not a failure. Log `requestfailed` with its URL: the console only says "Failed
-  to load resource", and the URL is what told verify-expense-tracking the Blob PUT was the one
-  failing. In a Next app, `getByRole('alert')` also matches `<next-route-announcer>`, which holds
-  the page title, so a wrong-password check "read" the title; locate the app's own alert
-  (`p[role=alert]`, or filter by text). Keep a short `DEV_ONLY` list of page errors that only
-  `next dev` produces, logged as "dev-only, not counted", and admit an entry only after grepping
-  the production bundle for its source: React's development client times server components with
-  `performance.measure`, and a server `redirect()` mid-navigation throws "cannot have a negative
-  time stamp" in about half the runs; `react-dom-client.production.js` has no such call.
-- **`down` copies the server log into evidence** before deleting run state: it is the record of
-  every decision the run made.
-- **Evidence lives outside the repo and outside the worktree**
-  (`~/.local/state/<app>-verify/<run>/evidence/`), so it survives `down` and worktree deletion,
-  and is never committed by accident.
-- **Number evidence files by drive order** (`01-api-...txt`), counting only the primary files.
-  Files `up` writes itself (a seed pass) take a `00-` prefix the counter skips.
-- **Steps files take arguments** (`ui RUN steps.mjs -- <id> <date>`), so a recipe can act on the
-  extraction or run an earlier drive printed instead of hard-coding one.
-
-Make scripts executable, `bash -n` clean, and print usage when called with no arguments. (`bash -n`
-found an apostrophe inside `"${x:+…owner's…}"`, reported as a syntax error at the function's closing brace.)
+- `setsid` daemons with stdin `/dev/null` and output to a log; record the process group and kill
+  the group, waiting until it is empty; never `pkill` by name.
+- Every process from `env -i` + the run's values, in an empty working directory (cwd dotenv
+  loaders fill unset vars); pin every variable that has a default; never let ambient credentials
+  (`VERCEL*`, OIDC tokens) through; omit optional vars rather than blanking them.
+- Compiled apps: build per run, stamp the commit (`-buildvcs`, `go version -m`), prove the
+  listener runs that binary (`/proc/PID/exe`), build offline with the verify state's caches.
+- Egress control per runtime (dead or counting proxy for Go/Python/curl, a preload for Node),
+  proven from `doctor`, stated as best effort. → `stand-ins.md`
+- Readiness: poll the usable state; stop on repeated identical 5xx and print the log tail.
+- Binary responses to a file with size + sha256; a product binary gets a drive that reads it.
+- State drives (`sql`, …) are read-only, with a `--value` mode and an `until` poller.
+- Bash under `set -euo pipefail`: no `| head` in the script, `|| true` on greps in `$(…)`, a
+  separator in `curl -w`, `</dev/null` on `docker exec -i` in loops, shebang scripts because
+  the caller may be zsh, quoted URLs with `?`, `bash -n` clean, usage with no arguments.
+- Evidence under `~/.local/state/<app>-verify/<run>/evidence/`, numbered by drive order; steps
+  files take arguments.
 
 ## 3. Write the SKILL.md
 
-`.claude/skills/verify-<app>/SKILL.md`, with frontmatter (`name: verify-<app>` and a
-`description` saying what it proves, when to use it, and what it never touches). Sections, each
-with real commands from this repo and no placeholders:
-
-- **Launch:** `up` and its flags (rebuild frontend, seed fixtures, enable a paid dependency).
-- **Doctor:** when to run it (before the first drive and after any surprise) and what its
-  warnings mean.
-- **Drive:** a table of the drive commands, plus one complete example per surface (a UI steps
-  file, a CLI invocation, an API call). Prefer stable handles: routes, ARIA labels, test ids,
-  prompt strings.
-- **Targeted, not exhaustive** (when a drive costs money): pick only the feature-map entries the
-  change touches, what each drive costs, the default budget and how to raise it.
-- **Evidence:** where it lands, and the proof standards:
-  - Use the real user path, never a test-only endpoint.
-  - Capture the action AND the resulting state, and read side effects back.
-  - For a bug fix, show the failure first.
-  - Nondeterministic output (LLMs): assert on structure (route, tools, persisted fields, status)
-    and quote text only as support. One miss earns one re-run; two misses are a finding.
-  - A step that could not be driven is `inconclusive` with its reason. Never weaken a journey
-    to make it pass.
-- **Cleanup:** `down`. Evidence survives it.
-- **Feature map:** points at `features/README.md`, and says that a user-facing change updates its
-  entry in the same change.
-- **Gotchas:** what must never be driven (the harmful class: anything that messages real
-  people, production or shared systems, money), what stays off unless a flag opts in, where the
-  isolation is best effort, what cannot be produced locally, flaky timings.
+Frontmatter `name: verify-<app>` and a `description` (what it proves, when, what it never
+touches). Sections with real commands, no placeholders: **Launch**, **Doctor** (when, and what
+each warning means), **Drive** (a table plus one complete example per surface; stable handles),
+**Targeted, not exhaustive** (cost per journey, default budget), **Evidence** (where, and the
+standards: real user path, action AND resulting state, failure first for a bug fix, structure
+over text for nondeterministic output with one re-run, `inconclusive` with a reason, never
+weaken a journey), **Cleanup**, **Feature map**, **Gotchas** (never driven, flag-gated, best
+effort, not producible locally, flaky timings, every decision you made).
 
 ## 4. Seed the feature map
 
-`features/README.md` (an index table: feature, file, surfaces, and paid calls per entry when
-drives cost money) plus one file per user-facing feature. Start with the 5 to 8 most important,
-taken from routes, commands, menus and docs.
+`features/README.md` (feature, file, surfaces, paid calls per journey) plus one file per
+user-facing feature, the 5 to 8 most important first. Each file has exactly these H2s:
+`## Sub-features`, `## How to get to it (user POV)`, `## Driving it with verify.sh` (commands and
+the end state seen), `## Gotchas`.
 
-**Drive first, write second.** Run each journey by hand against a live run, then write the file
-with the end states you saw pasted in. Predicted end states are wrong surprisingly often: in
-verify-agentic, 6 recipes written from reading code failed on first run (a field the app had
-superseded, a cache that pre-generates, a body encoding, a metric name). Every file has exactly
-these four H2s:
-
-- `## Sub-features`
-- `## How to get to it (user POV)`
-- `## Driving it with verify.sh` (real commands, and the end state that proves each one)
-- `## Gotchas`
-
-If seed data lacks a precondition a journey needs, the journey reports failure, and the reason
-goes in Gotchas.
-
-- **Seed through the app when the app derives state.** Records, badges and insights computed on
-  commit cannot be inserted honestly by a seeder. Reuse the repo's own seeder for raw inputs, then
-  commit through the real screen in `up` (25 runs took 40 s).
-- **Build the seed from the app's own definitions, and still wrap the repo's seeder.** A seed that
-  imports the app's schema or form definitions (`node --experimental-strip-types` on
-  `src/lib/forms.ts`) and posts through the app's own write route follows every later change to
-  the questions. Wrap the repo's seeder as a drive anyway, aimed at the run: in the ninth run it
-  failed on base (it answered required file questions with plain text, added after it was
-  written), which is a finding, and the reason the harness seeds itself. An app that creates its
-  own schema on first use (`ensureSchema`) has two-step readiness: the page answers, then the seed
-  goes in through the app, then the page shows the seed.
-- **Fixed demo data ages out of time windows.** Crons and digests filter on recency ("a run in the
-  last 60 days"); dated demo data answers `users: 0` forever after. Find the window in the code,
-  and give recipes a user-path way to make data recent (re-date it in the review form). Better,
-  when the seeder is yours: date rows relative to today in the user's zone, so every window has
-  data on any day. Then cap every timestamp at now: a seed that stamped today's row at 12:00 put
-  it in the future before noon, and the app's freshness watermark (`max(updated_at)`) went
-  *backwards* after a real edit.
-- **Key every wait and every read-back on the row YOUR action created**, never on "the latest".
-  A repo seeder you do not own may date rows later than now: verify-jmtarot's `until … order by
-  created_at desc limit 1` found the seed's finished chat run and returned in 4 s, before the
-  posted message's run existed. Join through the id the action produced (`trigger_message_id`,
-  the question text you typed).
-- **Wait on the app's own signal, never on the page settling.** A typing indicator going away,
-  a pending card's copy disappearing, a turn meter's aria-label. A page-text-stability loop stopped
-  early on a static sidebar; a heading predicted from another page ("What happened") never
-  appeared on this one. Three more from verify-daily-words, each a recipe that passed or hung for
-  the wrong reason: a "Just added" list that already held seeded words satisfied the wait before
-  the save landed; a form that auto-submits on mount detached the button the steps were clicking;
-  a redirect chain through two gates (`/onboarding` -> `/today` -> `/birthday`, the last compiling
-  on first use) settled the URL twice, so waiting on the URL ended on a blank page. Wait for a
-  screen's content, and never tap a control the page drives itself.
-- **Record the base's known failures as counts.** When a drive fails on the base for a reason
-  outside the change (16 dead links in one generated page), write the count into the feature
-  file and the index ("pass if broken stays at 16 and anchors at 0"), so the next agent compares
-  counts instead of reading a red exit code as theirs.
-- **Pick inputs the seed does not already hold.** The first "add a word" recipe used a word the
-  demo seed had; it ended on the duplicate notice and read like a broken save. Point recipes at
-  the seed's own list (`grep` the seeder) when choosing inputs.
-- **Write down one-shot seed state and the order it forces.** Today's card, a user's onboarding,
-  a delivered notification slot happen once per run. Say in each feature file what its journey
-  consumes, and order the proving pass around it (the repo's onboarding spec needs the
-  un-onboarded user, so it runs before the onboarding journey).
-- **Clock windows, not only recency windows.** A scheduled job that only acts between 07:00 and
-  19:59 in the user's zone says nothing at 22:00. Give recipes a user-path way to move the clock
-  instead of waiting: change the user's zone through the app's own route (an `Etc/GMT±N` zone is
-  exact; its sign is POSIX's, inverted: `Etc/GMT-5` is UTC+5).
+**Drive first, write second:** paste the end states you saw; predicted ones are wrong often.
+Wait on the app's own signal and key read-backs on the row your action created; record base
+failures as counts; pick inputs the seed lacks; note one-shot seed state and clock windows.
+→ `auth-and-seed.md`
 
 ## 5. Prove every recipe before handing over
 
-A skill that was never executed is a draft. Run, for real:
+0. Hash every file the harness must never touch (`.env*`, committed databases, owner profiles),
+   list `~/.cache`, and note the owner's containers' start times, **before the first `up`**.
+1. `up` + `doctor`, once per mode flag; a flag not exercised is `inconclusive`.
+2. Feed every write validator and transform-on-write hook what it must reject (look-alike hosts,
+   impossible dates, whitespace-only fields, oversized bodies, unknown keys); send would-be-billed
+   inputs under `fault drop`.
+3. Every journey in every feature file once. Fix wrong recipes; record a wrong app as a product
+   bug. Rule out dev-mode artifacts (StrictMode double effects) before blaming the app.
+4. Every surface against every seed mode.
+5. Isolation: two runs at once, a write (or an in-process state change such as a tripped breaker)
+   in one, absent from the other.
+6. `down`; evidence remains, no process, port or per-run DB left; re-check the step-0 hashes,
+   `~/.cache`, the containers and `git status`.
+7. Re-prove anything you changed after the full pass.
 
-1. `up`, then `doctor` on the run, and once for each mode flag (`--offline`, rebuild flags). A
-   flag you deliberately did not exercise (it would reach an external service) is listed as
-   `inconclusive` in the report, never silently skipped.
-2. **Feed every transform-on-write hook and every write validator input it must reject.** A
-   formatter, linter or migration that runs on save is where content gets destroyed:
-   verify-nvim-config's worst finding was a Lua file with one syntax error replaced, on disk, by
-   the formatter's error message, because the save hook never read the exit status. A happy-path
-   drive passed on the same hook. A public write route is the same kind of door: send it the
-   inputs the browser cannot produce. Two of the ninth run's findings: a file-URL check that was a
-   substring test (`https://evil.example/.public.blob.vercel-storage.com/x.jpg` was stored and
-   shown to the admin as a link), and a date check by `Date.parse`, which rolls `2026-02-31` over,
-   so Postgres refused it and the user got a 500 blaming the database. Look-alike hosts (the
-   trusted host in the path or as a subdomain of another), impossible dates, over-limit counts,
-   unknown keys, whitespace-only required fields, an oversized body. When the input would reach a
-   paid call, send it under `fault drop`: the stand-in reads the whole request before dropping it,
-   so the evidence shows what would have been billed and nothing is (fast-order: a menu of spaces
-   passed validation, and a 2.6 MB body went to the vendor whole). Two drops do not trip a
-   three-failure breaker; mind the third.
-3. **Every journey in every feature file, once.** Fix the recipe when the recipe was wrong
-   (wrong arg name, wrong column, wrong route). When the APP is wrong, record it as a product
-   bug in the final report and do not paper over it in the map. Before calling a UI failure a
-   product bug under a dev server, rule out the dev mode itself: React StrictMode mounts, unmounts
-   and remounts every component, and an effect that guards with a `started` ref while its cleanup
-   aborts the fetch never re-issues it (verify-jmtarot: a translation stuck on "translating", a chat
-   loop that went to `stopped` on the aborted request). Read the effect, say "dev-only" in the
-   feature file with the reason, and drive the route the effect calls.
-4. **Every surface against every seed mode.** When two halves of the app read the same seed
-   (a web UI and a CLI or worker), drive each half on it, not only the half the seed was written
-   for. Seed scripts drift from the schema the other half needs: Seer's demo seeder, written for
-   the UI, omitted the columns migration 006 added after it, and the engine's `paper_check` crashed
-   on it. Only driving the engine on demo data found that.
-5. **Isolation, proven rather than assumed.** Run two instances at once, write through the app in
-   one, and read the other's state to show the write did not cross. With no write path (a static
-   site), make a temporary edit, `sync` it into one run, read both, then `git checkout --` it and
-   check `git status`. Pick a probe you have seen rendered: a section's `_index.md` body never
-   reached the page, so the first probe read 0 in both runs and proved nothing; its title did.
-   Prove the failure path the same way (a broken template must fail `up` and `sync` with the
-   generator's error). A stateless app still has in-process state: trip one run's circuit breaker
-   and show the other answering 200 at the same moment. Hash every file the harness
-   must never touch (a committed database, a shared store's manifest, `.env.local`, an owner's
-   browser profile) before the first `up` and after the last `down`, list the user's `~/.cache`
-   before and after (that diff caught Chrome writing `dconf` outside the run), and check
-   `git status` on the paths it could have dirtied. Take these hashes before the script's first
-   `up`, not after it: the tenth run took them after, and could only argue the first run clean.
-6. `down`, then confirm the evidence still exists and no process or per-run DB is left behind.
-7. **Re-prove what you changed after the full pass.** Fixes made while writing the feature files
-   (a new drive option, a corrected recipe) get one short run of their own before the commit.
-
-Run `down` after every failed attempt too. Expect this pass to find bugs in your own script:
-it is the point of the pass.
+`down` after every failed attempt. Expect bugs in your own script. → `proving-and-report.md`
 
 ## 6. Wire it into the repo
 
-- `.claude/skills/verify-<app>/` must be tracked by git. If `.gitignore` hides `.claude/`,
-  un-ignore that path; keep `.claude/settings.local.json` ignored.
-- Add one line to the repo's `CLAUDE.md` (Conventions, or wherever commands live) pointing at
-  the skill and the feature map.
-- Any dev dependency the drives need (Playwright, an HTTP client) goes into the repo's own
-  manifest at a pinned version. Prefer browsers and tools already installed on this machine. When
-  the commit is limited to the paths you create (the manifest is not one), or the stand-in needs a
-  driver the app does not ship (a Neon-only app has no `pg` or `ws`), install them pinned into a
-  tool directory under the verify state (`$VERIFY_HOME/.tools`, installed once by `up`) and load
-  them with `createRequire` from there; the app's processes never see it.
-- The repo's own gates cover the new files: its formatter, linter and source guards scan
-  `.claude/` too, and a dead-code scanner (knip) reports every helper `verify.sh` starts by path as
-  an unused file. Run them, and give the scanner a commented ignore for the skill directory.
-- Confirm the scripts are committed executable **before the first commit**: `git ls-files -s`
-  shows `100755`. A repo with `core.fileMode=false` records `100644` whatever the disk says; run
-  `git update-index --chmod=+x <file>` right after the `git add` (checking only after the commit
-  cost verify-agentic-docs a second commit).
-- Name the skill and its state directory so neither collides with a sibling: `ls
-  ~/.local/state/*-verify` first. `~/agentic` could not use `agentic-verify`, which
-  `~/agentic_golang`'s verify-agentic owns, so it became `verify-agentic-docs` /
-  `agentic-docs-verify`.
-- Commit with the repo's conventions (its CHANGELOG under Unreleased if it keeps one, unless its
-  CLAUDE.md reserves the changelog for a release command, or its entries record only product
-  features) and push to the default branch, unless the repo's CLAUDE.md says otherwise. When the
-  user limits the commit to the paths you create, the one-line CLAUDE.md edit this step requires is
-  the only exception: commit it explicitly, skip the changelog, and say both in the report. If the
-  default branch auto-deploys (a `vercel.json` with `deploymentEnabled.main`), note that the push
-  deploys unchanged app code.
-- **The index may hold someone else's staged work.** In a shared checkout (an active swarm or
-  orchestration), `git add <your paths> && git commit` also commits whatever a peer has already
-  staged. Commit through an isolated index instead, then sync only your paths into the real one:
+- Track `.claude/skills/verify-<app>/` (un-ignore it; keep `settings.local.json` ignored). Name
+  skill and state dir so no sibling collides (`ls ~/.local/state/*-verify`).
+- One line in `CLAUDE.md` pointing at the skill and feature map (create CLAUDE.md if absent).
+- Drive dependencies: prefer what the repo and machine already have; otherwise pin them in the
+  repo manifest, or in `$VERIFY_HOME/.tools` when the commit is limited to your paths.
+- Run the repo's own gates over the new files; give dead-code scanners a commented ignore.
+- `git ls-files -s` must show `100755` for scripts; with `core.fileMode=false`, run
+  `git update-index --chmod=+x` right after `git add`.
+- Commit only your paths plus the CLAUDE.md line (`git add -- <paths>`), with the repo's
+  conventions; CHANGELOG under Unreleased unless the repo reserves it or the user limited the
+  commit. Push to the default branch unless CLAUDE.md forbids it, and say whether that deploys.
+- When the index holds a peer's staged work, commit through an isolated index:
 
   ```sh
   export GIT_INDEX_FILE=$SCRATCH/verify.index && git read-tree HEAD
@@ -717,32 +199,15 @@ it is the point of the pass.
   git status --porcelain     # the peer's lines must read exactly as before
   ```
 
-  Without that last `git add` the real index still shows your new files as staged deletions.
-
 ## Report
 
-End with:
-- the skill path and its subcommands;
-- the feature-map entries, and which journeys were proven, failed, or inconclusive, each with
-  its evidence path;
-- product bugs found (app wrong, not recipe wrong), each with a one-line root cause when you
-  found it, so the user can say "fix it" without a second investigation. State how many runs each
-  was seen in: an LLM-dependent finding drawn from one run is a hypothesis (verify-jmtarot's
-  "translation never stored" became "stored after a repair, sometimes" on the second run). Before
-  blaming a vendor SDK, reproduce its behaviour in a ten-line script: that one showed the SDK's
-  iterator did throw, which moved the root cause into the app's own gate;
-- a harness lesson that implicates a sibling verify skill only after reproducing it there. The
-  fifth run reported verify-run-insights' uploads as "probably broken the same way"; reproduced,
-  they passed, because the failure needed a condition (`onUploadProgress`) that app never met;
-- failures that were already on the base (a red test unrelated to the skill), kept apart from
-  the bugs the pass found;
-- what the skill deliberately never drives;
-- the commit sha.
+- the skill path and subcommands;
+- each feature-map entry: proven, failed or inconclusive, with its evidence path;
+- product bugs with a one-line root cause and how many runs saw each (an LLM-dependent finding
+  from one run is a hypothesis; reproduce an SDK's behaviour in ten lines before blaming it);
+- harness lessons about a sibling only after reproducing them there;
+- base failures, kept apart;
+- what is never driven; the commit sha and whether the push deploys.
 
-When the user asks for a product bug to be fixed, the new skill proves the fix: a failing test
-first, then the journey that found it, on a fresh run (verify-run-insights' first use was its own
-elevation-record finding, `0.12 km` -> `118 m`). Drive the same input on the base and on the fix
-(`git stash`, run, `stash pop`) and keep both end states. For a race, first find the input that
-forces the branch: verify-jmtarot's first re-drive took the other side of the race (a clean 500)
-and proved nothing; a reading with no question settles the verdict at once and hits the fixed path
-every time.
+Asked to fix a bug the pass found: failing test first, then the same journey on base and on the
+fix (`git stash`), on a fresh run, with the input that forces the branch.
