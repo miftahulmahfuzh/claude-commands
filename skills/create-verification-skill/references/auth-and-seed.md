@@ -18,6 +18,11 @@ Read when the app has sign-in, a database to seed, or journeys that wait on asyn
   stale:** a session that carries state (`onb`, a locale) keeps the old value after a drive changes
   it through an API, and the gate then redirects as if nothing happened. Give the script a
   `session RUN USER` that re-mints, and say in each recipe when it is needed.
+  **A session with no encoder at all** (lunch-delivery's cookie is the raw `user_id`, unsigned):
+  there is nothing to mint, so drives sign in through the real `/login` and keep a cookie jar per
+  user; add `--cookie "user_id=N"` to the HTTP drive so the forgery is one recipe (it was a
+  finding). A failed sign-in must delete the jar, or later `--as USER` drives run signed out and
+  read like product redirects (the eleventh run's own bug).
 
 - **Seed through the app when the app derives state.** Records, badges and insights computed on
   commit cannot be inserted honestly by a seeder. Reuse the repo's own seeder for raw inputs, then
@@ -61,7 +66,10 @@ Read when the app has sign-in, a database to seed, or journeys that wait on asyn
 - **Write down one-shot seed state and the order it forces.** Today's card, a user's onboarding,
   a delivered notification slot happen once per run. Say in each feature file what its journey
   consumes, and order the proving pass around it (the repo's onboarding spec needs the
-  un-onboarded user, so it runs before the onboarding journey).
+  un-onboarded user, so it runs before the onboarding journey). Give a journey that consumes a
+  user (a password reset changes the password; a paid order locks the order form) its own seeded
+  user: lunch-delivery's reset journey on `demo` broke every later `--as demo` recipe, so the seed
+  gained `forgetful`.
 - **Clock windows, not only recency windows.** A scheduled job that only acts between 07:00 and
   19:59 in the user's zone says nothing at 22:00. Give recipes a user-path way to move the clock
   instead of waiting: change the user's zone through the app's own route (an `Etc/GMT±N` zone is

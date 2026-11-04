@@ -139,7 +139,12 @@ Read when the app talks to any third-party API, a serverless database driver, an
   journeys leave behind: after three dropped calls gobreaker stays open 30 s and a failed half-open
   probe reopens it, so the next journey fails fast with no call leaving. Write those counts into
   the expected end state (calls reaching the stand-in per print: 1, 1, 1, then 0), and tell
-  recipes to wait out the timeout or `down` + `up`. Every `ui` ends with `fault none`.
+  recipes to wait out the timeout or `down` + `up`. Every `ui` ends with `fault none`. When the
+  client's timeout is minutes (lunch-delivery: 5 min, and `context.Background()` so the browser
+  giving up cancels nothing; the stand-in logged the close after 308 s), drive the hang with a short
+  client `--max-time` in the background, carry on with other journeys, and read the stand-in's
+  close time afterwards. Before writing the drop end state, read what the app deletes before the
+  call: lunch-delivery's reset path deleted the good cached answer first, so one failed call cost it.
 - **Seeding refuses paid calls; `up` arms the budget last.** Seeding through the app fires the
   same side effects as using it (25 demo commits fired 49 LLM calls). Refuse them unspent while
   seeding, arm the budget once `up` is done, and write the residue (failed turn rows, an error log
@@ -158,3 +163,14 @@ Read when the app talks to any third-party API, a serverless database driver, an
   notifications, the guard refusing `https.request` elsewhere) and make `doctor` fail when any
   stored endpoint points outside the run's sink. Where no fake can stand in, fall back to making
   the sink structurally empty and say so in Gotchas.
+  **Email is the easiest fake receiver:** point `SMTP_HOST` at a ~150-line SMTP server in the run
+  that speaks what the real relay does (smtp.gmail.com:587: EHLO, STARTTLS, AUTH only after TLS),
+  checks the run's credentials and keeps each message as JSON with its links. Go's `smtp.PlainAuth`
+  refuses AUTH without TLS unless the host is literally `localhost`/`127.0.0.1`, and `SendMail`
+  starts TLS whenever it is offered, so offer it with a leaf for `IP:127.0.0.1` signed by the run's
+  CA (`SSL_CERT_FILE`): the app then runs the same TLS path production does. A `mail RUN --path`
+  drive lets recipes follow the link without trusting its host: lunch-delivery's link host came
+  from the request's `Origin` header, which is how the run found reset-link poisoning
+  (`--origin https://evil.example` mailed a valid token there) and a hardcoded `localhost:8080`
+  fallback (the unrelated container on this machine). Have the HTTP drive send `Origin: <run URL>`
+  on writes by default, as a browser does, and `--no-origin`/`--origin` to probe.

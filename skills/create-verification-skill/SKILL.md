@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Create a verification skill
 
-Adapted from pstack's `create-verification-skill` (`cursor/plugins/pstack`), plus ten runs of
+Adapted from pstack's `create-verification-skill` (`cursor/plugins/pstack`), plus eleven runs of
 this skill. This file is the short form. The detail, and the case behind every rule, is in
 `references/`; read a reference only when the repo has that shape:
 
@@ -41,6 +41,7 @@ from journeys, not plumbing.
 | `nvim-config/…/verify-nvim-config` | dotfiles TUI via tmux, network namespace, read-only dep cache, `--live` |
 | `hospital-inspection-forms/…/verify-hospital-inspection-forms` | Neon + Blob, no paid call, `fault db\|blob`, `.xlsx` read back |
 | `fast-order/…/verify-fast-order` | stateless Go + Vite LLM app: TLS-intercepting egress proxy counts calls, `fault drop\|hang`, breaker |
+| `lunch-delivery/…/verify-lunch-delivery` | Go + Gin with a hardcoded taken port: netns whose only exits are Unix sockets, Postgres per run, fake SMTP (STARTTLS), counting proxy |
 
 **Why this exists.** `phase-planner` writes a **Proof** section naming `.claude/skills/verify-*`,
 `/implement` and `/do` run it, the `verifier` agent re-runs it cold. Without it all of that is
@@ -59,7 +60,8 @@ From code, README, CLAUDE.md, scripts, compose and CI files. Trust the config ov
 
 - **Surface:** what a user touches (HTTP, web UI, CLI/TUI, MCP, bot, worker). For a site the
   production build is a surface too.
-- **Existing harnesses:** wrap them, pointed at the run (wrapper config in the snapshot, specs
+- **Existing harnesses:** the unit suite counts: read what its tests dial (the owner's
+  `localhost:5432`, a real SMTP host) and run it inside the run's fence. Wrap them, pointed at the run (wrapper config in the snapshot, specs
   copied with hardcoded owner URLs rewritten). Read every default they fall back to, every branch
   of the shell script around them (installs into the checkout, `sudo`, `docker compose down` of
   the owner's stack), and what a passing spec actually asserts. → `harnesses.md`
@@ -72,7 +74,7 @@ From code, README, CLAUDE.md, scripts, compose and CI files. Trust the config ov
 - **The owner's ports:** documented ports, compose-published ports, framework defaults (3000,
   5173, 4173) and the app's own fallback `PORT` are the owner's. The free-port picker refuses
   them, `up` never stops or reuses their holder, `doctor` only reports it. A hardcoded port goes
-  in a network namespace, not an app edit. Say the decision in Gotchas and the CLAUDE.md line.
+  in a network namespace, not an app edit (with exits for the DB and proxy → `process-and-env.md`). Say the decision in Gotchas and the CLAUDE.md line.
 - **Auth:** mint sessions with the app's own encoder or dev-only route and a per-run secret;
   never add a bypass. One seeded user per gate. → `auth-and-seed.md`
 - **Dependencies:** each store and API, isolated per run (shared verify container with a
@@ -123,7 +125,8 @@ Rules (each was a bug once; details in `process-and-env.md`):
   loaders fill unset vars); pin every variable that has a default; never let ambient credentials
   (`VERCEL*`, OIDC tokens) through; omit optional vars rather than blanking them.
 - Compiled apps: build per run, stamp the commit (`-buildvcs`, `go version -m`), prove the
-  listener runs that binary (`/proc/PID/exe`), build offline with the verify state's caches.
+  listener runs that binary (`/proc/PID/exe`), build offline with the verify state's caches (its
+  own module cache when the owner's lacks the repo's modules, filled from a copy of `go.sum`).
 - Egress control per runtime (dead or counting proxy for Go/Python/curl, a preload for Node),
   proven from `doctor`, stated as best effort. → `stand-ins.md`
 - Readiness: poll the usable state; stop on repeated identical 5xx and print the log tail.
@@ -164,8 +167,10 @@ failures as counts; pick inputs the seed lacks; note one-shot seed state and clo
    list `~/.cache`, and note the owner's containers' start times, **before the first `up`**.
 1. `up` + `doctor`, once per mode flag; a flag not exercised is `inconclusive`.
 2. Feed every write validator and transform-on-write hook what it must reject (look-alike hosts,
-   impossible dates, whitespace-only fields, oversized bodies, unknown keys); send would-be-billed
-   inputs under `fault drop`.
+   impossible dates, whitespace-only fields, oversized bodies, unknown keys, forged cookies, an
+   `Origin`/`Host` an attacker picks); send would-be-billed inputs under `fault drop`. Change what
+   a cache's key ignores (edit a row, reorder) and press again. After a 200, read every side
+   effect back and grep the log for swallowed warnings.
 3. Every journey in every feature file once. Fix wrong recipes; record a wrong app as a product
    bug. Rule out dev-mode artifacts (StrictMode double effects) before blaming the app.
 4. Every surface against every seed mode.
@@ -207,7 +212,7 @@ failures as counts; pick inputs the seed lacks; note one-shot seed state and clo
   from one run is a hypothesis; reproduce an SDK's behaviour in ten lines before blaming it);
 - harness lessons about a sibling only after reproducing them there;
 - base failures, kept apart;
-- what is never driven; the commit sha and whether the push deploys.
+- what is never driven; the commit sha and whether the push deploys or runs CI.
 
 Asked to fix a bug the pass found: failing test first, then the same journey on base and on the
 fix (`git stash`), on a fresh run, with the input that forces the branch.

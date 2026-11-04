@@ -33,6 +33,11 @@ Read when the app has a web UI. The rules in SKILL.md are the short form; this f
   refuses that too, so "Failed to fetch" proves nothing. Give Chrome the run's HOME, or it writes
   `~/.cache/dconf` into the user's home.
 
+- **Screenshots must wait out entrance animations.** A page that fades in on load was captured
+  almost white (lunch-delivery's forgot-password card), which proves nothing. Pass
+  `animations: 'disabled'` to `page.screenshot` (finite CSS animations jump to their end) and read
+  the PNG. Apps that report failure with `alert()` need a `dialog` handler that logs the message and
+  dismisses it, or the page blocks; the logged text is the failure end state to assert.
 - **The browser driver must not create its own failures.** Playwright's screenshot hides the
   caret by injecting a style, and mid-hydration React reports that as a hydration mismatch the
   app does not have. Pass `caret: 'initial'` and wait for `networkidle`. Dev-only overlays (Next's

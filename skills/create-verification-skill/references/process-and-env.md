@@ -50,7 +50,12 @@ Read while writing verify.sh, or when copying a sibling's verify.sh into a diffe
   with `go version -m` (lines look like `build	vcs.revision=…`; an awk on field 2 misses them).
   Doctor then proves the listener runs that binary (`readlink /proc/<listener pid>/exe`). Build
   offline and leave the owner's caches alone: `GOPROXY=off GOFLAGS=-mod=readonly GOTOOLCHAIN=local`,
-  the owner's module cache read, a `GOCACHE` under the verify state.
+  the owner's module cache read, a `GOCACHE` under the verify state. The owner's cache may not hold
+  the repo's modules at all (lunch-delivery: gin and pq missing, so the offline build failed). Then
+  give the harness its own `GOMODCACHE`, filled once per `go.sum` hash by `go mod download` in a
+  directory holding a COPY of `go.mod`/`go.sum`, with
+  `GOPROXY=file://<owner GOMODCACHE>/cache/download,https://proxy.golang.org` (owner's cache first),
+  and fail if the copied `go.sum` changed: the checkout is never written. 20 s once, then offline.
 - **Readiness distinguishes "not up yet" from "up and broken".** Poll for the usable state, but
   stop after a few identical 5xx answers and print the log tail. verify-seer's first `up` waited
   4.5 minutes on a page that had been failing the same way since second 5. One exception: a known
@@ -59,6 +64,22 @@ Read while writing verify.sh, or when copying a sibling's verify.sh into a diffe
   until a restart). Match its log signature and restart the server, bounded (three tries), keeping
   each failed log.
 
+- **A network namespace with exits: the answer to a hardcoded port that is taken.**
+  lunch-delivery's `r.Run(":8080")` met an unrelated container on the host's :8080. In a fresh
+  namespace the app binds its own :8080, untouched code. Measured on this kernel:
+  `unshare --map-current-user -n` alone cannot raise loopback (`ip link set lo up`: EPERM, the uid is
+  not root inside); `unshare --map-current-user --keep-caps -n sh -c 'ip link set lo up && exec "$@"'`
+  can, and then `setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all` drops every
+  capability before the anchor process starts. The run still needs a database, a counting proxy
+  and a URL the host can open: Unix sockets cross namespaces, so a bridge inside (the anchor) and
+  the stand-in outside hold the two ends of each pipe (in-ns `127.0.0.1:3128` -> `standin.sock` =
+  `HTTPS_PROXY`; in-ns `127.0.0.1:5433` -> `pg.sock` -> the verify container's port; host URL port
+  -> `app.sock` -> in-ns `:8080`). Start the app with `nsenter -t <anchor> -U -n
+  --preserve-credentials --wd=<snapshot>`; prove the listener with `nsenter … ss -ltnp` (it only
+  sees the namespace's sockets) and `/proc/PID/exe`; `down` kills by namespace. Doctor proves the
+  fence with no proxy (`curl` to the paid host exits 6) and that `127.0.0.1:<owner's DB port>` is
+  refused inside. Every other tool the run starts (the repo's tests, its SMTP scripts) joins the
+  same namespace.
 - **Copy state files with a read-only open.** Some tools migrate a database on connect even for a
   read (Seer's lab migrates `lab.sqlite` that way). Copy the committed state with the database's
   backup API from a `mode=ro` connection, and hash the protected original before and after the
