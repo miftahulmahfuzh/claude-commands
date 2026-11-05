@@ -838,36 +838,127 @@ async function attachPlan($, e, next) {
  * this is a cost saver, never a gate, so it fails OPEN to normal mode.
  */
 const QUOTA_PCT = 85
+// Opus and Fable: the models economy mode takes off every spawn and the main session.
+const HEAVY = /opus|fable/i
+// Relative to $.env HOME. swarm.py reads the same file to pick a model for spawn/launch.
+const QUOTA_FILE_REL = '/.claude/swarm-deck/quota.json'
+// The latest reading, kept for the band: a ui.render hook must not await anything.
+let quotaNow = null
 
-async function quota($) {
+/**
+ * The weekly window, the threshold and this session's model. Null on any error, which is
+ * the fail-OPEN answer. Off a subscription there is no seven_day window: a reading with
+ * economy false, not an error.
+ */
+async function reading($) {
   try {
     const raw = await $.env.get('CLAUDE_QUOTA_ECONOMY_PCT')
     const n = Number(raw)
     const threshold = raw && Number.isFinite(n) && n > 0 ? n : QUOTA_PCT
     const usage = await $.session.usage()
     const week = (usage.rateLimits || []).find(r => r.kind === 'seven_day')
-    if (!week || typeof week.percentUsed !== 'number' || week.percentUsed < threshold) return null
-    return { pct: Math.round(week.percentUsed), resetsAt: week.resetsAt, threshold }
+    const has = !!week && typeof week.percentUsed === 'number'
+    let model = null
+    try {
+      const m = await $.session.model()
+      model = typeof m === 'string' ? m : null
+    } catch {
+      model = null
+    }
+    return {
+      economy: has && week.percentUsed >= threshold,
+      pct: has ? Math.round(week.percentUsed) : null,
+      resetsAt: week ? week.resetsAt : null,
+      threshold,
+      model,
+    }
   } catch {
     return null
   }
 }
 
+/** Returns { pct, resetsAt, threshold, model } at or over the threshold, null otherwise. */
+async function quota($) {
+  const r = await reading($)
+  return r && r.economy ? r : null
+}
+
+/**
+ * Refresh the band's reading and write it for swarm.py. Runs on a 15s clock and on every
+ * prompt.submit. It writes economy false too, so the file says "normal" and not merely
+ * "nothing known"; an error writes nothing and the last file ages out. Never throws.
+ */
+async function refreshQuota($) {
+  const r = await reading($)
+  if (r === null) return
+  quotaNow = r
+  try {
+    const home = await $.env.get('HOME')
+    if (!home) return
+    await $.fs.write(home + QUOTA_FILE_REL, JSON.stringify({
+      seven_day: r.pct,
+      threshold: r.threshold,
+      economy: r.economy,
+      resetsAt: r.resetsAt,
+      at: await $.clock.now(),
+    }, null, 2) + '\n')
+  } catch (err) {
+    // swarm.py sees an old file, and an old file means the normal rules.
+  }
+}
+
+/** The band line for an economy session that runs on Opus or Fable, or null. */
+function modelBand() {
+  if (!quotaNow || !quotaNow.economy || !quotaNow.model || !HEAVY.test(quotaNow.model)) return null
+  return 'this session runs ' + quotaNow.model + '; economy mode requires sonnet/haiku -- ' +
+    'switch with /model sonnet'
+}
+
 function quotaLine(q) {
-  return 'swarm-deck: Weekly quota ' + q.pct + '% used (resets ' + (q.resetsAt || 'unknown') +
+  const line = 'swarm-deck: Weekly quota ' + q.pct + '% used (resets ' + (q.resetsAt || 'unknown') +
     ') -- ECONOMY MODE: no independent verifier agent (record `self-verified (quota economy, ' +
     q.pct + '%)`); each phase\'s own Proof runs once on the cheapest journeys that cover its ' +
     'exit criteria, skipping paid/live journeys (record `inconclusive (quota economy)`); ' +
     'dispatch no extra review or research agents.'
+  const heavy = q.model && HEAVY.test(q.model)
+    ? ' This session runs ' + q.model + '; economy mode requires sonnet/haiku -- switch with /model sonnet.'
+    : ''
+  return line + heavy
 }
 
 /** The prompt.submit hook: the plan block (if any), then the quota line (if over). */
 async function promptContext($, e, next) {
   const planned = await attachPlan($, e, x => x)
-  const q = ['analyze-orchestrator', 'implement', 'do', 'analyze'].includes(e.command?.name)
-    ? await quota($) : null
+  await refreshQuota($)
+  const commanded = ['analyze-orchestrator', 'implement', 'do', 'analyze'].includes(e.command?.name)
+  const q = commanded && quotaNow && quotaNow.economy ? quotaNow : null
   if (q === null) return next(planned)
   return next({ ...planned, context: [...(planned.context ?? []), quotaLine(q)] })
+}
+
+/**
+ * Economy mode for every subagent: no Opus or Fable. A spawn that names none, or names
+ * one of them, is set to Sonnet; an explicit haiku or sonnet is kept. Agent definitions
+ * here default to opus in their frontmatter, which the hook cannot see, so an unnamed
+ * spawn is always Sonnet. A fork inherits its parent's model and ignores `model`, so it
+ * is refused instead. Fails OPEN: a cost saver, never a gate on work.
+ */
+async function modelGuard($, e, next) {
+  const q = await quota($)
+  if (q === null) return next(e)
+  if (e.fork) {
+    if (!HEAVY.test(e.parentModel || '')) return next(e)
+    await $.ui.log('refused fork -- economy mode, parent ' + e.parentModel)
+    return {
+      deny: 'economy mode: a fork inherits ' + e.parentModel +
+        '; dispatch a named subagent with model sonnet instead',
+    }
+  }
+  const asked = e.model
+  if (asked === undefined || asked === null || asked === '' || asked === 'inherit' || HEAVY.test(asked)) {
+    return next({ ...e, model: 'sonnet' })
+  }
+  return next(e)
 }
 
 /** Refuse a `verifier` spawn in economy mode. Mechanical, but fails OPEN. */
@@ -932,6 +1023,16 @@ export function register(on) {
       startDeckTimer($)
       await refresh($)
     }
+    // Every session, not only a phase or a deck: the quota file is for whichever session
+    // runs `swarm.py launch`. A reading costs no tokens, so 15s is as cheap as a heartbeat.
+    try {
+      $.clock.every(15000, async () => {
+        await refreshQuota($)
+      })
+    } catch (err) {
+      // No timer: the prompt.submit refresh still keeps the file and the band current.
+    }
+    await refreshQuota($)
     // Registered last in this hook: $.command.register throws on a taken name, and a
     // hook that throws is skipped -- which would take the heartbeat down with it.
     try {
@@ -991,7 +1092,8 @@ export function register(on) {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const text = alarm(await $.clock.now())
+    // The swarm alarms keep priority: a quiet phase is more urgent than the model line.
+    const text = alarm(await $.clock.now()) ?? modelBand()
     // Nothing wrong: hand the band back untouched so Claude Code draws its own.
     if (text === null) return next(e)
     const el = $.ui.resolve(e)
@@ -1015,6 +1117,10 @@ export function register(on) {
 
   // Fails OPEN: a cost saver, not a safety guard. An error lets the spawn through.
   on('agent.spawn', { subagentType: 'verifier' }, verifierGuard).catch(async ($, e, next) => next(e))
+
+  // Every subagent, no matcher. Registered after the verifier refusal: both run in economy
+  // mode, and the refusal is a deny, which ends the chain whichever runs first.
+  on('agent.spawn', modelGuard).catch(async ($, e, next) => next(e))
 
   on('session.send', async ($, e, next) => {
     // Observe only: a mod that refuses its own session's messages would be doing the

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Quota economy, models**: in economy mode the swarm-deck mod sets every subagent to Sonnet unless it names
+  haiku or sonnet, refuses a fork of an Opus parent, and flags an Opus main session. `swarm.py spawn` and
+  `launch` read the mod's `~/.claude/swarm-deck/quota.json` and default to `--model sonnet`; an explicit Opus
+  or Fable is refused unless `--force-model`.
+
 ## [4.1.0] - 2026-11-04
 
 Verification and planning principles, adapted from Lauren Tan's pstack (`cursor/plugins/pstack`).

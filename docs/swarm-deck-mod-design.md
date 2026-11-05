@@ -384,6 +384,14 @@ so the mod cuts the independent part to the minimum rather than turning it off b
   never stop a spawn.
 - The command prose carries the rules the deny cannot: the phase's proof runs once on the cheapest
   journeys, paid/live ones are `inconclusive (quota economy)`, and no extra agents are dispatched.
+- `agent.spawn` with no matcher rewrites `model` to `sonnet` when it is unnamed, `inherit`, or names Opus or
+  Fable, and refuses a fork of an Opus or Fable parent (a fork ignores `model`). Explicit haiku and sonnet
+  pass. The hook fails open, like the verifier refusal.
+- The main session's model is not the mod's to change. `$.session.model()` feeds the context line and an
+  AbovePrompt band line that name it; the swarm alarms keep the band's priority.
+- `refreshQuota` writes `{ seven_day, threshold, economy, resetsAt, at }` to `~/.claude/swarm-deck/quota.json`
+  on a 15s clock and on each prompt.submit. `swarm.py` reads it: fresh under 30 minutes and `economy: true`
+  means `--model sonnet` by default, and an explicit Opus or Fable is refused unless `--force-model`.
 
 ## Distribution
 

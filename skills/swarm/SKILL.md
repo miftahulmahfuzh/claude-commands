@@ -316,6 +316,14 @@ The mode is passed twice on purpose: once to launch the session on it, once *ins
 so the orchestrator knows what to hand its own children. A session cannot read its own permission
 mode, so an argument is the only way it travels.
 
+### Quota economy: the model
+
+`swarm.py spawn` and `launch` read `~/.claude/swarm-deck/quota.json`, which the swarm-deck mod writes on a
+15s clock and on every prompt. A reading under 30 minutes old with `economy: true` makes an unnamed spawn or
+launch run `--model sonnet`, and the JSON reports `"model": "sonnet (quota economy N%)"`. An explicit
+`--model opus` or `--model fable` is refused with a soft error in that state; `--force-model` overrides it.
+A missing, stale or unreadable file means the normal rules. `swarm.py selftest` covers the decision.
+
 ### Never launch the same name twice
 
 **The launch's own JSON is the only evidence of whether it worked.** `launch` returns as soon as

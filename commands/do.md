@@ -304,7 +304,8 @@ mistakes it for an independent check.
 **Quota economy:** if the swarm-deck context block says `Weekly quota N% used ... ECONOMY MODE`, run the
 Proof once on the cheapest journeys that cover the exit criteria, record paid/live journeys (real model
 calls, `test:live*`) as `inconclusive (quota economy)`, re-run only a journey that failed, and dispatch no
-extra agents. No block means normal rules; never measure usage yourself.
+extra agents. It also passes `--model sonnet` to every `swarm.py spawn` and `launch`. No block means
+normal rules; never measure usage yourself.
 
 **On both routes the main context does NOT:** read `todos.md`, `package_readme.md` or
 `analysis_report.md` · read documentation · update `todos.md` · run git · write plans.

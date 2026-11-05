@@ -762,7 +762,9 @@ history, not an emergency. Full table in the
 At or over 85% of the weekly quota (`CLAUDE_QUOTA_ECONOMY_PCT` to change it), the mod switches the
 commands to economy mode: it adds a quota line to the context block and refuses to spawn the `verifier`
 agent, so verification falls back to each phase's own single proof run. It fails open: no reading means
-normal rules.
+normal rules. The same mode sets every subagent to Sonnet unless it names haiku or sonnet, refuses a fork
+of an Opus or Fable parent, and flags an Opus main session, since a mod cannot switch that model itself.
+`swarm.py spawn` and `launch` read the mod's quota file and default to `--model sonnet` in the same state.
 
 ![Phase 2 handing off to completion-handler while phase 4 stays QUIET](docs/img/fleet-statuses.gif)
 

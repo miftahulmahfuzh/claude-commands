@@ -671,6 +671,7 @@ Loop until `runnable_now` is empty:
      live journeys (real model calls, `test:live*`) and record them as `inconclusive (quota economy)`. A
      journey that fails is fixed and only that journey re-runs.
    - The coordinator dispatches no extra review or research agents, and states the quota when it holds a set.
+   - The coordinator passes `--model sonnet` to every `swarm.py spawn` and `swarm.py launch`. `swarm.py` reads the mod's quota file and defaults to Sonnet in economy mode on its own, but the explicit flag keeps the choice in the command.
 
 7. **Push the ledger** via `pusher`. Every round. This is iron rule 2.
 8. **Reap the finished windows.**

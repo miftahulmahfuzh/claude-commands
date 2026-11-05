@@ -618,6 +618,51 @@ def parent_env(environ=None):
     return ["-e", f"{PARENT_SESSION_VAR}={sid}"]
 
 
+# ------------------------------------------------------------------ quota economy
+
+# Written by swarm-deck's hooks/register.js on a 15s clock and on every prompt.submit:
+# { seven_day, threshold, economy, resetsAt, at (epoch ms) }. Economy mode is that mod's
+# decision; this only reads it. Missing, unreadable or stale means the normal rules.
+QUOTA_FILE = Path.home() / ".claude" / "swarm-deck" / "quota.json"
+QUOTA_FRESH_MS = 30 * 60 * 1000
+ECONOMY_MODEL = "sonnet"
+HEAVY_MODEL = re.compile(r"opus|fable", re.I)
+
+
+def read_quota(path=None, now_ms=None):
+    """The mod's latest reading, or None when it is missing, unreadable or over 30 min old."""
+    try:
+        data = json.loads(Path(path or QUOTA_FILE).read_text())
+    except (OSError, ValueError):
+        return None
+    at = data.get("at") if isinstance(data, dict) else None
+    if not isinstance(at, (int, float)) or isinstance(at, bool):
+        return None
+    if now_ms is None:
+        now_ms = datetime.now(timezone.utc).timestamp() * 1000
+    return data if 0 <= now_ms - at < QUOTA_FRESH_MS else None
+
+
+def resolve_model(requested, force_model=False, path=None, now_ms=None):
+    """(model, label, refusal) for a spawn or launch.
+
+    model is what --model is given; label is what the JSON reports. In economy mode an
+    unnamed spawn is Sonnet, and a named Opus or Fable is refused (a soft error, unless
+    force_model). An explicit haiku or sonnet passes through. Outside economy mode the
+    requested value passes through, None included.
+    """
+    quota = read_quota(path, now_ms)
+    if not quota or quota.get("economy") is not True:
+        return requested, requested, None
+    pct = quota.get("seven_day")
+    if requested is None:
+        return ECONOMY_MODEL, f"{ECONOMY_MODEL} (quota economy {pct}%)", None
+    if HEAVY_MODEL.search(requested) and not force_model:
+        return None, None, (f"{requested} is refused in economy mode: weekly quota is "
+                            f"{pct}% used")
+    return requested, requested, None
+
+
 def spawn_argv(name, cwd, prompt, permission_mode=None, model=None, keep_open=True,
                environ=None, slug=None, phase=None, coordinator=None):
     inner = ["claude", "-n", name]
@@ -919,14 +964,18 @@ def cmd_spawn(args):
             return soft(f"no plan index found for {slug}", recorded=ledger.get("plan"),
                         hint="re-run init with --plan pointing at the set's PLAN.md")
         prompt = f"/implement -f {plan} --phase {args.phase}"
-    argv = spawn_argv(name, cwd, prompt, args.permission_mode, args.model,
+    model, label, refusal = resolve_model(args.model, getattr(args, "force_model", False))
+    if refusal:
+        return soft(refusal, hint="pass --model sonnet, or --force-model to run it anyway")
+    argv = spawn_argv(name, cwd, prompt, args.permission_mode, model,
                       slug=slug, phase=args.phase,
                       coordinator=ledger.get("coordinator"))
     trust = ensure_trusted(cwd, ledger.get("repo") or repo, enabled=not args.no_trust)
 
     if args.dry_run:
         print(json.dumps({"swarm": True, "dry_run": True, "name": name, "cwd": cwd,
-                          "prompt": prompt, "trust": trust, "argv": argv}, indent=2))
+                          "model": label, "prompt": prompt, "trust": trust, "argv": argv},
+                         indent=2))
         return 0
     if trust.get("action") == "refused":
         return soft("would hang on the folder trust prompt", trust=trust,
@@ -958,8 +1007,8 @@ def cmd_spawn(args):
             "cwd": cwd, "spawned_at": now(), "machine": os.uname().nodename,
             "permission_mode": args.permission_mode}
     out = {"swarm": True, "spawned": args.phase, "name": name, "window": window,
-           "pane": pane.strip(), "cwd": cwd, "trust": trust, "prompt": prompt,
-           "recorded_in_ledger": recorded}
+           "pane": pane.strip(), "cwd": cwd, "model": label, "trust": trust,
+           "prompt": prompt, "recorded_in_ledger": recorded}
     if not recorded:
         out["ledger_note"] = (f"phase {args.phase} was not in the ledger by the time "
                               "the window opened -- the session IS running; recover it "
@@ -1814,12 +1863,16 @@ def cmd_launch(args):
         return soft(f"cwd {cwd} does not exist")
     repo = args.repo or main_worktree(cwd) or cwd
     name = slugify(args.name)
-    argv = spawn_argv(name, cwd, args.prompt, args.permission_mode, args.model)
+    model, label, refusal = resolve_model(args.model, getattr(args, "force_model", False))
+    if refusal:
+        return soft(refusal, hint="pass --model sonnet, or --force-model to run it anyway")
+    argv = spawn_argv(name, cwd, args.prompt, args.permission_mode, model)
     trust = ensure_trusted(cwd, repo, enabled=not args.no_trust)
 
     if args.dry_run:
         print(json.dumps({"swarm": True, "dry_run": True, "name": name, "cwd": cwd,
-                          "trust": trust, "prompt": args.prompt, "argv": argv}, indent=2))
+                          "model": label, "trust": trust, "prompt": args.prompt,
+                          "argv": argv}, indent=2))
         return 0
     if trust.get("action") == "refused":
         return soft("would hang on the folder trust prompt", trust=trust,
@@ -1843,7 +1896,7 @@ def cmd_launch(args):
     if handle is None:
         return soft("tmux new-window failed", argv=argv)
     window, _, pane = handle.partition(" ")
-    out = {"swarm": True, "launched": name, "window": window, "pane": pane.strip(),
+    out = {"swarm": True, "launched": name, "window": window, "pane": pane.strip(), "model": label,
            "cwd": cwd, "trust": trust, "prompt": args.prompt}
     if not args.permission_mode:
         out["warning"] = ("no --permission-mode given: an unattended session on a mode "
@@ -2195,6 +2248,42 @@ def selftest():
         plan="/nonexistent/NOPE_PLAN.md", slug=None, coordinator=None,
         coordinator_session_id=None)), 0)
 
+    # quota economy: the mod's file decides; a missing, stale or odd file is the normal rules
+    now_ms = datetime.now(timezone.utc).timestamp() * 1000
+    with tempfile.TemporaryDirectory() as tmp:
+        qpath = Path(tmp) / "quota.json"
+
+        def write_quota(**kw):
+            qpath.write_text(json.dumps(dict(
+                {"seven_day": 91, "threshold": 85, "economy": True, "resetsAt": None, "at": now_ms},
+                **kw)))
+
+        eq("no quota file: normal rules", resolve_model(None, path=qpath, now_ms=now_ms),
+           (None, None, None))
+        write_quota()
+        eq("economy, unnamed: sonnet with the percentage",
+           resolve_model(None, path=qpath, now_ms=now_ms),
+           ("sonnet", "sonnet (quota economy 91%)", None))
+        eq("economy, haiku kept", resolve_model("haiku", path=qpath, now_ms=now_ms),
+           ("haiku", "haiku", None))
+        eq("economy, sonnet kept", resolve_model("sonnet", path=qpath, now_ms=now_ms),
+           ("sonnet", "sonnet", None))
+        r = resolve_model("opus", path=qpath, now_ms=now_ms)
+        eq("economy, opus refused", (r[0], r[1], r[2] is not None), (None, None, True))
+        r = resolve_model("fable", path=qpath, now_ms=now_ms)
+        eq("economy, fable refused", (r[0], r[1], r[2] is not None), (None, None, True))
+        eq("economy, opus forced through", resolve_model("opus", True, path=qpath, now_ms=now_ms),
+           ("opus", "opus", None))
+        write_quota(at=now_ms - QUOTA_FRESH_MS - 1000)
+        eq("stale reading: normal rules", resolve_model(None, path=qpath, now_ms=now_ms),
+           (None, None, None))
+        write_quota(economy=False)
+        eq("economy false: opus untouched", resolve_model("opus", path=qpath, now_ms=now_ms),
+           ("opus", "opus", None))
+        qpath.write_text("{ not json")
+        eq("unreadable file: normal rules", resolve_model("opus", path=qpath, now_ms=now_ms),
+           ("opus", "opus", None))
+
     if failures:
         for line in failures:
             print(f"FAIL {line}", file=sys.stderr)
@@ -2227,6 +2316,8 @@ def main(argv=None):
     p.add_argument("--cwd")
     p.add_argument("--permission-mode")
     p.add_argument("--model")
+    p.add_argument("--force-model", action="store_true",
+                   help="in economy mode, run an explicit opus or fable anyway")
     p.add_argument("--force", action="store_true")
     p.add_argument("--no-trust", action="store_true",
                    help="do not propagate the repo's trust to the worktree")
@@ -2289,6 +2380,8 @@ def main(argv=None):
     p.add_argument("--repo")
     p.add_argument("--permission-mode")
     p.add_argument("--model")
+    p.add_argument("--force-model", action="store_true",
+                   help="in economy mode, run an explicit opus or fable anyway")
     p.add_argument("--no-trust", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--allow-duplicate", action="store_true",

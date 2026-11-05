@@ -489,6 +489,7 @@ and use the normal rules. In economy mode:
   live journeys (real model calls, `test:live*`) and record them as `inconclusive (quota economy)`. A
   journey that fails is fixed and only that journey re-runs.
 - The coordinator dispatches no extra review or research agents, and states the quota when it holds a set.
+- The coordinator passes `--model sonnet` to every `swarm.py spawn` and `swarm.py launch`. `swarm.py` reads the mod's quota file and defaults to Sonnet in economy mode on its own, but the explicit flag keeps the choice in the command.
 
 **Independent verification first** (unless the small-set rule applies). Dispatch the **`verifier`** agent (`subagent_type:
 "verifier"`) with this worktree, the base the set branched from, and every phase plan of the

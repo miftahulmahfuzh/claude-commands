@@ -143,7 +143,10 @@ still matters, but it has to fit the budget. At or over 85% of the `seven_day` w
 `Weekly quota N% used ... ECONOMY MODE` line in the same context block, and an `agent.spawn` hook
 refuses a `verifier` in any session with a deny that says to record `self-verified (quota economy, N%)`
 and land on the phase's own proof. The refusal is mechanical, but the hook fails **open**: no reading
-(`rateLimits` is empty off a subscription) or an error means normal mode. It saves cost; it guards nothing.
+(`rateLimits` is empty off a subscription) or an error means normal mode. It saves cost; it guards nothing. In economy mode the mod also sets every subagent to Sonnet unless it
+names haiku or sonnet, and refuses a fork of an Opus or Fable parent. A mod cannot change the main
+session's model, so an Opus session gets a context line and a band line saying to switch with `/model sonnet`.
+The reading is also written to `~/.claude/swarm-deck/quota.json`, which `swarm.py spawn` and `launch` read.
 
 ## Two design points worth the words
 

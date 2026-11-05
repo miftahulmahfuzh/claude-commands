@@ -451,6 +451,10 @@ python3 ~/.claude/skills/swarm/swarm.py launch \
 This is the same `swarm.py launch` primitive the N>1 path below uses — it needs no ledger, just a
 name, a cwd and a prompt — so simplifying to one phase does not mean reinventing the spawn.
 
+**Quota economy.** In economy mode (the swarm-deck context block says `ECONOMY MODE`) the coordinator passes
+`--model sonnet` to both launches above. `swarm.py launch` reads the same quota file and defaults to Sonnet
+anyway, but the explicit flag keeps the choice in the command.
+
 **N > 1 — launch the orchestrator**, which computes waves, spawns a session per phase, verifies
 and lands the set:
 
