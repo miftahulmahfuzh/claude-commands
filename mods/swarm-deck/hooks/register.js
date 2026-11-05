@@ -623,6 +623,212 @@ function alarm(now) {
   return null
 }
 
+// --------------------------------------------------------- the plan set, resolved
+
+/**
+ * Attach the plan set's files to /analyze-orchestrator and /implement, resolved by
+ * plan_graph.py, so neither session ever locates a phase plan by hand.
+ *
+ * MEASURED 2026-11-05 on seer-adversarial: a coordinator checked for its phase plans with
+ * `ls .workflows/plan/<slug>/ .workflows/analyze/ | head`. The one `head` over two
+ * listings cut off phase-7.md -- committed, 35 KB -- and the coordinator concluded the
+ * plan was missing and went looking with a filesystem-wide `find`. The command's Step 1
+ * was then patched to say "decide it with plan_graph.py, never a listing". That is
+ * advice. This makes the answer arrive with the prompt instead, so there is nothing left
+ * to look for.
+ *
+ * plan_graph.py stays the ONE reader of the index format, the same rule this mod keeps for
+ * identity: the hook parses only the command line and plan_graph's JSON. A second parser
+ * of the Plan column here would be a second resolver to disagree with the gate.
+ *
+ * It fails OPEN, the opposite of the guards and deliberately: this is help, not a gate. A
+ * hook that cannot resolve the set leaves the prompt exactly as typed, and the command
+ * falls back to running plan_graph.py itself, as it always has. It never drops.
+ *
+ * Any session, not only a SWARM_* phase: the coordinator is not a phase, and /implement
+ * also runs standalone.
+ */
+const PLANNED = ['analyze-orchestrator', 'implement']
+
+/** Split a command line on whitespace, keeping a quoted path whole. */
+function words(args) {
+  const out = []
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g
+  let m
+  while ((m = re.exec(String(args || ''))) !== null) out.push(m[1] ?? m[2] ?? m[3])
+  return out
+}
+
+/**
+ * What the command line asks for: { index } or { resume, slug }, plus a phase for
+ * /implement --phase N. Null for anything else -- a --status, a typo, no flag at all --
+ * which the hook answers by passing the prompt through untouched.
+ */
+function planArgs(name, args) {
+  const w = words(args)
+  const out = {}
+  for (let i = 0; i < w.length; i++) {
+    if (w[i] === '-f' && w[i + 1] && !w[i + 1].startsWith('-')) out.index = w[++i]
+    else if (w[i] === '--phase' && /^\d+$/.test(w[i + 1] || '')) out.phase = Number(w[++i])
+    else if (w[i] === '--resume' && name === 'analyze-orchestrator') {
+      out.resume = true
+      if (w[i + 1] && !w[i + 1].startsWith('-')) out.slug = w[++i]
+    }
+  }
+  if (out.index === undefined && !out.resume) return null
+  return out
+}
+
+function joinPath(base, path) {
+  if (path.startsWith('/')) return path
+  return base.replace(/\/+$/, '') + '/' + path.replace(/^\.\//, '')
+}
+
+/** `~/x` -> `$HOME/x`. /analyze writes tildes into indexes and ledgers. */
+function expand(path, home) {
+  if (home && (path === '~' || path.startsWith('~/'))) return home + path.slice(1)
+  return path
+}
+
+/**
+ * The plan index a `--resume [slug]` means, or null.
+ *
+ * The ledger is read for its `plan` field only -- JSON, not the index format -- and the
+ * fallback is the durable copy beside it, the same order `swarm.py spawn_plan` takes. A
+ * bare --resume is answered only when exactly one set is unlanded; with several the
+ * command's own rule picks, and a hook guessing differently would be worse than silence.
+ */
+async function resumeIndex($, slug, home) {
+  const common = await $.process.run(
+    ['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], { timeoutMs: 5000 })
+  if (common.exitCode !== 0) return null
+  // The parent of the common .git is the main checkout, where the ledger lives -- also
+  // from inside a linked worktree.
+  const main = common.stdout.trim().replace(/\/\.git\/?$/, '')
+  const orch = main + '/.workflows/orchestration'
+  if (!slug) {
+    const live = []
+    for (const entry of await $.fs.list(orch)) {
+      if (entry.kind !== 'dir') continue
+      const ledger = await readLedger($, orch + '/' + entry.name)
+      if (ledger && !ledger.landed) live.push(entry.name)
+    }
+    if (live.length !== 1) return null
+    slug = live[0]
+  }
+  const ledger = await readLedger($, orch + '/' + slug)
+  const recorded = ledger && typeof ledger.plan === 'string' ? expand(ledger.plan, home) : null
+  if (recorded && (await $.fs.exists(recorded))) return recorded
+  const durable = orch + '/' + slug + '/PLAN.md'
+  return (await $.fs.exists(durable)) ? durable : null
+}
+
+async function readLedger($, dir) {
+  try {
+    return JSON.parse(await $.fs.read(dir + '/ledger.json'))
+  } catch (err) {
+    return null
+  }
+}
+
+/**
+ * plan_graph.py's --json for one index, or null. Exit 1 (a plan missing) and 2 (a
+ * collision) are answers, not failures, so the exit code is not checked -- the JSON is.
+ */
+async function planGraph($, index, home) {
+  const script = home + '/.claude/skills/swarm/plan_graph.py'
+  const run = await $.process.run(['python3', script, '--json', index], { timeoutMs: 15000 })
+  const graph = JSON.parse(run.stdout)
+  if (!graph || graph.error || !Array.isArray(graph.phases)) return null
+  // A deployed plan_graph.py from before plan_path existed: say nothing rather than
+  // half of it.
+  if (graph.phases.some(p => p.plan_path === undefined)) return null
+  return graph
+}
+
+/**
+ * One line per phase: where its plan is, or where it was looked for.
+ *
+ * The durable copy (`orchestration/<slug>/PLAN.md`) keeps the worktree's Plan cells, which
+ * resolve against the main checkout and usually find nothing there. Step 2 of the
+ * orchestrator copies every phase plan beside it as phase-N.md, verbatim, so a phase the
+ * gate could not find is looked for there before it is called missing.
+ */
+async function phaseLines($, graph, index) {
+  const durableDir = /\/\.workflows\/orchestration\/[^/]+\/PLAN\.md$/.test(index)
+    ? index.slice(0, -'/PLAN.md'.length) : null
+  const tried = new Map((graph.missing_plans || []).map(m => [m.phase, m]))
+  const lines = []
+  for (const p of graph.phases) {
+    if (p.plan_path) {
+      lines.push({ n: p.n, ok: true, path: p.plan_path, bytes: p.plan_bytes })
+      continue
+    }
+    if (durableDir) {
+      const copy = durableDir + '/phase-' + p.n + '.md'
+      const stat = await $.fs.stat(copy).catch(() => null)
+      if (stat && stat.kind === 'file') {
+        lines.push({ n: p.n, ok: true, path: copy, bytes: stat.size, copy: true })
+        continue
+      }
+    }
+    const miss = tried.get(p.n) || {}
+    lines.push({ n: p.n, ok: false, cell: miss.plan || p.plan || '(none)', tried: miss.tried || null })
+  }
+  return lines
+}
+
+function planBlock(name, index, graph, lines, phase) {
+  const shown = phase === undefined ? lines : lines.filter(l => l.n === phase)
+  const out = [
+    'swarm-deck: the plan set for /' + name + ', resolved by plan_graph.py before this turn.',
+    'index: ' + index,
+    'resolved against root: ' + graph.root,
+  ]
+  for (const l of shown) {
+    out.push(l.ok
+      ? 'phase ' + l.n + ': ' + l.path + ' (' + l.bytes + ' bytes)' +
+        (l.copy ? ' -- the durable copy beside the index' : '')
+      : 'phase ' + l.n + ': MISSING -- Plan cell `' + l.cell + '`, tried ' + (l.tried || '(no path)'))
+  }
+  const missing = shown.filter(l => !l.ok)
+  if (missing.length === 0) {
+    out.push(phase === undefined
+      ? 'All ' + shown.length + ' phase plans are present; do not re-list or search for them.'
+      : 'Phase ' + phase + "'s plan is present at the path above; do not re-list or search for it.")
+  } else {
+    out.push(missing.length + ' of ' + shown.length + ' phase plan' + (shown.length === 1 ? ' is' : 's are') +
+      ' missing: ' + missing.map(l => 'phase ' + l.n).join(', ') + '. This is the gate\'s answer;' +
+      ' report these lines and the resolved-against-root line exactly, and do not search for the files.')
+  }
+  return out.join('\n')
+}
+
+/** The prompt.submit hook. Every path that is not a clean answer is `next(e)` unchanged. */
+async function attachPlan($, e, next) {
+  const cmd = e.command
+  if (!cmd || !PLANNED.includes(cmd.name)) return next(e)
+  const want = planArgs(cmd.name, cmd.args)
+  if (want === null) return next(e)
+  const home = await $.env.get('HOME')
+  if (!home) return next(e)
+  let index = null
+  if (want.index !== undefined) {
+    index = joinPath(await $.session.cwd(), expand(want.index, home))
+    if (!(await $.fs.exists(index))) return next(e)
+  } else {
+    index = await resumeIndex($, want.slug, home)
+    if (index === null) return next(e)
+  }
+  const graph = await planGraph($, index, home)
+  if (graph === null) return next(e)
+  const phase = cmd.name === 'implement' ? want.phase : undefined
+  if (phase !== undefined && !graph.phases.some(p => p.n === phase)) return next(e)
+  const lines = await phaseLines($, graph, index)
+  const block = planBlock(cmd.name, index, graph, lines, phase)
+  return next({ ...e, context: [...(e.context ?? []), block] })
+}
+
 export function register(on) {
   on('session.start', async ($, e, next) => {
     const slug = await $.env.get('SWARM_SLUG')
@@ -743,6 +949,10 @@ export function register(on) {
   on('tool.call', { tool: 'AskUserQuestion' }, guard).catch(failClosed)
 
   on('tool.call', { tool: 'Bash' }, shellGuard).catch(shellFailClosed)
+
+  // Fails OPEN: a resolver that throws or times out hands the prompt on as typed, and the
+  // command runs plan_graph.py itself. Help must never be able to stop a prompt.
+  on('prompt.submit', attachPlan).catch(async ($, e, next) => next(e))
 
   on('session.send', async ($, e, next) => {
     // Observe only: a mod that refuses its own session's messages would be doing the

@@ -126,6 +126,17 @@ impossible — `isDelivered: true` means "reached the inbox", which a held messa
 every report is also written to the store, which no approval gate sits in front of. The
 report cannot go missing; at worst it arrives slowly.
 
+**The plan set, attached.** *A coordinator declared a committed plan missing because `ls | head`
+cut it off.* It listed two directories through one `head`, `phase-7.md` was the line that fell
+off the end, and the session went hunting the filesystem for a file that was there. Step 1 was
+then told in prose to use the gate. Now `/analyze-orchestrator` and `/implement` never have to
+look: a `prompt.submit` hook runs `plan_graph.py --json` on the `-f` index (or the ledger's,
+for `--resume`) and attaches the answer beside the prompt, where the user never sees it. Every
+phase plan by absolute path and size, or each missing one with the path tried and the root it
+was resolved against. `/implement --phase N` gets only its own phase. It works in any session,
+since a coordinator is not a phase. It fails **open**, unlike the guards: if the resolver
+breaks, the prompt goes in as typed and the command runs the gate itself.
+
 ## Two design points worth the words
 
 **It fails closed.** A mod hook that throws or times out is *skipped* — which would let the

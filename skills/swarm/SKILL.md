@@ -33,6 +33,11 @@ Exit codes: **0** clean, **2** a file is written by concurrent phases, **1** the
 read (no phase table, or a phase plan missing). 1 is deliberately not 0 — a caller that reads 0 as
 "nothing collides" would spawn a wave on the strength of an analysis that never ran.
 
+In `--json`, each phase carries `plan_path` and `plan_bytes` (the absolute file it read, `null`
+when missing) and each `missing_plans` entry carries `tried`. The `swarm-deck` mod attaches these
+to `/analyze-orchestrator` and `/implement` prompts, so take a plan's path from here and never
+from a directory listing.
+
 **The exit code is enforced, not advisory.** `/analyze-orchestrator` Step 3b spawns nothing on a
 non-zero exit. On **1** it stops outright: there is no collision report to act on, only the
 `INCOMPLETE:` line and the `resolved against root:` path the gate prints in that state, and both

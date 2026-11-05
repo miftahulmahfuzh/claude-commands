@@ -238,7 +238,10 @@ with a phase in its name, in which case `--no-widen` kept that, and a slightly s
 address beats an accurate shared one.
 
 Read that phase's plan file and apply its steps in order. The code blocks are complete by
-construction; use them.
+construction; use them. If a context block beginning `swarm-deck: the plan set for /implement`
+is attached to the prompt, it names that file by absolute path (resolved by `plan_graph.py`
+before the turn): read it there, and do not list or search for it. A phase it reports
+`MISSING` is missing; say so with the path it tried rather than hunting.
 
 `/do` reaches the same plan the same way — its **adopted path** (Step 1b) routes a task carrying
 a `**Plan**:` line straight to its own main context, with no subagent between the plan and the

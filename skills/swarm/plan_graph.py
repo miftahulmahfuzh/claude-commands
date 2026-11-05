@@ -379,14 +379,21 @@ def build(index_path):
 
     cfg = load_config(repo)
 
+    # Where each phase plan was looked for, absolute, whether or not it was found. A caller
+    # that has to NAME the file (swarm-deck attaches it to /implement and the orchestrator)
+    # takes it from here rather than joining `root` and the cell itself: a second joiner is
+    # a second resolver, and the one this replaces was `ls | head`.
+    located = {}
     declared, missing = [], []
     for p in phases:
         p["files"] = {}
         plan = p.get("plan") or ""
-        full = plan if os.path.isabs(plan) else os.path.join(repo, plan)
+        full = os.path.abspath(plan if os.path.isabs(plan) else os.path.join(repo, plan))
         if not plan or not os.path.exists(full):
-            missing.append({"phase": p["n"], "plan": plan or "(none)"})
+            missing.append({"phase": p["n"], "plan": plan or "(none)",
+                            "tried": full if plan else None})
             continue
+        located[p["n"]] = full
         declared.append((p, parse_files(open(full, encoding="utf-8").read())))
 
     # One subprocess for every declared path, not one per path: the attributes are a
@@ -445,7 +452,13 @@ def build(index_path):
         },
         "phases": [{"n": p["n"], "title": p["title"], "depends_on": p["depends_on"],
                     "wave": wave_of.get(p["n"]),
-                    "writes": sorted(f for f, k in p["files"].items() if k != "read")}
+                    "writes": sorted(f for f, k in p["files"].items() if k != "read"),
+                    # The Plan cell as written, and -- only when it was found -- the
+                    # absolute file and its size. Absent means missing; see missing_plans.
+                    "plan": p.get("plan") or None,
+                    "plan_path": located.get(p["n"]),
+                    "plan_bytes": (os.path.getsize(located[p["n"]])
+                                   if p["n"] in located else None)}
                    for p in phases],
         "dep_waves": [w.get("phases", w.get("cycle", [])) for w in dep_waves],
         "collisions": collisions,

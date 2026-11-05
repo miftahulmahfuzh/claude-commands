@@ -375,6 +375,40 @@ def test_missing_plans_still_exit_1():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------- 7b
+# --json names each phase plan's absolute file. swarm-deck attaches these paths to
+# /implement and the orchestrator so neither locates a plan by hand -- MEASURED
+# 2026-11-05, an `ls a/ b/ | head` dropped phase-7.md and the coordinator called it
+# missing. The paths must come from the same resolution the gate used, not a re-join.
+
+@case
+def test_json_names_each_plan_file():
+    tmp = tempfile.mkdtemp(prefix="pg-paths-")
+    try:
+        repo = make_repo(os.path.join(tmp, "repo"))
+        wt = add_worktree(repo, os.path.join(tmp, "wt"))
+        index = plan_set(wt, ".workflows/plan/DEMO_PLAN.md", SHARED, SHARED2)
+        gone = os.path.join(wt, ".workflows/plan/demo/phase-2.md")
+        os.remove(gone)
+        out = subprocess.run([sys.executable, GATE, "--json", index],
+                             capture_output=True, text=True, timeout=60)
+        g = json.loads(out.stdout)
+        one = os.path.join(wt, ".workflows/plan/demo/phase-1.md")
+        eq("paths: the cell is kept as written", g["phases"][0]["plan"],
+           ".workflows/plan/demo/phase-1.md")
+        eq("paths: a present plan is absolute", _real(g["phases"][0]["plan_path"]),
+           os.path.realpath(one))
+        ok("paths: and absolute as given", os.path.isabs(g["phases"][0]["plan_path"]))
+        eq("paths: with its size", g["phases"][0]["plan_bytes"], os.path.getsize(one))
+        eq("paths: a missing plan has no path", g["phases"][1]["plan_path"], None)
+        eq("paths: nor a size", g["phases"][1]["plan_bytes"], None)
+        eq("paths: missing_plans says where it looked", _real(g["missing_plans"][0]["tried"]),
+           os.path.realpath(gone))
+        eq("paths: the exit code is unchanged", out.returncode, 1)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ------------------------------------------------------------------------ 10 and 11
 # THE FALSE ALL-CLEAR. Fixing the root removes the dominant CAUSE of a missing plan,
 # not the reassuring sentence printed over one. A plan file genuinely absent, a typo'd

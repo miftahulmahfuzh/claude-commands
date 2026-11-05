@@ -92,7 +92,12 @@ Three consequences, each of them load-bearing:
 **Fresh (`-f`).** Read the plan index. Refuse and stop if:
 - it is an analysis document rather than a plan index → name `/analyze`
 - any phase's **Plan** column points at a file that does not exist — **decided by the gate, never
-  by eye.** Run `python3 ~/.claude/skills/swarm/plan_graph.py <PLAN>` (the same call Step 3b
+  by eye.** When a context block beginning `swarm-deck: the plan set for /analyze-orchestrator`
+  is attached to this prompt, it **is** the gate's answer: the `swarm-deck` mod ran
+  `plan_graph.py --json` on this index before the turn started and lists every phase plan by
+  absolute path and size, or each missing one with the path tried and its `resolved against
+  root:` line. Trust it, use those paths, and do not list or search for the files. With no such
+  block, run `python3 ~/.claude/skills/swarm/plan_graph.py <PLAN>` yourself (the same call Step 3b
   makes): it resolves every **Plan** cell against the repo root the index sits in, and only its
   `phase plans not found` list, with its `resolved against root:` line, counts as "missing".
   Exit 0 or 2 means every phase plan was read. If you check a single path yourself, use

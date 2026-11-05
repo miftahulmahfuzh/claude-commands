@@ -528,6 +528,10 @@ Or just don't type the second command at all — orchestration is the default:
 # 07:00  every phase on the branch, waiting on your merge
 ```
 
+With the [`swarm-deck`](#modsswarm-deck) mod loaded, the coordinator and every child get their
+phase plans' absolute paths attached to the prompt, resolved by `plan_graph.py`, so nobody
+goes looking for a plan file.
+
 Each child is launched with `claude -n impl-<slug>-p<N>`, so its peer address exists before the
 process boots and the coordinator never races the child's own rename. When a phase lands it
 writes the ledger and messages the coordinator; the coordinator verifies the commit is really on
@@ -756,6 +760,13 @@ history, not an emergency. Full table in the
 [mod's README](mods/swarm-deck/README.md#what-each-status-means).
 
 ![Phase 2 handing off to completion-handler while phase 4 stays QUIET](docs/img/fleet-statuses.gif)
+
+It also hands `/analyze-orchestrator` and `/implement` their plan files. A `prompt.submit` hook
+runs `plan_graph.py --json` on the `-f` index (or the ledger's, for `--resume`) and attaches
+every phase plan's absolute path and size to the prompt, or names the missing ones with the
+path tried. Neither session lists a directory to find a plan. That is how a coordinator once
+lost `phase-7.md` to `ls | head`. This hook fails open: if it breaks, the prompt goes in as
+typed.
 
 ```bash
 cd mods/swarm-deck

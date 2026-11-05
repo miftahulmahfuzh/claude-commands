@@ -191,6 +191,8 @@ The module has two `tool.call` hooks and they fail in opposite directions, which
 - the **watcher** (which only records the last tool name) fails **open** — telemetry must
   never be able to refuse work
 
+The `prompt.submit` plan resolver (below) fails **open** too, and never drops: it is help.
+
 ### Ordering inside `session.start`
 
 Identity is assigned *before* the heartbeat timer starts. A hook that throws partway is
@@ -341,6 +343,30 @@ Two defects in slice 5 survived a green suite and were found by running it in a 
 - Claude Code prefixes a command's reply with the plugin's name, so text beginning
   `'swarm-deck: '` renders as `swarm-deck: swarm-deck: …` — the same duplicate the slice 3
   live run turned up in `$.ui.log`, reintroduced in a different call.
+
+## The plan set, resolved before the turn
+
+Added 2026-11-05. A coordinator checked for its phase plans with `ls dirA/ dirB/ | head`. The
+truncated output dropped `phase-7.md`, and it reported a committed plan as missing. Step 1 of
+`/analyze-orchestrator` was patched in prose; this makes it a mechanism.
+
+- `prompt.submit`, for the commands `analyze-orchestrator` and `implement`, in **any** session:
+  the coordinator is not a phase, and `/implement` also runs standalone.
+- The index is `-f <path>` against the session cwd, or for `--resume [slug]` the ledger's `plan`
+  field, then `orchestration/<slug>/PLAN.md`. A bare `--resume` is answered only when exactly one
+  set is unlanded. With several, the command's own rule picks.
+- `plan_graph.py --json` is the only reader of the index. Its phases carry `plan_path` and
+  `plan_bytes` (absolute, present plans only) and `missing_plans` carries `tried`, so the hook
+  joins no paths of its own. A phase missing under the durable copy is looked for as the
+  `phase-N.md` beside it, which orchestrator Step 2 copies there.
+- One `context` block: index, root, a line per phase (only phase N for `/implement --phase N`),
+  then "all N present; do not re-list" or the missing phases with the path tried.
+- Fails open on every path: unparseable args, a missing index, a gate that crashes or predates
+  `plan_path`. All of these leave the prompt as typed.
+
+Verified live: `claude -n x '/implement -f <abs> --phase 2'`, the same shape `swarm.py launch`
+and `spawn` use, raises `prompt.submit` with `command: {name: 'implement', args}` and
+`origin: composer`, and the block arrived in the context that entered.
 
 ## Distribution
 
