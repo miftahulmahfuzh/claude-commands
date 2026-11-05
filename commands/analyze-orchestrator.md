@@ -91,7 +91,17 @@ Three consequences, each of them load-bearing:
 
 **Fresh (`-f`).** Read the plan index. Refuse and stop if:
 - it is an analysis document rather than a plan index → name `/analyze`
-- any phase's **Plan** column points at a file that does not exist
+- any phase's **Plan** column points at a file that does not exist — **decided by the gate, never
+  by eye.** Run `python3 ~/.claude/skills/swarm/plan_graph.py <PLAN>` (the same call Step 3b
+  makes): it resolves every **Plan** cell against the repo root the index sits in, and only its
+  `phase plans not found` list, with its `resolved against root:` line, counts as "missing".
+  Exit 0 or 2 means every phase plan was read. If you check a single path yourself, use
+  `test -f <root>/<cell>` on that one path. Never conclude "missing" from a directory listing:
+  piping several listings through one `head` truncates the combined output, and the files at
+  the end are the ones that vanish. MEASURED 2026-11-05 on `seer-adversarial`:
+  `ls .workflows/plan/<slug>/ .workflows/analyze/ | head` showed phases 1-6, cut off
+  `phase-7.md` (committed, 35 KB), and the coordinator went looking for a plan that was not
+  missing. That ran a filesystem-wide `find`, and the planning session had to step in.
 - **`Phases: 1`** — a single-phase plan has nothing for this command to coordinate. Say that
   `/analyze` should have launched `/implement -f <PLAN> --phase 1` directly for it (Step 11), and
   point the user at that line instead of proceeding.
