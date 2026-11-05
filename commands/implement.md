@@ -480,6 +480,16 @@ self-proven change, that is most of the bill for little extra assurance. Record 
 `self-verified (small-set rule)` in the ledger and the report, so it is never mistaken for an
 independent check. If any condition fails, dispatch the verifier as usual.
 
+**Quota economy.** The swarm-deck context block carries a line `Weekly quota N% used (resets ...) --
+ECONOMY MODE` once weekly usage is at or over 85%, and the mod then refuses a `verifier` spawn. That
+line is the only source of the number: if no block is present, do not try to measure usage yourself,
+and use the normal rules. In economy mode:
+- No independent verifier agent. Record `self-verified (quota economy, N%)` in the ledger and the report.
+- Each phase's own Proof runs ONCE, on the cheapest journeys that cover its exit criteria. Skip paid or
+  live journeys (real model calls, `test:live*`) and record them as `inconclusive (quota economy)`. A
+  journey that fails is fixed and only that journey re-runs.
+- The coordinator dispatches no extra review or research agents, and states the quota when it holds a set.
+
 **Independent verification first** (unless the small-set rule applies). Dispatch the **`verifier`** agent (`subagent_type:
 "verifier"`) with this worktree, the base the set branched from, and every phase plan of the
 set. It drives the plans' Proof sections with fresh context; you wrote the code, so your own

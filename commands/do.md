@@ -301,6 +301,10 @@ harness, still gets one journey: the change's own user-visible effect, driven on
 `/do` tasks are small, so this self-check is the whole verification. There is no separate
 verifier agent on this path, to keep it cheap. Say `self-verified` in the report so nobody
 mistakes it for an independent check.
+**Quota economy:** if the swarm-deck context block says `Weekly quota N% used ... ECONOMY MODE`, run the
+Proof once on the cheapest journeys that cover the exit criteria, record paid/live journeys (real model
+calls, `test:live*`) as `inconclusive (quota economy)`, re-run only a journey that failed, and dispatch no
+extra agents. No block means normal rules; never measure usage yourself.
 
 **On both routes the main context does NOT:** read `todos.md`, `package_readme.md` or
 `analysis_report.md` · read documentation · update `todos.md` · run git · write plans.

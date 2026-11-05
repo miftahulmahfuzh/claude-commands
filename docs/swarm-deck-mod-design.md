@@ -368,6 +368,23 @@ Verified live: `claude -n x '/implement -f <abs> --phase 2'`, the same shape `sw
 and `spawn` use, raises `prompt.submit` with `command: {name: 'implement', args}` and
 `origin: composer`, and the block arrived in the context that entered.
 
+## Quota economy
+
+MEASURED: a swarm hit 96% of a small company-paid weekly quota mid-run. Verification still matters,
+so the mod cuts the independent part to the minimum rather than turning it off by prose.
+
+- `quota($)` reads `$.session.usage()` (free for the plain call) and looks for `kind === 'seven_day'`.
+  At or over 85 (env `CLAUDE_QUOTA_ECONOMY_PCT`) it answers `{ pct, resetsAt }`; otherwise, on an empty
+  `rateLimits` (off a subscription) and on any throw, it answers null, meaning normal mode.
+- `prompt.submit` adds `Weekly quota N% used (resets ...) -- ECONOMY MODE: ...` to the existing context
+  block for `/do`, `/analyze`, `/implement` and `/analyze-orchestrator`. Under the threshold it adds nothing.
+- `agent.spawn` with `subagentType: 'verifier'` returns `{ deny }` at or over the threshold, in any
+  session. `agent.spawn` can deny exactly as `tool.call` can, so this is a true mechanical block, not
+  advice. Unlike the guards it fails OPEN: it saves cost and protects nothing, so a broken hook must
+  never stop a spawn.
+- The command prose carries the rules the deny cannot: the phase's proof runs once on the cheapest
+  journeys, paid/live ones are `inconclusive (quota economy)`, and no extra agents are dispatched.
+
 ## Distribution
 
 Unpublished. It encodes the precedence ladder, the ledger format and the swarm's invariants —

@@ -759,6 +759,11 @@ long ago it finished. After a couple of hours an unexplained silence becomes `st
 history, not an emergency. Full table in the
 [mod's README](mods/swarm-deck/README.md#what-each-status-means).
 
+At or over 85% of the weekly quota (`CLAUDE_QUOTA_ECONOMY_PCT` to change it), the mod switches the
+commands to economy mode: it adds a quota line to the context block and refuses to spawn the `verifier`
+agent, so verification falls back to each phase's own single proof run. It fails open: no reading means
+normal rules.
+
 ![Phase 2 handing off to completion-handler while phase 4 stays QUIET](docs/img/fleet-statuses.gif)
 
 It also hands `/analyze-orchestrator` and `/implement` their plan files. A `prompt.submit` hook

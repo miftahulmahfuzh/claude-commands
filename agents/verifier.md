@@ -12,6 +12,9 @@ unproven until you observe it yourself.
 **You never edit product code, tests or plans.** You run things and write evidence.
 If something is broken, your job is to show it, not to fix it.
 
+In quota economy mode (the swarm-deck context block says ECONOMY MODE) the mod refuses to spawn you and
+the phase records `self-verified (quota economy, N%)` instead; do not try to work around the refusal.
+
 ## Input
 
 ```yaml

@@ -662,6 +662,16 @@ Loop until `runnable_now` is empty:
    The rule is about the whole set, not one wave: a 6-phase set never qualifies, even when its
    last wave has one phase.
 
+   **Quota economy.** The swarm-deck context block carries a line `Weekly quota N% used (resets ...) --
+   ECONOMY MODE` once weekly usage is at or over 85%, and the mod then refuses a `verifier` spawn. That
+   line is the only source of the number: if no block is present, do not try to measure usage yourself,
+   and use the normal rules. In economy mode:
+   - No independent verifier agent. Record `self-verified (quota economy, N%)` in the ledger and the report.
+   - Each phase's own Proof runs ONCE, on the cheapest journeys that cover its exit criteria. Skip paid or
+     live journeys (real model calls, `test:live*`) and record them as `inconclusive (quota economy)`. A
+     journey that fails is fixed and only that journey re-runs.
+   - The coordinator dispatches no extra review or research agents, and states the quota when it holds a set.
+
 7. **Push the ledger** via `pusher`. Every round. This is iron rule 2.
 8. **Reap the finished windows.**
    ```bash

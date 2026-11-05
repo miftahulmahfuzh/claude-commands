@@ -829,6 +829,65 @@ async function attachPlan($, e, next) {
   return next({ ...e, context: [...(e.context ?? []), block] })
 }
 
+/**
+ * Quota economy: at or over the weekly threshold, independent verification is cut to the
+ * minimum. MEASURED: the owner hit 96% of a small company-paid weekly quota mid-swarm.
+ *
+ * Returns { pct, resetsAt, threshold } at or over the threshold, null otherwise. Null is
+ * also every error and every empty reading (rateLimits is empty off a subscription):
+ * this is a cost saver, never a gate, so it fails OPEN to normal mode.
+ */
+const QUOTA_PCT = 85
+
+async function quota($) {
+  try {
+    const raw = await $.env.get('CLAUDE_QUOTA_ECONOMY_PCT')
+    const n = Number(raw)
+    const threshold = raw && Number.isFinite(n) && n > 0 ? n : QUOTA_PCT
+    const usage = await $.session.usage()
+    const week = (usage.rateLimits || []).find(r => r.kind === 'seven_day')
+    if (!week || typeof week.percentUsed !== 'number' || week.percentUsed < threshold) return null
+    return { pct: Math.round(week.percentUsed), resetsAt: week.resetsAt, threshold }
+  } catch {
+    return null
+  }
+}
+
+function quotaLine(q) {
+  return 'swarm-deck: Weekly quota ' + q.pct + '% used (resets ' + (q.resetsAt || 'unknown') +
+    ') -- ECONOMY MODE: no independent verifier agent (record `self-verified (quota economy, ' +
+    q.pct + '%)`); each phase\'s own Proof runs once on the cheapest journeys that cover its ' +
+    'exit criteria, skipping paid/live journeys (record `inconclusive (quota economy)`); ' +
+    'dispatch no extra review or research agents.'
+}
+
+/** The prompt.submit hook: the plan block (if any), then the quota line (if over). */
+async function promptContext($, e, next) {
+  const planned = await attachPlan($, e, x => x)
+  const q = ['analyze-orchestrator', 'implement', 'do', 'analyze'].includes(e.command?.name)
+    ? await quota($) : null
+  if (q === null) return next(planned)
+  return next({ ...planned, context: [...(planned.context ?? []), quotaLine(q)] })
+}
+
+/** Refuse a `verifier` spawn in economy mode. Mechanical, but fails OPEN. */
+async function verifierGuard($, e, next) {
+  const q = await quota($)
+  if (q === null) return next(e)
+  await $.ui.log('refused verifier spawn -- weekly quota ' + q.pct + '% (economy mode)')
+  return {
+    deny: [
+      'The verifier agent is refused: weekly quota is ' + q.pct + '% used (economy mode, ' +
+        'threshold ' + q.threshold + '%).',
+      '',
+      'Do not dispatch an independent verifier. Record "self-verified (quota economy, ' +
+        q.pct + '%)" in the ledger or report, and land on the phase\'s own Proof run once on',
+      'the cheapest journeys that cover its exit criteria. Paid or live journeys are',
+      'recorded as "inconclusive (quota economy)", not run.',
+    ].join('\n'),
+  }
+}
+
 export function register(on) {
   on('session.start', async ($, e, next) => {
     const slug = await $.env.get('SWARM_SLUG')
@@ -952,7 +1011,10 @@ export function register(on) {
 
   // Fails OPEN: a resolver that throws or times out hands the prompt on as typed, and the
   // command runs plan_graph.py itself. Help must never be able to stop a prompt.
-  on('prompt.submit', attachPlan).catch(async ($, e, next) => next(e))
+  on('prompt.submit', promptContext).catch(async ($, e, next) => next(e))
+
+  // Fails OPEN: a cost saver, not a safety guard. An error lets the spawn through.
+  on('agent.spawn', { subagentType: 'verifier' }, verifierGuard).catch(async ($, e, next) => next(e))
 
   on('session.send', async ($, e, next) => {
     // Observe only: a mod that refuses its own session's messages would be doing the

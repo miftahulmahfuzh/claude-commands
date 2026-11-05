@@ -137,6 +137,14 @@ was resolved against. `/implement --phase N` gets only its own phase. It works i
 since a coordinator is not a phase. It fails **open**, unlike the guards: if the resolver
 breaks, the prompt goes in as typed and the command runs the gate itself.
 
+**Quota economy.** *The owner hit 96% of a small company-paid weekly quota mid-swarm.* Verification
+still matters, but it has to fit the budget. At or over 85% of the `seven_day` window (override with
+`CLAUDE_QUOTA_ECONOMY_PCT`), `/do`, `/analyze`, `/implement` and `/analyze-orchestrator` get a
+`Weekly quota N% used ... ECONOMY MODE` line in the same context block, and an `agent.spawn` hook
+refuses a `verifier` in any session with a deny that says to record `self-verified (quota economy, N%)`
+and land on the phase's own proof. The refusal is mechanical, but the hook fails **open**: no reading
+(`rateLimits` is empty off a subscription) or an error means normal mode. It saves cost; it guards nothing.
+
 ## Two design points worth the words
 
 **It fails closed.** A mod hook that throws or times out is *skipped* — which would let the
