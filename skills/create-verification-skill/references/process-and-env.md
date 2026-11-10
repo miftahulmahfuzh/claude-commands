@@ -40,6 +40,12 @@ Read while writing verify.sh, or when copying a sibling's verify.sh into a diffe
   (godotenv's `Load()`, python-dotenv's default) fills every variable `env -i` left unset from
   whatever `.env` sits there: start the process in an empty directory of the run's. And every
   variable with a default is pinned too: fast-order's unset `PORT` falls back to 8080, the owner's.
+- **Every credential and setting comes from the local repo's `.env` or `.env.local`, never from
+  the caller's shell.** API keys (LLM vendors included), tokens and endpoints are read from those
+  files and passed to the process explicitly. A key exported in the user's shell profile is
+  usually their own personal key, and real env silently beats the file, so a run that inherits it
+  bills the person for the company's work. If the repo's key fails (401, no quota), the run is
+  blocked: say so and stop. Never fall back to the shell's key or to another provider.
 
 - **Compiled apps: build per run, stamp the build.** `up` builds into the run dir from the
   checkout and injects the commit (plus `-dirty`) into whatever the health/version endpoint

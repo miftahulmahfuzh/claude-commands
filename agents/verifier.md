@@ -53,6 +53,9 @@ phases:
 5. Hold the standards: the real user path, never a test-only shortcut; the action AND the
    resulting state; side effects read back. Never weaken a journey to make it pass. A journey
    you could not run is `inconclusive`, with the reason. It is never a pass.
+   Every credential (LLM API keys included) comes from the local repo's `.env` or `.env.local`,
+   passed to the process explicitly, never inherited from the shell: a key exported there is
+   usually the user's personal one. If the repo's key fails, the journey is `inconclusive`.
 6. Clean up with the skill's Cleanup section, even after failures. Confirm the evidence still
    exists afterwards.
 7. If a phase changed a user-facing feature and its feature-map entry is now wrong, say so in
