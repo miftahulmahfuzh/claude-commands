@@ -1,0 +1,109 @@
+{
+  "branch": "feature/ears-acceptance-criteria",
+  "coordinator": "orch-ears-acceptance-criteria",
+  "coordinator_session_id": "662d31f3-8b12-4345-b9d6-f6fd48caa493",
+  "created": "2026-11-11T08:30:14+07:00",
+  "phases": [
+    {
+      "card": null,
+      "commit": null,
+      "depends_on": [],
+      "difficulty": "NORMAL",
+      "n": 1,
+      "note": null,
+      "package": "commands",
+      "plan": ".workflows/plan/ears-acceptance-criteria/phase-1.md",
+      "reported_at": null,
+      "satisfies": [
+        "R1"
+      ],
+      "status": "pending",
+      "task_id": null,
+      "title": "/analyze writes EARS criteria"
+    },
+    {
+      "card": null,
+      "commit": null,
+      "depends_on": [],
+      "difficulty": "NORMAL",
+      "n": 2,
+      "note": null,
+      "package": "agents",
+      "plan": ".workflows/plan/ears-acceptance-criteria/phase-2.md",
+      "reported_at": null,
+      "satisfies": [
+        "R2"
+      ],
+      "status": "pending",
+      "task_id": null,
+      "title": "Phase plans trace journeys to criteria"
+    },
+    {
+      "card": null,
+      "commit": null,
+      "depends_on": [
+        1,
+        2
+      ],
+      "difficulty": "HARD",
+      "n": 3,
+      "note": null,
+      "package": "skills/swarm",
+      "plan": ".workflows/plan/ears-acceptance-criteria/phase-3.md",
+      "reported_at": null,
+      "satisfies": [
+        "R3"
+      ],
+      "status": "pending",
+      "task_id": null,
+      "title": "Reconciler enforces the trace (+ ears_trace.py)"
+    },
+    {
+      "card": null,
+      "commit": null,
+      "depends_on": [
+        1,
+        2
+      ],
+      "difficulty": "NORMAL",
+      "n": 4,
+      "note": null,
+      "package": "agents",
+      "plan": ".workflows/plan/ears-acceptance-criteria/phase-4.md",
+      "reported_at": null,
+      "satisfies": [
+        "R4"
+      ],
+      "status": "pending",
+      "task_id": null,
+      "title": "Verifier reports per criterion"
+    },
+    {
+      "card": null,
+      "commit": null,
+      "depends_on": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "difficulty": "NORMAL",
+      "n": 5,
+      "note": null,
+      "package": "skills",
+      "plan": ".workflows/plan/ears-acceptance-criteria/phase-5.md",
+      "reported_at": null,
+      "satisfies": [
+        "R5"
+      ],
+      "status": "pending",
+      "task_id": null,
+      "title": "Consumers, docs and deploy"
+    }
+  ],
+  "plan": "/home/miftah/.worktrees/claude-commands/ears-acceptance-criteria/.workflows/orchestration/ears-acceptance-criteria/PLAN.md",
+  "repo": "/home/miftah/claude-commands",
+  "slug": "ears-acceptance-criteria",
+  "updated": "2026-11-11T08:30:14+07:00",
+  "worktree": "/home/miftah/.worktrees/claude-commands/ears-acceptance-criteria"
+}
