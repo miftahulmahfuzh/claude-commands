@@ -32,11 +32,25 @@ let decided = []
  *   idle        between turns
  *   finalizing  completion-handler is running -- the endgame, and STICKY: a phase does
  *               not go back to idle once it has started handing off
+ *   finished    the turn that ran completion-handler has ended: the work is handed off
+ *               and the session is only idling. Sticky too. This is the state a
+ *               coordinator has to act on, and the one that used to look like `idle`.
  *   done        the session ended on purpose
  */
 let phaseState = 'starting'
 let sent = []
 let undelivered = 0
+
+/**
+ * The foreground shell commands this session is running right now, oldest first.
+ *
+ * A Bash call holds the tool open until it returns, so a command that hangs looks exactly
+ * like a phase that is working: the row says `working`, the heartbeat is fresh, and the
+ * deck has nothing to say. Publishing what is running and since when lets the deck do the
+ * arithmetic instead -- the phase never has to remember to give a progress update, which
+ * it could not do anyway while its only tool call is the one that is stuck.
+ */
+let shells = []
 
 /**
  * This session's own row in the machine-shared store.
@@ -61,10 +75,31 @@ function sentKey() {
   return 'swarm/' + swarm.slug + '/sent/' + swarm.phase
 }
 
-/** Name what this phase is doing. Never denies -- see its registration. */
+/**
+ * Name what this phase is doing, and time every foreground shell it runs. Never denies --
+ * see its registration.
+ *
+ * Subagents' shells count: completion-handler's pusher hanging on a push is the same
+ * stall as the phase's own test run hanging. A backgrounded command returns at once and
+ * is the session's to poll, so it is not tracked.
+ */
 async function watch($, e, next) {
-  if (swarm !== null) lastTool = e.tool
-  return next(e)
+  if (swarm === null) return next(e)
+  lastTool = e.tool
+  if (e.tool !== 'Bash' || e.run_in_background === true) return next(e)
+  const entry = {
+    command: String(e.command || '').slice(0, 300),
+    startedAt: await $.clock.now(),
+    agent: e.agentId !== undefined,
+  }
+  shells = shells.concat([entry])
+  await publish($)
+  try {
+    return await next(e)
+  } finally {
+    shells = shells.filter(s => s !== entry)
+    await publish($)
+  }
 }
 
 /**
@@ -93,6 +128,7 @@ async function publish($) {
       decided: decided.length,
       sent: sent.length,
       undelivered: undelivered,
+      shells: shells,
       updatedAt: await $.clock.now(),
     })
   } catch (err) {
@@ -238,6 +274,7 @@ async function finish($) {
       decided: decided.length,
       sent: sent.length,
       undelivered: undelivered,
+      shells: [],
       updatedAt: await $.clock.now(),
     })
   } catch (err) {
@@ -320,6 +357,115 @@ async function shellFailClosed($, e, next) {
 
 // Rows read out of the store, newest read wins. Rendering must not await the store:
 // a ui.render hook runs on every redraw, and redraws are throttled at 30/s.
+// ------------------------------------------------- guard 3: permission dialogs
+
+/**
+ * Nothing in an unattended swarm session waits on a permission dialog.
+ *
+ * MEASURED 2026-11-11 on ears-acceptance-criteria: phase 4 ran under bypassPermissions,
+ * and its pusher still stopped on "Dangerous rm operation on possibly-empty variable path"
+ * for `rm -f "$IDX"` -- a private git index file under .git/. Claude Code's own safety
+ * checks ask even in bypass mode. The owner answers every one of those Yes, so at 3am the
+ * dialog was not protection, only a phase stopped until morning and every phase behind it.
+ *
+ * So in a phase, or in the coordinator of a live set, every ask is answered here: ALLOWED
+ * and logged, or -- for the short list below -- DENIED with the reason, so the agent picks
+ * a safer spelling instead of stopping. A deny is a decision the agent can act on; an ask
+ * at 3am is a block. Both are written to the store, so the morning review can see each.
+ *
+ * Only asks are touched. A settings deny rule, or an organization's ceiling, still stands,
+ * and a session outside a swarm is untouched.
+ */
+let roots = []
+let approvals = []
+
+/** Recursive targets no plan ever needs deleted, and that cannot be undone. */
+const NEVER = new Set(['/', '/*', '~', '~/', '~/*', '$HOME', '${HOME}', '$HOME/', '${HOME}/',
+  '$HOME/*', '.', './', './*', '..', '../', '*', '.*'])
+
+function shellWords(segment) {
+  return (segment.match(/"[^"]*"|'[^']*'|\S+/g) || []).map(w => w.replace(/^["']|["']$/g, ''))
+}
+
+/**
+ * Why a shell command must not run unattended, or null when it may.
+ *
+ * Deliberately short. Every pattern here costs a phase a re-spelling, and every pattern
+ * NOT here is a dialog that would have been answered Yes anyway. What is left is what is
+ * both irreversible and never what a plan meant: a recursive delete of a root, a home, a
+ * parent, a glob or a variable nobody can read, and a force-push to the default branch.
+ * A non-recursive `rm -f "$VAR"` is allowed: at worst it removes one file.
+ */
+function catastrophe(command, known) {
+  for (const segment of String(command).split(/&&|\|\||[;|\n]/)) {
+    const w = shellWords(segment.trim())
+    let i = 0
+    while (i < w.length && (w[i] === 'sudo' || /^\w+=/.test(w[i]))) i += 1
+    if (w[i] === 'rm') {
+      const args = w.slice(i + 1)
+      const recursive = args.some(a => a === '--recursive' || /^-[a-zA-Z]*[rR]/.test(a))
+      if (!recursive) continue
+      for (const t of args.filter(a => !a.startsWith('-'))) {
+        if (NEVER.has(t) || t.endsWith('/..') || known.some(r => t === r || t === r + '/')) {
+          return 'a recursive delete of `' + t + '` cannot be undone and no plan asks for it'
+        }
+        if (/^\$\{?\w+\}?\/?\*?$/.test(t)) {
+          return 'a recursive delete of `' + t + '`, a variable nobody can read before it ' +
+            'runs: an empty value deletes from the wrong place. Use a literal path'
+        }
+      }
+    }
+    if (w[i] === 'git' && w[i + 1] === 'push') {
+      const forced = w.some(a => a === '-f' || a.startsWith('--force') || /^\+/.test(a))
+      if (forced && w.some(a => /(?:^|[:+/])(?:main|master)$/.test(a))) {
+        return 'a force-push to the default branch rewrites what every other session built on'
+      }
+    }
+  }
+  return null
+}
+
+function approvalKey() {
+  return 'swarm/' + (swarm ? swarm.slug : fleetSlug) + '/approvals/' + (swarm ? swarm.phase : 'coordinator')
+}
+
+async function autoAnswer($, e, next) {
+  const verdict = await next(e)
+  if (!verdict || verdict.decision !== 'ask' || e.approver !== 'person') return verdict
+  if (swarm === null && !owner) return verdict
+  const input = e.input || {}
+  const command = e.tool === 'Bash' && typeof input.command === 'string' ? input.command : null
+  const harm = command === null ? null : catastrophe(command, roots)
+  const asked = verdict.reason || verdict.rule || verdict.hook || 'the engine asked'
+  approvals = approvals.concat([{
+    phase: swarm ? swarm.phase : 'coordinator',
+    verdict: harm ? 'denied' : 'allowed',
+    tool: e.tool,
+    what: String(command !== null ? command : JSON.stringify(input)).slice(0, 300),
+    asked: String(asked).slice(0, 300),
+    at: await $.clock.now(),
+  }]).slice(-50)
+  try {
+    await $.store.set(approvalKey(), approvals)
+  } catch (err) {
+    // The answer still stands; only its record is lost.
+  }
+  try {
+    await $.ui.log('swarm-deck ' + (harm ? 'denied' : 'auto-approved') + ' ' + e.tool + ': ' + asked)
+  } catch (err) {
+    // Logging is not the answer.
+  }
+  if (harm) {
+    return {
+      decision: 'deny',
+      reason: 'swarm-deck: refused in an unattended swarm session -- ' + harm + '. Nobody is ' +
+        'awake to approve it, so choose a reversible spelling (a literal path, a non-recursive ' +
+        'rm, a branch other than main) and record the choice in completion_report.decisions.',
+    }
+  }
+  return { decision: 'allow', reason: 'swarm-deck: auto-approved in an unattended swarm session (' + asked + ')' }
+}
+
 let fleet = []
 let reports = []
 let fleetSlug = null
@@ -328,6 +474,20 @@ let fleetSlug = null
 // refresh, because the right answer changes under a running coordinator (see pick).
 let pinned = false
 let deckTimer = null
+
+/**
+ * True when THIS session is the live coordinator of the set the deck shows: the ledger's
+ * coordinator_session_id is this session's id and the set has not landed. Only then does
+ * the deck wake the session, and only then does guard 3 answer its permission asks. A
+ * person who merely opened /fleet on someone else's set gets a dashboard, nothing more.
+ */
+let owner = false
+
+/** What the last refresh saw, so a wake names only what changed. Null until seeded. */
+let seen = null
+
+/** A shell older than this lights the band, flags the deck and wakes the coordinator. */
+let maxShellMs = 5 * 60000
 
 /** No heartbeat for this long and the session is not live. */
 const STALE_MS = 60000
@@ -359,8 +519,10 @@ function shown(row, now) {
   // Stale beats working: a row that says "working" and stopped updating is the exact
   // picture of the stall this mod removes, and it must not read as healthy.
   if (age > STALE_MS) return { label: 'QUIET', color: 'yellow', alarm: true }
+  if (longShells(row, now).length > 0) return { label: 'SHELL', color: 'yellow', alarm: true }
   if (row.status === 'working') return { label: 'working', color: 'green', alarm: false }
   if (row.status === 'finalizing') return { label: 'finalizing', color: 'cyan', alarm: false }
+  if (row.status === 'finished') return { label: 'finished', color: 'cyan', alarm: false }
   if (row.status === 'starting') return { label: 'starting', dim: true, alarm: false }
   return { label: 'idle', dim: true, alarm: false }
 }
@@ -507,6 +669,14 @@ async function refresh($) {
   fleet = rows
   reports = latest
   $.ui.invalidate('ui.render')
+  // A phase is never woken by its own deck: only the set's live coordinator acts on it.
+  if (swarm !== null) return
+  owner = await owns($, fleetSlug)
+  const now = await $.clock.now()
+  const seenSlug = seen && seen.slug
+  const found = changes(seenSlug === fleetSlug ? seen : null, rows, latest, now)
+  seen = Object.assign({ slug: fleetSlug }, found.next)
+  if (owner) await wake($, found.events)
 }
 
 /** `working 41%  Bash   12s ago`, or the reason there is nothing to say. */
@@ -527,6 +697,104 @@ function ago(now, then) {
   if (sec < 90) return sec + 's'
   if (sec < 5400) return Math.round(sec / 60) + 'm'
   return (sec / 3600).toFixed(1) + 'h'
+}
+
+/** `5m`, `90s`, `1h`, `300` (seconds) -> ms, or null when it does not parse. */
+function duration(text) {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h)?\s*$/.exec(String(text || ''))
+  if (!m) return null
+  const unit = { ms: 1, s: 1000, m: 60000, h: 3600000 }[m[2] || 's']
+  const ms = Number(m[1]) * unit
+  return ms > 0 ? ms : null
+}
+
+/** This row's foreground shells that have run past the threshold, oldest first. */
+function longShells(row, now) {
+  if (!Array.isArray(row.shells)) return []
+  return row.shells.filter(s => !missing(s.startedAt) && now - s.startedAt >= maxShellMs)
+}
+
+function oneLine(text, width) {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim()
+  return flat.length > width ? flat.slice(0, width - 1) + '\u2026' : flat
+}
+
+/**
+ * What changed since the last refresh that the coordinator has to act on.
+ *
+ * Pure, so the test can drive it. The first call only seeds: a session that reloads, or a
+ * coordinator that adopts a set mid-run, must not be woken for history.
+ *
+ * MEASURED 2026-11-11 on ears-acceptance-criteria: phases 1 and 2 finished, committed,
+ * ticked todos.md and recorded `done` in the ledger -- and the coordinator sat idle until
+ * the owner noticed and typed "apparently p1 and p2 are done". It had no SendMessage tool
+ * to subscribe with, its Monitor watched HEAD and the tmux window count (a finished claude
+ * idles, it does not exit), and nothing else could start its turn. This is that something.
+ */
+function changes(prev, rows, latest, now) {
+  const next = { status: {}, report: {}, shell: {} }
+  const events = []
+  for (const row of rows) {
+    const label = shown(row, now).label
+    next.status[row.phase] = label
+    if (prev && prev.status[row.phase] !== label) {
+      if (label === 'finished' || label === 'done') events.push('phase ' + row.phase + ' is ' + label)
+      if (label === 'QUIET') events.push('phase ' + row.phase + ' has stopped heartbeating')
+    }
+    for (const s of Array.isArray(row.shells) ? row.shells : []) {
+      if (missing(s.startedAt)) continue
+      const key = row.phase + '@' + s.startedAt
+      // One wake per threshold crossed: 5m, then 10m, then 15m -- a progress report that
+      // costs the phase nothing and the coordinator one turn per interval.
+      const step = Math.floor((now - s.startedAt) / maxShellMs)
+      next.shell[key] = step
+      if (prev && step >= 1 && step > (prev.shell[key] || 0)) {
+        events.push('phase ' + row.phase + ' has had one shell running ' + ago(now, s.startedAt) +
+          (s.agent ? ' (in a subagent)' : '') + ': ' + oneLine(s.command, 160))
+      }
+    }
+  }
+  for (const report of latest) {
+    next.report[report.phase] = report.at
+    if (prev && !missing(report.at) && report.at !== prev.report[report.phase]) {
+      events.push('phase ' + report.phase + ' sent a report: ' + oneLine(report.text, 300))
+    }
+  }
+  return { next: next, events: events }
+}
+
+async function owns($, slug) {
+  try {
+    const me = await $.session.id()
+    const found = await discover($)
+    if (!me || !found.root) return false
+    const ledger = JSON.parse(await $.fs.read(found.root + '/.workflows/orchestration/' + slug + '/ledger.json'))
+    return ledger.coordinator_session_id === me && !ledger.landed
+  } catch (err) {
+    return false
+  }
+}
+
+/**
+ * Start a coordinator turn for what changed. $.prompt.submit queues until the session is
+ * idle, so a busy coordinator reads it when it next stops rather than being interrupted.
+ */
+async function wake($, events) {
+  if (events.length === 0) return
+  const text = [
+    'swarm-deck: set ' + fleetSlug + ' changed while you were not looking.',
+    ...events.map(x => '- ' + x),
+    '',
+    'Act on it now, from git rather than from this message: `python3 ~/.claude/skills/swarm/swarm.py ' +
+      'verify --slug ' + fleetSlug + ' --apply`, read each new commit\'s file list, reap, and spawn ' +
+      'whatever is runnable. For a long shell, read the pane (`tmux capture-pane -p -t <window>`) ' +
+      'before deciding it is stuck; kill and respawn only a loop.',
+  ].join('\n')
+  try {
+    await $.prompt.submit({ text: text })
+  } catch (err) {
+    // The band still shows it; a wake that cannot be delivered is not a crash.
+  }
 }
 
 /** The pane's tree. Box and Text only: it has to draw the same in tmux, Desktop and VS Code. */
@@ -561,6 +829,17 @@ async function draw($, e) {
         Text({ dimColor: true, children: [ago(now, row.updatedAt)] }),
       ],
     }))
+    // Every running shell, so a long one is visible before it crosses the line, and the
+    // ones past it in yellow. Width-capped: a command is one line on the deck.
+    const width = Math.max(20, ((e.props && e.props.bodyColumns) || 60) - 12)
+    for (const s of Array.isArray(row.shells) ? row.shells : []) {
+      const long = !missing(s.startedAt) && now - s.startedAt >= maxShellMs
+      children.push(Text({
+        color: long ? 'yellow' : undefined,
+        dimColor: !long,
+        children: ['     sh ' + ago(now, s.startedAt).padEnd(5) + ' ' + oneLine(s.command, width)],
+      }))
+    }
   }
 
   const decided = fleet.reduce((n, row) => n + (row.decided || 0), 0)
@@ -616,9 +895,16 @@ function alarm(now) {
     return 'phase ' + lost.map(r => r.phase).join(', ') +
       ': a report reached nobody -- check the coordinator name in the ledger'
   }
-  if (quiet.length > 0) {
-    const worst = quiet.map(r => ago(now, r.updatedAt)).join(', ')
-    return 'phase ' + quiet.map(r => r.phase).join(', ') + ' has gone quiet (' + worst + ')'
+  const shelled = quiet.filter(r => shown(r, now).label === 'SHELL')
+  const silent = quiet.filter(r => shown(r, now).label !== 'SHELL')
+  if (silent.length > 0) {
+    const worst = silent.map(r => ago(now, r.updatedAt)).join(', ')
+    return 'phase ' + silent.map(r => r.phase).join(', ') + ' has gone quiet (' + worst + ')'
+  }
+  if (shelled.length > 0) {
+    const r = shelled[0]
+    const s = longShells(r, now)[0]
+    return 'phase ' + r.phase + ': a shell has run ' + ago(now, s.startedAt) + ' -- ' + oneLine(s.command, 60)
   }
   return null
 }
@@ -983,6 +1269,18 @@ export function register(on) {
   on('session.start', async ($, e, next) => {
     const slug = await $.env.get('SWARM_SLUG')
     const phase = await $.env.get('SWARM_PHASE')
+    try {
+      const ms = duration(await $.env.get('MAX_SHELL_SCRIPT_DURATION'))
+      if (ms !== null) maxShellMs = ms
+    } catch (err) {
+      // The default stands.
+    }
+    try {
+      const repo = await $.session.repo()
+      if (repo && repo.root) roots = [repo.root]
+    } catch (err) {
+      // No repo: guard 3 still refuses the root, home and parent deletes.
+    }
     // Both or neither: a half-set identity means something upstream changed shape, and
     // guessing at it would arm the guard in a session that is not a phase.
     if (slug && phase) {
@@ -1111,6 +1409,10 @@ export function register(on) {
 
   on('tool.call', { tool: 'Bash' }, shellGuard).catch(shellFailClosed)
 
+  // Fails to the engine's own verdict: a broken hook leaves the dialog, which is the
+  // behaviour before this guard existed -- never an allow nobody decided.
+  on('tool.check', autoAnswer).catch(async ($, e, next) => next(e))
+
   // Fails OPEN: a resolver that throws or times out hands the prompt on as typed, and the
   // command runs plan_graph.py itself. Help must never be able to stop a prompt.
   on('prompt.submit', promptContext).catch(async ($, e, next) => next(e))
@@ -1143,7 +1445,7 @@ export function register(on) {
       turns += 1
       // `finalizing` is sticky: completion-handler's own turns must not drag the phase
       // back to `working`, or the endgame flickers and the deck stops meaning anything.
-      if (phaseState !== 'finalizing') phaseState = 'working'
+      if (phaseState !== 'finalizing' && phaseState !== 'finished') phaseState = 'working'
       await publish($)
     }
     return next(e)
@@ -1153,8 +1455,12 @@ export function register(on) {
     // A subagent finishing is not the phase finishing, and reporting it as idle makes a
     // busy session look parked -- which is the one misreading that matters on a deck
     // built to spot sessions that have gone quiet.
-    if (swarm !== null && e.agentId === undefined && phaseState !== 'finalizing') {
-      phaseState = 'idle'
+    if (swarm !== null && e.agentId === undefined) {
+      // The main loop's turn that ran completion-handler is over: the phase has handed
+      // off and is only idling now. `finished`, not `idle`, is what lets a coordinator's
+      // deck tell "done, act on me" from "between turns".
+      if (phaseState === 'finalizing') phaseState = 'finished'
+      else if (phaseState !== 'finished') phaseState = 'idle'
       await publish($)
     }
     return next(e)

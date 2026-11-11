@@ -368,18 +368,25 @@ Then, until nothing is runnable and nothing is live:
    `/implement -f <plan> --phase N`. Every phase of the set gets the **same worktree** — phase
    N+1 has to build against phase N's code, so one worktree per phase would have each phase
    planning against a tree the others' work never reached. See **One worktree, many writers**.
-2. **Subscribe to each one:** `SendMessage` with `notify_when_idle: true` and no message. This is
-   the only way to catch a phase that dies without reporting — a report-back alone cannot
-   distinguish "still working" from "crashed".
-3. **Collect reports.** Each arrives as `<cross-session-message from="impl-<slug>-pN">`.
+2. **Arm the watch before the turn ends:** `swarm.py watch --slug <slug>` under `Monitor`
+   (re-armed on expiry until the set lands). It prints a line for each phase whose ledger or git
+   derivation moved, each window that closed on unfinished work, and each shell running past
+   `MAX_SHELL_SCRIPT_DURATION` (default `5m`). Nothing else starts a coordinator's next turn: a
+   finished phase idles rather than exits, so window counts and HEAD do not move when it is done.
+   Where `SendMessage` exists, also subscribe to each phase with `notify_when_idle: true` and no
+   message — faster, but a session without the tool must not be left with nothing armed.
+3. **Collect reports** (`<cross-session-message from="impl-<slug>-pN">`) and act on each `ACT`
+   line from the watch **per phase, the moment it lands** — verify, reap, spawn what it
+   unblocked — never waiting for the rest of its wave.
 4. **Verify before believing.** `swarm.py verify --slug <slug> --apply`. A phase that says it
    landed but whose commit is not on the branch has not landed. Then read the commit's file list
    (`git show --stat --format="" <sha>`) against the plan index's **File ownership** table —
    `verify` proves a commit is on the branch, not that it contains only what its phase owned.
 5. **Commit and push the ledger.** Every round, not at the end — this is what bounds a
    cross-machine resume to losing at most one phase.
-6. **Reap the windows the wave finished with.** `reap --slug <slug>`, after `verify` and
-   never before it — an unverified `done` is a claim, and its window is the evidence.
+6. **Reap each finished phase's window as soon as it verifies.** `reap --slug <slug>`, after
+   `verify` and never before it — an unverified `done` is a claim, and its window is the
+   evidence. It closes every verified `done` phase regardless of its wave-mates.
 6b. **Prove the wave, with an agent that did not write it.** `swarm.py verify` proves the
    commits landed, not that the feature works. Dispatch one `verifier` agent per wave
    (`agents/verifier.md`; the details are in step 6b of `analyze-orchestrator.md`). A `failed`
@@ -751,10 +758,12 @@ was planned against the sentence that got overruled, and the ledger is the only 
 look. A report is also never a question: `failed` with the reason is a report the coordinator can
 act on, while "which should I do?" is a phase that has not reported at all.
 
-then `SendMessage` to the `coordinator` that `find` returned — after confirming that name is
-still in `ListAgents`. `find` returns `coordinator_session_id` for exactly this check. If the
-coordinator is gone, the file half of the report is already durable: say so to the user and stop,
-rather than delivering a phase report to a stranger.
+then, where the session has a `SendMessage` tool, message the `coordinator` that `find`
+returned — after confirming that name is still in `ListAgents`. `find` returns
+`coordinator_session_id` for exactly this check. The ledger write is the report: the coordinator's
+`swarm.py watch` and the `swarm-deck` wake both detect it without any message, so a session with no
+`SendMessage` tool, or whose coordinator is gone, says the outcome is in the ledger and stops. It
+never asks the user to relay it, and never delivers a phase report to a stranger.
 
 **Check `find`'s `slug` against the directory the plan file lives in before acting on it.** It is a
 lookup, not an authority, and a wrong answer is silent — a real slug, a real phase, a real
@@ -793,8 +802,9 @@ it yourself.**
 | `waves --slug S` | the DAG in rounds, plus `runnable_now` and `stalled` |
 | `spawn --slug S --phase N` | launch one phase in its own named session; `--dry-run` prints the argv |
 | `reap --slug S [--phase N]` | capture the scrollback, then close the windows of finished phases |
-| `report --slug S --phase N --status ...` | record an outcome (then send the message) |
-| `verify --slug S [--apply]` | re-derive status from git and todos.md |
+| `report --slug S --phase N --status ...` | record an outcome -- this is the report; a message, where `SendMessage` exists, only speeds it up |
+| `verify --slug S [--apply]` | re-derive status from git and todos.md; never resets a phase whose window is live |
+| `watch --slug S [--max-shell 5m] [--once]` | for the coordinator's `Monitor`: one line per phase that finished, window that closed on unfinished work, or shell past `MAX_SHELL_SCRIPT_DURATION`; exits when the set is terminal |
 | `land --slug S --step check\|merge\|push\|cleanup` | merge the set into `main`, push it, delete the worktrees and the branch |
 | `status --slug S` | durable + runtime, merged, for a human |
 | `find --plan P \| --task T [--phase N]` | which swarm owns this, and who to report to. `P` may be a phase body, the set's index, OR /implement's adopted copy `{TaskID}.md` (followed through its `Source:` header) |

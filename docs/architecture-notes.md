@@ -169,6 +169,20 @@ denied** — that is permission laundering; and **no message asks a peer for a d
 a reply** — a peer waiting on a peer is the same stall with the human swapped for a session that
 is also idle.
 
+**Finishing is detected, never announced.** MEASURED 2026-11-11 on `ears-acceptance-criteria`:
+no session in the set had a `SendMessage` tool. Every phase recorded `done` in the ledger, then
+asked the owner to "tell the coordinator"; the coordinator could not subscribe either, its
+hand-rolled Monitor watched HEAD and the tmux window count — neither moves when claude finishes,
+because it idles rather than exits and `done` lands *after* the commit — and it sat idle until the
+owner typed "apparently p1 and p2 are done". Phase 3 then sat finished for phase 4's whole run.
+So the report is the ledger write, and two independent watchers turn it into a coordinator turn:
+`swarm.py watch` (ledger, git, `todos.md`, tmux and the process table, under `Monitor`) and the
+`swarm-deck` mod (a phase row going `finished` → `$.prompt.submit` in the coordinator). The same
+two flag a foreground shell past `MAX_SHELL_SCRIPT_DURATION` (default 5m) with its command, at
+every further multiple, which is the phase's progress report written for it. And `verify --apply`
+no longer resets a phase whose window is live to `pending` — it made `runnable_now` list running
+phases.
+
 The no-ask invariant scales with fan-out, so `/analyze-orchestrator` carries it as **iron rule 4**
 (there were three): a phase that asks stalls its dependents, a coordinator that asks stalls the
 whole set. It resolves the plan index's **Open Questions itself before spawning anything** — once,

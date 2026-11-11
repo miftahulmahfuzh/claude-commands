@@ -575,13 +575,40 @@ Loop until `runnable_now` is empty:
    restore a peer's files yourself: the phase owns them and knows which version it wanted. A
    phase whose work is gone re-runs from its plan — which is exactly why `/analyze` builds phases
    that stand alone.
-3. **Re-read `ListAgents` before addressing anyone.** A name captured a minute ago may now
-   belong to a different session — names are mutable and reused. Then **subscribe to each**,
-   in one message, with `SendMessage` carrying `notify_when_idle: true`
-   and no body. This is the only way to notice a phase that dies without reporting — silence
-   from a working session and silence from a crashed one are otherwise identical. Never poll
+3. **Arm the watch — before this turn ends, every wave, no exceptions.** A coordinator that
+   ends its turn with nothing armed is a coordinator that waits forever: nothing else starts its
+   next turn. Run the set's watch under `Monitor` (unbounded, at the 30-minute maximum, re-armed
+   on each expiry until the set lands):
+
+   ```bash
+   python3 -u ~/.claude/skills/swarm/swarm.py watch --slug <slug>
+   ```
+
+   It prints one line per change that needs you — a phase whose ledger or git derivation moved
+   (`ACT phase N is done at <sha>`), a window that closed on unfinished work, a shell running
+   past `MAX_SHELL_SCRIPT_DURATION` (default `5m`, again at every further multiple), and
+   `ACT every phase is terminal` — and exits when the set is terminal. It reads the ledger, git,
+   `todos.md`, tmux and the process table, so it needs no tool this session might not have.
+
+   MEASURED 2026-11-11 on `ears-acceptance-criteria`: phases 1 and 2 committed, ticked
+   `todos.md` and recorded `done`, and the coordinator sat idle until the owner typed "apparently
+   p1 and p2 are done". It had no `SendMessage` tool, so the subscription below never happened,
+   and the Monitor it armed by hand watched HEAD and the tmux window count. Neither moves when a
+   phase finishes: claude idles instead of exiting, and `done` lands in the ledger *after* the
+   commit. Do not hand-roll this watch; `watch` is the one that is tested.
+
+   Where the `swarm-deck` mod is loaded it is a second, independent wake: the deck sees a phase
+   go `finished`, report, or hold a long shell, and submits a turn to this session itself.
+
+   Then, **where `SendMessage` exists**, re-read `ListAgents` (a name captured a minute ago may
+   now belong to a different session) and subscribe to each phase in one message, carrying
+   `notify_when_idle: true` and no body. It is the fastest signal, not the only one. Never poll
    `ListAgents` in a loop, and never send "are you done?".
-4. **Collect reports** as they arrive (`<cross-session-message from="impl-<slug>-p2">`).
+4. **Collect reports** as they arrive (`<cross-session-message from="impl-<slug>-p2">`), and act
+   on every `ACT` line the watch prints the same way: verify, read the commit, reap that phase,
+   spawn what is runnable. **Each phase is handled the moment it finishes, never at the end of
+   its wave** — a wave-mate still running is not a reason to leave a verified phase's window open,
+   to delay pushing its ledger row, or to hold back a phase it just unblocked.
 4b. **Answer a child that asks — never relay it.** `/do` and `/implement` forbid the question, so
    a child asking one is a session on an older prompt, a genuine plan contradiction, or a fork
    its own ladder could not reach. All three are yours: you hold the plan index, the Requirements
@@ -686,6 +713,11 @@ Loop until `runnable_now` is empty:
    other window, or this session's own window — so it is safe to run every round without
    reading the list first.
 
+   A "round" is one phase finishing, not one wave. `reap` closes every verified `done` phase
+   whatever its wave-mates are doing; run it as soon as each one verifies. MEASURED 2026-11-11:
+   phase 3 sat finished in its window for the whole of phase 4's run, because the coordinator
+   only acted when something woke it, and nothing did.
+
    A **failed** phase keeps its window: that failure is what someone is about to read. Close it
    with `--include-failed` once the user has seen it, or when landing the set.
 8. Recompute and go to 1.
@@ -715,6 +747,17 @@ The same flag is a boundary in the other direction: **never hand a child a mode 
 session runs under.** That routes around a decision the user made. If a phase needs permissions
 you lack, stop and say so.
 
+**Permission dialogs are answered, not waited on.** Claude Code's own safety checks ask even
+under `bypassPermissions` — MEASURED 2026-11-11, phase 4's pusher stopped twice on "Dangerous rm
+operation on possibly-empty variable path" for `rm -f "$IDX"`, a private git index file. With the
+`swarm-deck` mod loaded, a phase's (and this coordinator's) permission asks are answered on the
+spot: allowed and logged under `swarm/<slug>/approvals/<phase>`, or denied, with a reason the
+agent can act on, for the short irreversible list (a recursive delete of a root, home, parent,
+glob or unreadable variable; a force-push to `main`). A pane showing `Do you want to proceed?`
+means the mod is not loaded there. Answer it from the plan on the same ladder, since the owner
+accepts these anyway (`tmux send-keys -t <window> 1`), and record it under
+`Decided without asking`.
+
 **The folder trust prompt is handled, and you should know why.** A session spawned into a path
 Claude Code has not seen stops to ask whether the folder is trusted, before it boots — so it
 never becomes a peer and this session waits on it forever. Every worktree `/analyze` cuts is such
@@ -724,8 +767,11 @@ trusted it refuses rather than inventing trust, and the user has to open it once
 ### Watching the wave while it runs
 
 A wave is only as fast as its slowest member, and a *stalled* member is not slow — it is stopped,
-and it blocks everything behind it. Watch rather than poll by hand: a `Monitor` on the wave's log
-directory and each worktree's test output surfaces three states worth acting on.
+and it blocks everything behind it. Watch rather than poll by hand: `swarm.py watch` (step 3)
+already names every shell a phase has held open past `MAX_SHELL_SCRIPT_DURATION`, with its
+command and pid, and re-names it at each further multiple — that line is the phase's progress
+report, written for it. Read the pane before acting on one
+(`tmux capture-pane -p -t <window> | tail -40`). It surfaces three states worth acting on.
 
 - **Working** — the pane is producing output and the ledger moves. Leave it alone.
 - **Stalled** — no output for materially longer than its peers took to reach the same step. Check

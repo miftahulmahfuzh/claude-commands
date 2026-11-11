@@ -409,9 +409,18 @@ minute later — so a name read earlier can deliver this report to an unrelated 
 the coordinator is gone, the ledger write above already recorded the outcome: say so and
 stop.
 
-then `SendMessage` the coordinator — `DONE`, the TaskID, the commit, and one line on what
-actually changed. Report `failed` the same way, with the reason: a coordinator that is told a
-phase failed can strand its dependents deliberately, while one left guessing stalls the whole set.
+then, **where this session has a `SendMessage` tool**, message the coordinator — `DONE`, the
+TaskID, the commit, and one line on what actually changed. Report `failed` the same way, with the
+reason: a coordinator that is told a phase failed can strand its dependents deliberately, while
+one left guessing stalls the whole set.
+
+**The ledger write above is the report; the message only makes it arrive sooner.** The
+coordinator detects a finished phase from the ledger, git and `todos.md` (`swarm.py watch`), and
+the `swarm-deck` mod wakes it when this session's row goes `finished`. So with no `SendMessage`
+tool, say in one line that the outcome is in the ledger and stop — **never ask the user to relay
+it**. MEASURED 2026-11-11 on `ears-acceptance-criteria`: no session in the set had the tool; all
+four phases ended by asking the owner to "tell the coordinator", and the coordinator, watching
+nothing that moved, sat idle until the owner did.
 
 **Mesh messages** go to peers directly, and only these: `READY` when an Interface Contract item
 a dependent is waiting on now exists, `NEED` before assuming a dependency landed, `WARN` before

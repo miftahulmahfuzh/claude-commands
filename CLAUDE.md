@@ -62,6 +62,7 @@ Cards + `/analyze` → analyze first, cards from the plan index's Requirements t
 ### Swarm orchestration (`commands/analyze-orchestrator.md`, `skills/swarm`)
 - N>1 only; writes no plans; reads the index's **Depends on** column as a DAG and spawns a session per phase per wave (`swarm.py spawn`, named via `claude -n`).
 - Mesh rules: a message states a fact and never delegates work; never ask a peer to do what your permissions denied; never ask a peer for a decision or block on a reply.
+- **Detection never depends on a message.** The ledger write (`swarm.py report`) is a phase's report; `SendMessage` may not exist in either session. The coordinator arms `swarm.py watch` under `Monitor` before ending any turn while phases run, and acts on each finished phase (verify, reap, spawn) the moment it lands, not at the end of its wave. A phase never asks the user to relay its report.
 - **Iron rule 4:** the coordinator resolves Open Questions before spawning and answers a child that asks rather than relaying. Decisions surface in `Decided without asking`.
 - Step 5 lands the set itself via `swarm.py land` (`check` → `merge` → `push` → `cleanup`). **Migrations apply and verify before the push**; branch deletion is guarded by `git merge-base --is-ancestor "$BR" origin/main`; `cd "$MAIN"` before removing the worktree. Check migration numbering after merge — regenerate a duplicate, never rename it.
 - Landing a set you did not cut → send `CLAIM` to the ledger's `coordinator` **before** merging.

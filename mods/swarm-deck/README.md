@@ -148,6 +148,32 @@ names haiku or sonnet, and refuses a fork of an Opus or Fable parent. A mod cann
 session's model, so an Opus session gets a context line and a band line saying to switch with `/model sonnet`.
 The reading is also written to `~/.claude/swarm-deck/quota.json`, which `swarm.py spawn` and `launch` read.
 
+**The wake.** *Every phase finished and the coordinator never noticed.* MEASURED 2026-11-11: no
+session had a `SendMessage` tool, so each phase's report went nowhere and the coordinator, watching
+nothing that moved, sat idle until the owner said "apparently p1 and p2 are done". A phase row now
+goes `finished` when the turn that ran `completion-handler` ends, and the coordinator's deck — only
+in the session whose id the ledger names as `coordinator_session_id`, and only for a set that has
+not landed — calls `$.prompt.submit` for what changed: a phase finished or went quiet, a report
+arrived, a shell crossed the threshold. The first refresh only seeds, so a reload is never woken
+for history. `$.prompt.submit` queues until the coordinator is idle; it never interrupts a turn.
+
+**Long shells.** *A shell that runs for twenty minutes looks exactly like a phase that is working.*
+Each phase's row carries its foreground Bash calls (command, start time, whether a subagent runs
+it). The deck lists them under the row; one past `MAX_SHELL_SCRIPT_DURATION` (default `5m`; `90s`,
+`10m`, `1h` all parse) turns the row `SHELL` in yellow, lights the band, and wakes the coordinator
+once per multiple of the threshold — a progress report the phase never had to remember to send.
+A backgrounded command returns at once and is not timed.
+
+**Permission dialogs.** *A dialog at 3am is a stopped phase, and the owner answers Yes anyway.*
+Claude Code's own safety checks ask even under `bypassPermissions` — measured on the same night:
+phase 4's pusher stopped twice on "Dangerous rm operation on possibly-empty variable path" for
+`rm -f "$IDX"`, a private git index file. A `tool.check` hook answers every ask in a phase, and in
+the live coordinator: **allowed**, or **denied** with a reason the agent can act on for the short
+irreversible list — a recursive delete of `/`, `~`, `..`, `.`, a glob, the repo root, or a variable
+nobody can read before it runs, and a force-push to `main`/`master`. Each answer is logged under
+`swarm/<slug>/approvals/<phase>` for the morning. Settings deny rules and organization ceilings
+still stand, and a session outside a swarm is untouched.
+
 ## Two design points worth the words
 
 **It fails closed.** A mod hook that throws or times out is *skipped* — which would let the

@@ -69,6 +69,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1130,8 +1131,10 @@ def cmd_report(args):
         snapshot = dict(phase)
     print(json.dumps({"swarm": True, "recorded": snapshot,
                       "coordinator": coordinator,
-                      "next": "now SendMessage the coordinator -- the file is only "
-                              "half of a report"}, indent=2))
+                      "next": "this IS the report: the coordinator's `swarm.py watch` and the "
+                              "swarm-deck wake detect it. SendMessage the coordinator too if "
+                              "this session has the tool; never ask the user to relay it"},
+                     indent=2))
     return 0
 
 
@@ -1144,6 +1147,15 @@ def cmd_verify(args):
     if not ledger:
         return soft(f"no ledger for {slug}", repo=repo)
     findings = verify(repo, ledger)
+    # A phase that is running derives to `pending` -- no commit yet, task still open --
+    # and writing that back made `runnable_now` list phases that were mid-run.
+    # MEASURED 2026-11-11 on ears-acceptance-criteria: after one `verify --apply`, phases
+    # 3 and 4 read `pending` while their windows were working, one `spawn` away from a
+    # duplicate session. A live window is evidence too; only a phase with none is reset.
+    live = live_windows(load(runtime_path(repo, slug)))
+    findings = [f for f in findings
+                if not (f["derived"] == "pending" and f["ledger"] in ("spawned", "running")
+                        and str(f["phase"]) in live)]
     if args.apply and findings:
         with locked(path) as data:
             # Re-looked-up under the lock, not carried in from the findings: `verify`
@@ -1198,6 +1210,171 @@ def cmd_status(args):
                       "reapable_now": reapable(repo, ledger, runtime),
                       "phases": rows}, indent=2))
     return 0
+
+
+# ------------------------------------------------------------------------- watching
+
+# Claude Code wraps every Bash tool call in `<shell> -c source <snapshot> ... eval '<cmd>'`.
+# The snapshot path is the one mark no other child of a claude process carries -- MCP
+# servers, LSPs and hooks all run without it -- so it is what tells a tool call apart.
+SHELL_MARK = "/.claude/shell-snapshots/"
+DEFAULT_MAX_SHELL = "5m"
+
+
+def parse_duration(text):
+    """`5m`, `90s`, `1h`, `300` (seconds) -> seconds, or None when it does not parse."""
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(s|m|h)?\s*", str(text or ""))
+    if not m:
+        return None
+    seconds = float(m.group(1)) * {"s": 1, "m": 60, "h": 3600}[m.group(2) or "s"]
+    return seconds if seconds > 0 else None
+
+
+def shell_command(cmdline):
+    """The command a Bash tool call runs, without the wrapper Claude Code puts round it."""
+    m = re.search(r"\beval (.*?) && pwd -P >\| ", cmdline, re.S)
+    if not m:
+        return cmdline
+    try:
+        words = shlex.split(m.group(1))
+    except ValueError:
+        return m.group(1)
+    return words[0] if len(words) == 1 else " ".join(words)
+
+
+def process_table():
+    """pid -> (ppid, elapsed seconds, full command line), from one `ps`."""
+    out = subprocess.run(["ps", "-eo", "pid=,ppid=,etimes=,args=", "-ww"],
+                         capture_output=True, text=True).stdout
+    table = {}
+    for line in out.splitlines():
+        cells = line.split(None, 3)
+        if len(cells) == 4 and cells[0].isdigit():
+            table[int(cells[0])] = (int(cells[1]), int(cells[2]), cells[3])
+    return table
+
+
+def pane_shells(pane_pid, table):
+    """Every Bash tool call running under one tmux pane, oldest first.
+
+    Descendants, not children: a subagent's shell hangs off the same claude process, and
+    completion-handler's pusher stuck on a push is the same stall as the phase's own test
+    run stuck. Only the outermost wrapper of each call is reported.
+    """
+    kids = {}
+    for pid, (ppid, _, _) in table.items():
+        kids.setdefault(ppid, []).append(pid)
+    found, todo = [], list(kids.get(pane_pid, []))
+    while todo:
+        pid = todo.pop()
+        ppid, secs, args = table[pid]
+        if SHELL_MARK in args and SHELL_MARK not in table.get(ppid, (0, 0, ""))[2]:
+            found.append({"pid": pid, "seconds": secs, "command": shell_command(args)})
+        todo.extend(kids.get(pid, []))
+    return sorted(found, key=lambda s: -s["seconds"])
+
+
+def live_windows(runtime):
+    """phase -> tmux facts, for each recorded window that still holds its own session."""
+    live = {}
+    for n, entry in (runtime.get("sessions") or {}).items():
+        facts = window_facts(entry.get("window")) if entry.get("window") else None
+        if facts and facts["name"] == entry.get("name"):
+            live[str(n)] = facts
+    return live
+
+
+def watch_state(repo, ledger, runtime, table=None):
+    """One reading of the set: ledger word, git's word, window, running shells."""
+    verify(repo, ledger)
+    live = live_windows(runtime)
+    state = {}
+    for phase in ledger.get("phases", []):
+        n = str(phase["n"])
+        facts = live.get(n)
+        shells = []
+        if facts and table is not None:
+            pid = tmux("display-message", "-p", "-t", facts["pane"], "#{pane_pid}")
+            if pid and pid.strip().isdigit():
+                shells = pane_shells(int(pid.strip()), table)
+        state[n] = {"status": phase["status"], "derived": phase.get("derived"),
+                    "commit": (phase.get("commit") or "")[:8] or None,
+                    "window": facts["window"] if facts else None, "shells": shells}
+    return state
+
+
+def watch_events(prev, cur, max_shell):
+    """What changed between two readings that the coordinator has to act on. Pure.
+
+    The first reading only seeds: a watch armed mid-run must not page for history.
+    """
+    if prev is None:
+        return []
+    events = []
+    for n, now in cur.items():
+        was = prev.get(n) or {}
+        if now["status"] != was.get("status"):
+            events.append(f"phase {n}: ledger {was.get('status')} -> {now['status']}")
+        finished = now["status"] in TERMINAL or now["derived"] in TERMINAL
+        if finished and not (was.get("status") in TERMINAL or was.get("derived") in TERMINAL):
+            events.append(f"ACT phase {n} is {now['derived'] or now['status']}"
+                          f"{' at ' + now['commit'] if now['commit'] else ''}: verify --apply, "
+                          f"check its commit's files, reap, spawn what is runnable")
+        if was.get("window") and not now["window"] and not finished:
+            events.append(f"ACT phase {n}: its window closed but it is not done -- "
+                          f"verify, then respawn it or mark it failed")
+        before = {s["pid"]: s for s in was.get("shells") or []}
+        for shell in now["shells"]:
+            step = int(shell["seconds"] // max_shell)
+            old = before.get(shell["pid"])
+            if step >= 1 and step > int((old or {"seconds": 0})["seconds"] // max_shell):
+                events.append(f"SHELL phase {n}: running {shell['seconds'] // 60}m"
+                              f"{shell['seconds'] % 60:02d}s (pid {shell['pid']}): "
+                              f"{' '.join(shell['command'].split())[:160]}")
+        gone = {s["pid"] for s in now["shells"]}
+        for pid, shell in before.items():
+            if pid not in gone and shell["seconds"] >= max_shell:
+                events.append(f"phase {n}: the long shell (pid {pid}) returned after "
+                              f"{shell['seconds'] // 60}m+")
+    if cur and all(x["status"] in TERMINAL or x["derived"] in TERMINAL for x in cur.values()) \
+            and not all(x.get("status") in TERMINAL or x.get("derived") in TERMINAL
+                        for x in prev.values()):
+        events.append("ACT every phase is terminal: land the set (Step 5)")
+    return events
+
+
+def cmd_watch(args):
+    """Stream the set's changes, one line each, for a coordinator's Monitor.
+
+    MEASURED 2026-11-11 on ears-acceptance-criteria: phases 1 and 2 finished and the
+    coordinator never noticed -- it had no SendMessage tool to subscribe with, and its
+    hand-rolled Monitor watched HEAD and the tmux window count, while a finished claude
+    idles rather than exits and its `done` lands in the ledger AFTER the commit. The owner
+    had to say so. This watches what actually moves: the ledger, git's derivation, the
+    windows, and every shell a phase is running.
+    """
+    repo, slug = find_repo_and_slug(args.slug)
+    if not repo:
+        return soft("not inside a git repository")
+    path = durable_path(repo, slug)
+    if not load(path):
+        return soft(f"no ledger for {slug}", repo=repo)
+    limit = parse_duration(args.max_shell or os.environ.get("MAX_SHELL_SCRIPT_DURATION")
+                           or DEFAULT_MAX_SHELL) or parse_duration(DEFAULT_MAX_SHELL)
+    prev = None
+    while True:
+        cur = watch_state(repo, load(path), load(runtime_path(repo, slug)), process_table())
+        if prev is None:
+            print(f"watching {slug} (shells flagged past {int(limit)}s): " + ", ".join(
+                f"p{n} {x['status']}/{x['derived']}" + (" live" if x["window"] else "")
+                for n, x in cur.items()), flush=True)
+        for line in watch_events(prev, cur, limit):
+            print(line, flush=True)
+        if args.once or all(x["status"] in TERMINAL or x["derived"] in TERMINAL
+                            for x in cur.values()):
+            return 0
+        prev = cur
+        time.sleep(args.interval)
 
 
 # ------------------------------------------------------------------------- landing
@@ -2284,6 +2461,39 @@ def selftest():
         eq("unreadable file: normal rules", resolve_model("opus", path=qpath, now_ms=now_ms),
            ("opus", "opus", None))
 
+    # watch: durations, the Bash wrapper, and which readings page the coordinator.
+    eq("5m", parse_duration("5m"), 300)
+    eq("bare seconds", parse_duration("90"), 90)
+    eq("1h", parse_duration("1h"), 3600)
+    eq("junk", parse_duration("soon"), None)
+    eq("zero is no limit", parse_duration("0"), None)
+    wrapped = ("/usr/bin/zsh -c source /home/u/.claude/shell-snapshots/snapshot-zsh-1.sh "
+               "2>/dev/null || true && eval 'pytest -q tests/' && pwd -P >| /tmp/claude-1-cwd")
+    eq("the wrapper is peeled", shell_command(wrapped), "pytest -q tests/")
+    table = {10: (1, 900, "bash"), 11: (10, 900, "claude -n impl-x-p4"),
+             12: (11, 400, wrapped), 13: (12, 399, "python -m pytest"),
+             14: (11, 900, "node mcp-server.js"),
+             15: (11, 30, wrapped.replace("pytest -q tests/", "git push"))}
+    found = pane_shells(10, table)
+    eq("tool calls only, outermost, oldest first", [s["pid"] for s in found], [12, 15])
+    seed = {"4": {"status": "spawned", "derived": "pending", "commit": None, "window": "@1",
+                  "shells": [{"pid": 12, "seconds": 290, "command": "pytest"}]}}
+    eq("first reading seeds", watch_events(None, seed, 300), [])
+    crossed = {"4": dict(seed["4"], shells=[{"pid": 12, "seconds": 305, "command": "pytest"}])}
+    ev = watch_events(seed, crossed, 300)
+    eq("a shell crossing the line pages once", (len(ev), ev[0][:21] if ev else None),
+       (1, "SHELL phase 4: runnin"))
+    eq("and not again inside the same step", watch_events(crossed, crossed, 300), [])
+    done = {"4": dict(crossed["4"], status="done", derived="done", commit="abc12345", shells=[])}
+    ev = watch_events(crossed, done, 300)
+    eq("a finished phase is an ACT line", any(e.startswith("ACT phase 4 is done at abc12345")
+                                              for e in ev), True)
+    eq("the long shell's return is said", any("returned after" in e for e in ev), True)
+    eq("all terminal says land", ev[-1], "ACT every phase is terminal: land the set (Step 5)")
+    gone = {"4": dict(seed["4"], window=None, shells=[])}
+    eq("a window closing on unfinished work is an ACT line",
+       any("window closed but it is not done" in e for e in watch_events(seed, gone, 300)), True)
+
     if failures:
         for line in failures:
             print(f"FAIL {line}", file=sys.stderr)
@@ -2349,6 +2559,14 @@ def main(argv=None):
     p.add_argument("--slug", required=True)
     p.add_argument("--apply", action="store_true", help="write the derivation back")
 
+    p = sub.add_parser("watch", help="stream status changes and long shells, for Monitor")
+    p.add_argument("--slug", required=True)
+    p.add_argument("--interval", type=float, default=10.0, help="seconds between readings")
+    p.add_argument("--max-shell",
+                   help="flag a shell running this long (default $MAX_SHELL_SCRIPT_DURATION, "
+                        "else 5m)")
+    p.add_argument("--once", action="store_true", help="print one reading and exit")
+
     p = sub.add_parser("land", help="merge the set to main, push it, delete the branch")
     p.add_argument("--slug", required=True)
     p.add_argument("--step", required=True,
@@ -2397,7 +2615,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     return {"init": cmd_init, "waves": cmd_waves, "spawn": cmd_spawn,
             "reap": cmd_reap, "report": cmd_report, "land": cmd_land,
-            "verify": cmd_verify, "status": cmd_status,
+            "verify": cmd_verify, "status": cmd_status, "watch": cmd_watch,
             "find": cmd_find, "track": cmd_track, "launch": cmd_launch,
             "selftest": lambda _: selftest()}[args.cmd](args)
 

@@ -393,6 +393,29 @@ so the mod cuts the independent part to the minimum rather than turning it off b
   on a 15s clock and on each prompt.submit. `swarm.py` reads it: fresh under 30 minutes and `economy: true`
   means `--model sonnet` by default, and an explicit Opus or Fable is refused unless `--force-model`.
 
+## Nothing waits on a person: the wake, long shells, permission dialogs
+
+Three stalls in one morning (2026-11-11, `ears-acceptance-criteria`), one design answer: the
+coordinator is driven by state it can read, not by messages or people.
+
+- **The wake.** `SendMessage` did not exist in any session, so the report channel the swarm was
+  designed around was silently absent. Detection moved to state: the phase publishes `finished`
+  (sticky, set when the main turn that ran `completion-handler` ends), and the coordinator's
+  `refresh` diffs each reading against the last (`changes()`, pure and tested) and calls
+  `$.prompt.submit` with what changed. Ownership is `coordinator_session_id === $.session.id()` on
+  an unlanded ledger — a bystander's `/fleet` never wakes anyone. `swarm.py watch` is the
+  mod-independent twin, for a coordinator without the mod.
+- **Long shells.** The unmatched `tool.call` hook already sees every Bash call open and close, so
+  it times foreground ones into the row. Every 15s heartbeat is the progress report; the reader
+  does the arithmetic against `MAX_SHELL_SCRIPT_DURATION`.
+- **Permission dialogs.** `tool.check` runs after the engine's verdict and before the mode
+  settles an ask, so a hook can turn `ask` into `allow` or `deny`. The deny list is the short set
+  of irreversible-and-never-planned commands; everything else is allowed and logged. Failure
+  direction: the `.catch` returns the engine's own verdict, so a broken hook leaves the dialog —
+  the old behaviour — and never an allow nobody decided.
+
+Tests: `tests/slice6.test.ts`.
+
 ## Distribution
 
 Unpublished. It encodes the precedence ladder, the ledger format and the swarm's invariants —
