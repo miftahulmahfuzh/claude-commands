@@ -689,7 +689,9 @@ async function refresh($) {
   }
   const now = await $.clock.now()
   const seenSlug = seen && seen.slug
-  const found = changes(seenSlug === fleetSlug ? seen : null, rows, latest, now)
+  const closed = new Set((ledger && Array.isArray(ledger.phases) ? ledger.phases : [])
+    .filter(p => p.reaped_at).map(p => String(p.n)))
+  const found = changes(seenSlug === fleetSlug ? seen : null, rows, latest, now, closed)
   seen = Object.assign({ slug: fleetSlug }, found.next)
   if (owner) await wake($, found.events)
 }
@@ -745,15 +747,27 @@ function oneLine(text, width) {
  * the owner noticed and typed "apparently p1 and p2 are done". It had no SendMessage tool
  * to subscribe with, its Monitor watched HEAD and the tmux window count (a finished claude
  * idles, it does not exit), and nothing else could start its turn. This is that something.
+ *
+ * One wake per finish, and none for a phase the coordinator already closed. MEASURED
+ * 2026-11-11 on session-fork-awareness: a phase's end arrived as three wakes -- its report,
+ * `finished` when it idled, `done` when the ledger caught up -- and a reaped phase woke the
+ * coordinator again for the same finish. `closed` holds the phases whose window the ledger
+ * says was reaped; a finish is announced once and re-armed only when the phase works again.
  */
-function changes(prev, rows, latest, now) {
-  const next = { status: {}, report: {}, shell: {} }
+function changes(prev, rows, latest, now, closed) {
+  const shut = closed || new Set()
+  const next = { status: {}, report: {}, shell: {}, ended: {} }
   const events = []
+  const ended = phase => Boolean(prev && prev.ended && prev.ended[phase])
   for (const row of rows) {
     const label = shown(row, now).label
     next.status[row.phase] = label
+    const terminal = label === 'finished' || label === 'done'
+    // Ended stays set until the phase works again, so finished -> done is one finish.
+    if (terminal || (ended(row.phase) && label !== 'working')) next.ended[row.phase] = true
+    if (shut.has(String(row.phase))) continue
     if (prev && prev.status[row.phase] !== label) {
-      if (label === 'finished' || label === 'done') events.push('phase ' + row.phase + ' is ' + label)
+      if (terminal && !ended(row.phase)) events.push('phase ' + row.phase + ' is ' + label)
       if (label === 'QUIET') events.push('phase ' + row.phase + ' has stopped heartbeating')
     }
     for (const s of Array.isArray(row.shells) ? row.shells : []) {
@@ -771,7 +785,13 @@ function changes(prev, rows, latest, now) {
   }
   for (const report of latest) {
     next.report[report.phase] = report.at
+    if (shut.has(String(report.phase))) continue
     if (prev && !missing(report.at) && report.at !== prev.report[report.phase]) {
+      // A report is the phase saying it finished: it stands in for the status line, and
+      // the status lines that follow it are the same finish.
+      const status = 'phase ' + report.phase + ' is '
+      for (let i = events.length - 1; i >= 0; i--) if (events[i].startsWith(status)) events.splice(i, 1)
+      next.ended[report.phase] = true
       events.push('phase ' + report.phase + ' sent a report: ' + oneLine(report.text, 300))
     }
   }

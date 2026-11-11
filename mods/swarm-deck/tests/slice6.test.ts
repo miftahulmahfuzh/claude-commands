@@ -36,7 +36,8 @@ function asPhase(on: any, env: Record<string, string> = {}) {
 }
 
 /** The coordinator of `ears`, or a bystander when `me` is not the ledger's session. */
-function asCoordinator(on: any, me: string, env: Record<string, string> = {}) {
+function asCoordinator(on: any, me: string, env: Record<string, string> = {},
+                       ledger: () => unknown = () => ({ slug: 'ears', coordinator_session_id: 'orch' })) {
   mock.env(on, env)
   on('session.start', () => ({ cwd: '/repo' }))
   on('session.id', () => ({ value: me }))
@@ -44,7 +45,7 @@ function asCoordinator(on: any, me: string, env: Record<string, string> = {}) {
   on('command.register', () => ({ value: undefined }))
   on('session.repo', () => ({ value: { root: '/repo', remote: null } }))
   on('fs.list', () => ({ value: [{ name: 'ears', kind: 'dir', size: 0, isLink: false }] }))
-  on('fs.read', () => ({ value: JSON.stringify({ slug: 'ears', coordinator_session_id: 'orch' }) }))
+  on('fs.read', () => ({ value: JSON.stringify(ledger()) }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['drawn by Claude Code'] }))
   on('ui.log', () => ({ value: undefined }))
@@ -148,6 +149,56 @@ test('the coordinator is woken when a phase finishes -- once, and not for histor
   saved.set(ROW, row({ status: 'finished', updatedAt: 29000 }))
   await clock.advance(15000)
   expect(woken).toHaveLength(1)
+})
+
+test('finished, then done, then a report after it is reaped: one wake for one finish', async ($, on) => {
+  const ledger: any = { slug: 'ears', coordinator_session_id: 'orch', phases: [{ n: 4, status: 'spawned' }] }
+  const woken = asCoordinator(on, 'orch', {}, () => ledger)
+  const clock = mock.clock(on)
+  const saved = storeSpy(on, { [ROW]: row({ status: 'working', updatedAt: 0 }) })
+
+  await $.session.start(START)
+  saved.set(ROW, row({ status: 'finished', updatedAt: 14000 }))
+  await clock.advance(15000)
+  expect(woken).toHaveLength(1)
+
+  // The ledger catches up: the same finish, not a second one.
+  saved.set(ROW, row({ status: 'done', updatedAt: 29000 }))
+  await clock.advance(15000)
+  expect(woken).toHaveLength(1)
+
+  // Reaped: whatever that phase's row or reports do now, the coordinator already closed it.
+  ledger.phases[0] = { n: 4, status: 'done', reaped_at: '2026-11-11T03:30:00Z' }
+  saved.set(ROW, row({ status: 'finished', updatedAt: 44000 }))
+  saved.set('swarm/ears/sent/4', [{ text: 'DONE phase 4 again', at: 44000 }])
+  await clock.advance(15000)
+  expect(woken).toHaveLength(1)
+})
+
+test('a report and the status lines after it are one finish; working again re-arms it', async ($, on) => {
+  const woken = asCoordinator(on, 'orch')
+  const clock = mock.clock(on)
+  const saved = storeSpy(on, { [ROW]: row({ status: 'working', updatedAt: 0 }) })
+
+  await $.session.start(START)
+  saved.set(ROW, row({ status: 'finished', updatedAt: 14000 }))
+  saved.set('swarm/ears/sent/4', [{ text: 'DONE phase 4 at abc1234', at: 14000 }])
+  await clock.advance(15000)
+  expect(woken).toHaveLength(1)
+  expect(woken[0]).toContain('sent a report: DONE phase 4 at abc1234')
+  expect(woken[0]).not.toContain('phase 4 is finished')
+
+  saved.set(ROW, row({ status: 'done', updatedAt: 29000 }))
+  await clock.advance(15000)
+  expect(woken).toHaveLength(1)
+
+  // The coordinator sent it back to work; its next finish is news.
+  saved.set(ROW, row({ status: 'working', updatedAt: 44000 }))
+  await clock.advance(15000)
+  saved.set(ROW, row({ status: 'finished', updatedAt: 59000 }))
+  await clock.advance(15000)
+  expect(woken).toHaveLength(2)
+  expect(woken[1]).toContain('phase 4 is finished')
 })
 
 test('the coordinator is woken at each threshold a shell crosses -- the progress report', async ($, on) => {
