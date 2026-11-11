@@ -6,36 +6,36 @@
   "phases": [
     {
       "card": null,
-      "commit": null,
+      "commit": "7d78f0f75813bbbc57e6668284f14ae121c4afcd",
       "depends_on": [],
       "difficulty": "NORMAL",
       "n": 1,
-      "note": null,
+      "note": "analyze.md: verbatim R asks, Step0 EARS criteria R{n}.{m} (6 patterns), Step3 sharpen, Step6 criterion->phase, Step7 planner criteria:, Step9 N=1 Journeys fill, templates+termination; Step8/Step9-verify byte-identical for p3; readme-updater skipped (README is p5's); proof: verified-first-pass J1-J5 (python checks, no harness)",
       "package": "commands",
       "plan": ".workflows/plan/ears-acceptance-criteria/phase-1.md",
-      "reported_at": null,
+      "reported_at": "2026-11-11T08:33:40+07:00",
       "satisfies": [
         "R1"
       ],
-      "status": "pending",
-      "task_id": null,
+      "status": "done",
+      "task_id": "P1-CL-A024",
       "title": "/analyze writes EARS criteria"
     },
     {
       "card": null,
-      "commit": null,
+      "commit": "d1b23dc",
       "depends_on": [],
       "difficulty": "NORMAL",
       "n": 2,
-      "note": null,
+      "note": "phase-planner.md takes criteria input, J{k} traced journeys (Invariant 1 form), **Criteria:** header, criteria/trace/untraced return keys; tasks adopted from p1's minting, readme-updater skipped (README is p5's); proof: verified-first-pass J1-J5+neighbor (no harness, greps)",
       "package": "agents",
       "plan": ".workflows/plan/ears-acceptance-criteria/phase-2.md",
-      "reported_at": null,
+      "reported_at": "2026-11-11T08:34:09+07:00",
       "satisfies": [
         "R2"
       ],
-      "status": "pending",
-      "task_id": null,
+      "status": "done",
+      "task_id": "P1-CL-A025",
       "title": "Phase plans trace journeys to criteria"
     },
     {
@@ -54,7 +54,7 @@
       "satisfies": [
         "R3"
       ],
-      "status": "pending",
+      "status": "spawned",
       "task_id": null,
       "title": "Reconciler enforces the trace (+ ears_trace.py)"
     },
@@ -74,7 +74,7 @@
       "satisfies": [
         "R4"
       ],
-      "status": "pending",
+      "status": "spawned",
       "task_id": null,
       "title": "Verifier reports per criterion"
     },
@@ -104,6 +104,7 @@
   "plan": "/home/miftah/.worktrees/claude-commands/ears-acceptance-criteria/.workflows/orchestration/ears-acceptance-criteria/PLAN.md",
   "repo": "/home/miftah/claude-commands",
   "slug": "ears-acceptance-criteria",
-  "updated": "2026-11-11T08:30:14+07:00",
+  "updated": "2026-11-11T08:54:54+07:00",
+  "verified_at": "2026-11-11T08:33:49+07:00",
   "worktree": "/home/miftah/.worktrees/claude-commands/ears-acceptance-criteria"
 }
