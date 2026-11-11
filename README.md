@@ -139,7 +139,7 @@ index says what the user wanted *and* how it decomposes. That mapping is what re
 2 cards" with a 4-phase plan set — see `create-task`.
 
 Beneath the `R` table, each ask is broken into **acceptance criteria in EARS form**, borrowed
-from [Kiro specs](https://kiro.dev/docs/specs/concepts): `R2.1` reads "WHEN <trigger> THE SYSTEM
+from [Kiro specs](https://kiro.dev/docs/specs/feature-specs/requirements-first/): `R2.1` reads "WHEN <trigger> THE SYSTEM
 SHALL <behavior>", or one of the other patterns (ubiquitous "THE SYSTEM SHALL", `WHILE <state>`,
 `IF <unwanted condition> THEN`, `WHERE <feature>`). The verbatim ask stays beside them, because
 the rationale is the spec. Every Proof journey in a phase plan names the criteria it traces;
@@ -505,7 +505,7 @@ Small sets skip the separate verifier and land on the implementers' own evidence
 
 ## Borrowed from Kiro: EARS acceptance criteria
 
-From [Kiro specs](https://kiro.dev/docs/specs/concepts). `/analyze` keeps each ask word for word
+From [Kiro specs](https://kiro.dev/docs/specs/feature-specs/requirements-first/). `/analyze` keeps each ask word for word
 in the `R` table and splits it into numbered **EARS** criteria beneath it (`R2.1`: "WHEN
 <trigger> THE SYSTEM SHALL <behavior>", or one of five other patterns). Every Proof journey in a
 phase plan names the criteria it proves. `plan-reconciler` and `/analyze` Step 9 then check, with

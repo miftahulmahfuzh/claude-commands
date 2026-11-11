@@ -136,7 +136,7 @@ it meets the same fork alone, at 3am. `/analyze` Step 8 and `agents/plan-reconci
 must stay in step on this.
 
 **Acceptance criteria are EARS rows, traced to journeys** (from
-[Kiro specs](https://kiro.dev/docs/specs/concepts), see `docs/session-swarm.md`). Since 2026-11-11
+[Kiro specs](https://kiro.dev/docs/specs/feature-specs/requirements-first/), see `docs/session-swarm.md`). Since 2026-11-11
 the index's `## Requirements` holds two tables: the R table
 (`ID | What the user asked for (verbatim) | Phases`, R-level — the one create-task shapes cards
 from) and beneath it `### Acceptance Criteria` (`ID | Pattern | Criterion | Phases | Journeys`),

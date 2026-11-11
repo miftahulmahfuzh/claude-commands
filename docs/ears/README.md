@@ -1,6 +1,6 @@
 # EARS acceptance criteria
 
-Borrowed from [Kiro specs](https://kiro.dev/docs/specs/concepts), which write requirements in
+Borrowed from [Kiro specs](https://kiro.dev/docs/specs/feature-specs/requirements-first/), which write requirements in
 **EARS** (Easy Approach to Requirements Syntax): short, fixed-shape sentences like "WHEN <trigger>
 THE SYSTEM SHALL <behavior>". We reshaped the idea to fit the `/analyze` → orchestrator →
 `/implement` pipeline.

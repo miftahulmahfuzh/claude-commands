@@ -335,7 +335,7 @@ Already borrowed: Cursor's [pstack](../README.md#borrowed-from-pstack), which su
 `engineering-principles` (read once, by the planners) and `create-verification-skill` (the
 `verify-*` skills the verifier drives). Also from Cognition's follow-up, already true here: the
 reviewer gets a clean context, never the implementer's transcript. And from
-[Kiro specs](https://kiro.dev/docs/specs/concepts), **acceptance criteria in EARS form**: each
+[Kiro specs](https://kiro.dev/docs/specs/feature-specs/requirements-first/), **acceptance criteria in EARS form**: each
 `R` in the plan index carries criteria `R{n}.{m}` ("WHEN <trigger> THE SYSTEM SHALL <behavior>"
 and the other EARS patterns) beside the user's verbatim ask, every Proof journey traces to
 criteria by id, `plan-reconciler` catches a criterion with no owner or no journey (checked by
@@ -397,7 +397,7 @@ Multi-agent design
   [*Multi-Agents: What's Actually Working*](https://cognition.com/blog/multi-agents-working)
 
 Methods
-- [GitHub Spec Kit](https://github.com/github/spec-kit) · [Kiro specs](https://kiro.dev/docs/specs/concepts) ·
+- [GitHub Spec Kit](https://github.com/github/spec-kit) · [Kiro specs](https://kiro.dev/docs/specs/feature-specs/requirements-first/) ·
   [BMAD](https://github.com/bmadcode/bmad-method) · [Superpowers](https://github.com/obra/superpowers) ·
   [Aider architect mode](https://aider.chat/2024/09/26/architect.html) ·
   [Ralph](https://ghuntley.com/ralph/) · [Beads](https://github.com/steveyegge/beads)
