@@ -632,10 +632,14 @@ async function autoAnswer($, e, next) {
   } catch (err) {
     // The answer still stands; only its record is lost.
   }
-  try {
-    await $.ui.log('swarm-deck ' + (harm ? 'denied' : 'auto-approved') + ' ' + e.tool + ': ' + asked)
-  } catch (err) {
-    // Logging is not the answer.
+  // Only a denial is drawn on the terminal. Auto mode asks on most tool calls, so a line per
+  // approval buried the phase's own output; every approval is still in the store above.
+  if (harm) {
+    try {
+      await $.ui.log('swarm-deck denied ' + e.tool + ': ' + asked)
+    } catch (err) {
+      // Logging is not the answer.
+    }
   }
   if (harm) {
     return {

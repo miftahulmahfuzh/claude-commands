@@ -189,7 +189,8 @@ phase 4's pusher stopped twice on "Dangerous rm operation on possibly-empty vari
 the live coordinator: **allowed**, or **denied** with a reason the agent can act on for the short
 irreversible list — a recursive delete of `/`, `~`, `..`, `.`, a glob, the repo root, or a variable
 nobody can read before it runs, and a force-push to `main`/`master`. Each answer is logged under
-`swarm/<slug>/approvals/<phase>` for the morning. Settings deny rules and organization ceilings
+`swarm/<slug>/approvals/<phase>` for the morning; only a denial is also drawn on the terminal,
+since auto mode asks on most tool calls and a line per approval buried the phase's own output. Settings deny rules and organization ceilings
 still stand, and a session outside a swarm is untouched.
 
 ## Two design points worth the words
