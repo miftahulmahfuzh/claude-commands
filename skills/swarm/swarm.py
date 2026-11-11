@@ -1812,12 +1812,45 @@ def cmd_doctor(args):
 
 # ------------------------------------------------------------------------- landing
 
-# A path is a migration if any directory on it is named `migrations` or `migrate`.
-# Deliberately broad -- drizzle, alembic, supabase, rails and prisma all satisfy it --
-# because a false positive costs one line in a report and a miss costs a table that
-# never exists in production.
+# A path is a migration if any directory on it is named `migrations` or `migrate`, or
+# it sits under a drizzle-kit output folder. Deliberately broad -- alembic, supabase,
+# rails and prisma all satisfy the first -- because a false positive costs one line in a
+# report and a miss costs a table that never exists in production.
+#
+# drizzle-kit does NOT satisfy it: its default `out` is `drizzle/`. MEASURED 2026-11-11 on
+# mcp-notes session-fork-awareness: `land --step merge` reported `added: []` for a set that
+# added drizzle/0015_session_forks.sql, and the migration was found by hand. The output
+# folder is read from the repo's drizzle.config.* in the base tree (`drizzle` when it does
+# not say), and drizzle's own bookkeeping under `meta/` -- `_journal.json` and the numbered
+# `0015_snapshot.json` files -- is not a migration.
 MIGRATION_DIR = re.compile(r"(?:^|/)(?:migrations?|migrate)/", re.I)
 MIGRATION_NUM = re.compile(r"^(\d{2,})[_-]")
+DRIZZLE_CONFIG = re.compile(r"(?:^|/)drizzle\.config\.(?:ts|js|mjs|cjs|mts|cts)$")
+DRIZZLE_OUT = re.compile(r"""\bout\s*:\s*['"`]([^'"`]+)['"`]""")
+DRIZZLE_META = re.compile(r"(?:^|/)meta/[^/]+\.json$")
+
+
+def drizzle_dirs(repo, base, paths):
+    """The drizzle-kit output folders `base` declares, relative to the repo root."""
+    dirs = set()
+    for path in paths:
+        if not DRIZZLE_CONFIG.search(path):
+            continue
+        _, text, _ = git_run("show", f"{base}:{path}", cwd=repo)
+        hit = DRIZZLE_OUT.search(text or "")
+        out = hit.group(1) if hit else "drizzle"
+        root = str(Path(path).parent)
+        joined = os.path.normpath(os.path.join(root, out)) if root != "." else os.path.normpath(out)
+        if not joined.startswith(".."):
+            dirs.add(joined.strip("/"))
+    return dirs
+
+
+def is_migration(path, drizzle):
+    """A migration file, per MIGRATION_DIR or a drizzle output folder; never drizzle meta."""
+    if any(path.startswith(d + "/") for d in drizzle):
+        return not DRIZZLE_META.search(path)
+    return bool(MIGRATION_DIR.search(path))
 
 
 def base_ref(repo):
@@ -1935,13 +1968,15 @@ def migration_survey(repo, base, branch):
     is simply never created. Finding it is mechanical; regenerating from the merged
     schema is the orchestrator's job.
     """
+    _, tree, _ = git_run("ls-tree", "-r", "--name-only", base, cwd=repo)
+    tree = tree.splitlines()
+    drizzle = drizzle_dirs(repo, base, tree)
     _, out, _ = git_run("diff", "--name-only", "--diff-filter=A", f"{base}...{branch}",
                         cwd=repo)
-    added = [p for p in out.splitlines() if MIGRATION_DIR.search(p)]
-    _, out, _ = git_run("ls-tree", "-r", "--name-only", base, cwd=repo)
+    added = [p for p in out.splitlines() if is_migration(p, drizzle)]
     taken = {}
-    for path in out.splitlines():
-        if not MIGRATION_DIR.search(path):
+    for path in tree:
+        if not is_migration(path, drizzle):
             continue
         hit = MIGRATION_NUM.match(Path(path).name)
         if hit:
@@ -2904,6 +2939,13 @@ def selftest():
         ("db/migrations/0004_x.sql", "alembic/migrations/0004_x.py",
          "supabase/migrations/0004_x.sql", "src/migrate/0004_x.go",
          "docs/migrating.md")], [True, True, True, True, False])
+    eq("a drizzle-kit out folder counts, its meta bookkeeping does not",
+       [is_migration(p, {"drizzle"}) for p in
+        ("drizzle/0015_session_forks.sql", "drizzle/meta/0015_snapshot.json",
+         "drizzle/meta/_journal.json", "drizzle.config.ts", "src/db/schema.ts")],
+       [True, False, False, False, False])
+    eq("without a drizzle config, a bare drizzle/ folder is not assumed",
+       is_migration("drizzle/0015_x.sql", set()), False)
 
     eq("landing a set that has no ledger is a soft no", cmd_land(argparse.Namespace(
         slug="no-such-slug-selftest", step="check", message=None, retries=3,

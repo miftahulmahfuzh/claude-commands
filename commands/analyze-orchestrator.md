@@ -921,7 +921,7 @@ When every phase is `done`:
    the first request. Applying first, from the merge commit, is the order that cannot produce one
    — and it is why `land` is four steps rather than one.
 
-   `merge` already reports what the branch adds under any `migrations/` or `migrate/` directory,
+   `merge` already reports what the branch adds under any `migrations/` or `migrate/` directory or a drizzle-kit `out` folder (read from `drizzle.config.*`; its `meta/` files are ignored),
    and which of those numbers `origin/main` has already used — the `0004`-versus-`0004` collision
    step 1b describes. **Regenerate a colliding migration here, from the merged schema**, before
    applying and never by renaming the file.
