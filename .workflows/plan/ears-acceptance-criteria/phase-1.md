@@ -1,0 +1,560 @@
+# Phase 1: /analyze writes EARS criteria
+
+**Plan set:** `EARS_ACCEPTANCE_CRITERIA_PLAN.md`
+**Analysis:** `.workflows/analyze/20261111-080843-E4RS_code_analyzer.md`
+**Satisfies:** R1 — `/analyze` writes each requirement as EARS acceptance criteria beside the user's verbatim ask
+**Criteria:** R1.1, R1.2, R1.3
+**Depends on:** none
+**Difficulty:** NORMAL
+**Package:** `commands`
+
+---
+
+## Goal
+
+After this phase, `commands/analyze.md` tells `/analyze` to keep each ask verbatim in the R table,
+derive EARS acceptance criteria `R{n}.{m}` under every R (Step 0, sharpened at Step 3), map each
+criterion to the phases that make it true (Step 6), hand every phase-planner the id and text of
+the criteria it owns (Step 7), and, for a one-phase set, fill the criteria table's Journeys column
+from the phase plan (Step 9). The analysis template, the plan index template and the termination
+block all show the new shape, which is exactly Invariant 1 of the plan index.
+
+## Interface Contract
+
+**Deletes:** nothing.
+**Renames:** R table header `| ID | What the user asked for | Phases |` -> `| ID | What the user asked for (verbatim) | Phases |` in the plan index template (`commands/analyze.md:647`). The analysis template's `| ID | What the user asked for |` (`:528`) becomes `| ID | What the user asked for (verbatim) |`. No script matches either header text (grep of `skills/`, `agents/`, `commands/` finds only `analyze.md`), so nothing downstream breaks.
+**Creates (in `commands/analyze.md`):**
+- Step 0 **Acceptance criteria** bullet with the six-pattern EARS table (`ubiquitous`, `event`, `state`, `unwanted`, `optional`, `complex`) and the criterion rules.
+- Plan index template: `### Acceptance Criteria` table with header `| ID | Pattern | Criterion | Phases | Journeys |`, directly under the R table inside `## Requirements` (Invariant 1, verbatim shape).
+- Analysis template: `#### Acceptance Criteria` table with header `| ID | Pattern | Criterion |` under **Requirement IDs** (descriptive copy; no Phases/Journeys, which are plan facts).
+- Step 7 planner input key `criteria:` — a list of `{id: R{n}.{m}, text: "<criterion>"}`, one per criterion the phase owns.
+- Step 9 N=1 rule: the Journeys cell for each criterion lists `P1.J{k}` for every `**J{k}** · traces …` bullet in `phase-1.md` that names it; untraced stays `—`; the values are what `ears_trace.py <index> --fill` prints (by-hand fallback when the script is not installed).
+- Termination block: one indented line per criterion under its R.
+**Signature changes:** phase-planner input gains `criteria:` (additive; a planner that ignores it still runs).
+**Requires (from earlier phases):** none.
+**Requires (from later phases, not blocking this one):** phase 2 makes `agents/phase-planner.md` read `criteria:` and write `**J{k}** · traces R…` journeys; until then Step 9's N=1 fill finds no traced journeys and leaves `—`, which is the documented untraced state.
+**Leaves alone (owned by others):** `commands/analyze.md` Step 8 (`:370-406`) and Step 9's "Before terminating, verify …" and "And verify the two decision sections" paragraphs (`:414-422`) — phase 3; every file under `agents/` — phases 2, 3, 4; every script under `skills/` — phases 3, 5; `README.md`, `CLAUDE.md`, `docs/*` — phase 5. No `./sync.sh` (Invariant 6).
+
+## Files
+
+| File | Action | What changes |
+|---|---|---|
+| `commands/analyze.md` | modify | Step 0 `:183-191`, Step 3 `:224-232`, Step 6 `:318-340`, Step 7 `:347-366`, Step 9 N=1 paragraph `:410-412`, analysis template Requirement IDs `:524-531`, index template `## Requirements` `:642-650`, termination Requirements lines `:780-782` |
+
+## Implementation Steps
+
+All line numbers are against `commands/analyze.md` at `7ab5aca` (this phase depends on nothing).
+Every step is an exact **Find** → **Replace with** pair; apply them with Edit by text, in any
+order — the Find blocks do not overlap. Fences in this plan are `~~~` so the replacement text can
+carry its own triple-backtick fences.
+
+### Step 1: Step 0 — verbatim asks and EARS acceptance criteria
+**File:** `commands/analyze.md:183-191`
+**Change:** The R row keeps the user's words verbatim; a new **Acceptance criteria** bullet tells
+`/analyze` to draft `R{n}.{m}` criteria in one of six named EARS patterns, with the rules a later
+step can check (every R ≥1 criterion, one observable behavior each, a criterion narrows its R and
+never adds to it).
+
+**Find:**
+~~~markdown
+- **Requirement IDs** — split the raw input into the distinct things the user asked for and
+  number them `R1`, `R2`, … in the order they were written. One R per deliverable the user
+  would recognise as separate — a numbered list in the prompt is already that split, so use
+  its numbering. One paragraph asking for one thing is `R1` alone.
+
+  This is a *restatement*, not a decomposition: an R is what the user wants, a phase is how
+  it gets built, and the mapping between them is what Step 6 decides. Every downstream
+  consumer — the phase table, `/implement`, and `create-task` when it shapes the cards —
+  reads that mapping instead of re-deriving it from the prose.
+~~~
+
+**Replace with:**
+~~~markdown
+- **Requirement IDs** — split the raw input into the distinct things the user asked for and
+  number them `R1`, `R2`, … in the order they were written. One R per deliverable the user
+  would recognise as separate — a numbered list in the prompt is already that split, so use
+  its numbering. One paragraph asking for one thing is `R1` alone.
+
+  Each R row carries **the user's own words for that ask, verbatim** — the numbered item copied
+  whole, or the sentence(s) of prose that ask for it. Not a paraphrase: the rationale is the
+  specification, and a tidied restatement is where an ask quietly loses the clause that mattered.
+
+  This is a *split* of the request, not a decomposition: an R is what the user wants, a phase is
+  how it gets built, and the mapping between them is what Step 6 decides. Every downstream
+  consumer — the phase table, `/implement`, and `create-task` when it shapes the cards —
+  reads that mapping instead of re-deriving it from the prose.
+
+- **Acceptance criteria** — under each R, draft one or more criteria `R{n}.{m}` (`m` counts from
+  1 within each R): the testable behaviors that show the ask is met. Each criterion is one
+  sentence in exactly one EARS pattern, EARS keywords in upper case, and is recorded with the
+  name of its pattern:
+
+  | Pattern | Shape | Use it for |
+  |---|---|---|
+  | `ubiquitous` | THE SYSTEM SHALL <behavior> | always true, no trigger |
+  | `event` | WHEN <trigger> THE SYSTEM SHALL <behavior> | a response to something happening |
+  | `state` | WHILE <state> THE SYSTEM SHALL <behavior> | holds for as long as a condition does |
+  | `unwanted` | IF <unwanted condition> THEN THE SYSTEM SHALL <behavior> | errors, bad input, failure paths |
+  | `optional` | WHERE <feature or option> THE SYSTEM SHALL <behavior> | only where a feature, flag or config applies |
+  | `complex` | a combination, e.g. WHILE <state> WHEN <trigger> THE SYSTEM SHALL <behavior> | a behavior that needs two of the above |
+
+  The rules, each of which a later step checks rather than trusts:
+  - **Every R has at least one criterion.** An R with none has nothing a Proof journey can
+    trace, so its proof is whatever the phase felt like writing.
+  - **One behavior per criterion, observable from outside** — something a command, a read-back
+    or a scripted drive can show passing or failing. "THE SYSTEM SHALL be robust" is not one.
+  - **A criterion narrows its R; it never adds to it.** A criterion that needs a behavior the
+    user did not ask for is an inference: state it under the analysis's assumptions (Step 3), or
+    leave it out.
+  - **The verbatim ask stays beside its criteria.** The criteria are the checkable form; the ask
+    is the rationale they are checked against. Neither replaces the other.
+
+  Draft them here, from the user's words. Step 3 sharpens them once the dataflow is known.
+~~~
+**Impact:** Step 0 now produces criteria; R rows change from paraphrase to verbatim. Serves R1.1, R1.2.
+
+### Step 2: Step 3 — sharpen the criteria against the dataflow
+**File:** `commands/analyze.md:224-232`
+**Change:** Add one bullet so the Step 0 draft is checked against the real triggers, states and
+failure paths the exploration found, and freeze the ids before Step 6 references them.
+
+**Find:**
+~~~markdown
+- What is the actual issue or requirement, in your own words?
+- What specific behavior must change?
+- What are the success criteria?
+- What edge cases or constraints matter?
+- What are you assuming?
+
+This bridges raw input and implementation.
+~~~
+
+**Replace with:**
+~~~markdown
+- What is the actual issue or requirement, in your own words?
+- What specific behavior must change?
+- What are the success criteria?
+- What edge cases or constraints matter?
+- What are you assuming?
+- **Do the Step 0 acceptance criteria survive the dataflow?** Rewrite each one against what
+  the exploration found: the real trigger (the command, endpoint, step or event the code
+  actually has), the real state, the real failure path. Add an `unwanted` criterion for a
+  failure the ask implies but the draft missed; merge two that turned out to be one behavior.
+  Keep every criterion in exactly one EARS pattern. Renumber only within an R, and only now —
+  from Step 6 on the ids are referenced and never change.
+
+This bridges raw input and implementation.
+~~~
+**Impact:** criteria ids are fixed before Step 6. Serves R1.2.
+
+### Step 3: Step 6 — map criteria to phases and draft both tables
+**File:** `commands/analyze.md:318-340`
+**Change:** The R → phase mapping becomes criterion → phase; an R's phases are the union of its
+criteria's phases; no criterion may be unowned; the one-line summary names criteria; the draft
+index carries both Requirements tables with Journeys `—`.
+
+**Find:**
+~~~markdown
+**Then map the phases onto the requirement IDs from Step 0.** Every phase declares the R (or
+Rs) it serves, and every R is served by at least one phase. Two properties matter, and both are
+checkable rather than felt:
+
+- **No R is unowned.** An R that no phase satisfies is work you decomposed away — fix the
+  decomposition, do not drop the R.
+- **Prefer phases that serve exactly one R.** A phase spanning two Rs couples two things the
+  user asked for separately, so it cannot be tracked, reviewed, or shipped against either one
+  alone. Split it if the split leaves both halves building green; if it genuinely cannot be
+  split — one schema migration both features need — keep it and say so, because that coupling is
+  a real fact about the work and downstream consumers act on it.
+
+State it in one line before proceeding:
+`Plan: 4 phases — 23 files across 5 packages, deletion order matters. R1 -> 3,4 · R2 -> 1,2.`
+~~~
+
+**Replace with:**
+~~~markdown
+**Then map the phases onto the requirement IDs from Step 0, criterion by criterion.** Every
+acceptance criterion `R{n}.{m}` is owned by the phase (or phases) whose change makes it true, and
+an R's phases are exactly the union of its criteria's phases. Every phase declares the R (or Rs)
+it serves, and every R is served by at least one phase. Three properties matter, and all three
+are checkable rather than felt:
+
+- **No R is unowned.** An R that no phase satisfies is work you decomposed away — fix the
+  decomposition, do not drop the R.
+- **No criterion is unowned.** A criterion no phase makes true is a behavior the user asked for
+  that nothing will build and nothing will prove. Fix the decomposition, do not drop the
+  criterion.
+- **Prefer phases that serve exactly one R.** A phase spanning two Rs couples two things the
+  user asked for separately, so it cannot be tracked, reviewed, or shipped against either one
+  alone. Split it if the split leaves both halves building green; if it genuinely cannot be
+  split — one schema migration both features need — keep it and say so, because that coupling is
+  a real fact about the work and downstream consumers act on it.
+
+State it in one line before proceeding, each R's criteria in parentheses:
+`Plan: 4 phases — 23 files across 5 packages, deletion order matters. R1 -> 3,4 (R1.1 -> 3 · R1.2 -> 4) · R2 -> 1,2 (R2.1 -> 1,2 · R2.2 -> 2).`
+~~~
+**Impact:** Step 6 now owns the criterion → phase mapping that Step 7 hands out. Serves R1.1, R1.3.
+
+**Second Find in the same step** (`:339-340`, the draft-index paragraph):
+~~~markdown
+Then write a **draft** `<plans-dir>/<SLUG>_PLAN.md` with the phase table filled in and
+each phase's boundary stated. This draft is the contract the planners plan against.
+~~~
+
+**Replace with:**
+~~~markdown
+Then write a **draft** `<plans-dir>/<SLUG>_PLAN.md` with the phase table filled in and
+each phase's boundary stated. This draft is the contract the planners plan against. Its
+`## Requirements` section is complete in the draft too: the R table (verbatim asks, Phases) and,
+beneath it, the `### Acceptance Criteria` table (Pattern, Criterion, Phases) — with every
+Journeys cell `—`, because no journey exists until the phase plans do.
+~~~
+
+### Step 4: Step 7 — pass each planner the criteria it owns
+**File:** `commands/analyze.md:347-366`
+**Change:** Add `criteria:` to the planner input YAML, one `{id, text}` per criterion the phase
+owns per Step 6, and one sentence saying why the text travels with the id.
+
+**Find:**
+~~~markdown
+Each planner gets:
+
+```yaml
+worktree_root: "{absolute path}"
+plan_index: "{worktree_root}/{plans-dir}/{SLUG}_PLAN.md"          # the draft
+analysis_file: "{worktree_root}/{analysis-dir}/{session-id}_code_analyzer.md"
+phase_number: N
+phase_title: "{title}"
+phase_scope: "{what this phase owns — and what it must NOT touch}"
+satisfies: [{requirement ids this phase serves, e.g. R1}]
+depends_on: [{earlier phase numbers}]
+other_phases:                                          # boundaries only, not full plans
+  - number: 1
+    title: "..."
+    owns: "..."
+output_file: "{worktree_root}/.workflows/plan/{slug}/phase-{N}.md"
+```
+
+Planners read files themselves — pass paths, never file contents. They write their plan file and
+return a short summary plus their interface contract. They do not edit code.
+~~~
+
+**Replace with:**
+~~~markdown
+Each planner gets:
+
+```yaml
+worktree_root: "{absolute path}"
+plan_index: "{worktree_root}/{plans-dir}/{SLUG}_PLAN.md"          # the draft
+analysis_file: "{worktree_root}/{analysis-dir}/{session-id}_code_analyzer.md"
+phase_number: N
+phase_title: "{title}"
+phase_scope: "{what this phase owns — and what it must NOT touch}"
+satisfies: [{requirement ids this phase serves, e.g. R1}]
+criteria:                                              # every criterion Step 6 gave this phase
+  - {id: R1.1, text: "WHEN <trigger> THE SYSTEM SHALL <behavior>"}
+  - {id: R1.2, text: "IF <unwanted condition> THEN THE SYSTEM SHALL <behavior>"}
+depends_on: [{earlier phase numbers}]
+other_phases:                                          # boundaries only, not full plans
+  - number: 1
+    title: "..."
+    owns: "..."
+output_file: "{worktree_root}/.workflows/plan/{slug}/phase-{N}.md"
+```
+
+Planners read files themselves — pass paths, never file contents. They write their plan file and
+return a short summary plus their interface contract. They do not edit code.
+
+`criteria` is the one exception to "paths, not contents": pass each criterion's **text** with its
+id, copied exactly from the draft index's Acceptance Criteria table. The planner writes one Proof
+journey per criterion and traces it by id, and a journey written against an id alone is written
+against the planner's guess of what the id says. Every criterion whose Phases cell names this
+phase goes in its list — none left out, none from another phase.
+~~~
+**Impact:** additive input key. Until phase 2 lands, `agents/phase-planner.md` does not read it;
+nothing fails. Serves R1.3.
+
+### Step 5: Step 9 — N=1 fills the Journeys column from the phase plan
+**File:** `commands/analyze.md:410-412`
+**Change:** Only the N=1 promotion paragraph. The two verification paragraphs after it
+(`:414-422`) are phase 3's and stay byte-identical.
+
+**Find:**
+~~~markdown
+For N = 1, promote the draft yourself: fill the phase row from the planner's return value, set
+`**Status:** planned`, and leave the Reconciliation Log with the note
+`single phase — nothing to reconcile`.
+~~~
+
+**Replace with:**
+~~~markdown
+For N = 1, promote the draft yourself: fill the phase row from the planner's return value, set
+`**Status:** planned`, and leave the Reconciliation Log with the note
+`single phase — nothing to reconcile`.
+
+Then fill the Acceptance Criteria table's **Journeys** column from `phase-1.md` — with one phase
+there is no reconciler to do it. For each journey bullet under `## Verification` → `- Journeys:`
+of the form `**J{k}** · traces R1.1, R1.2 — …`, add `P1.J{k}` to the Journeys cell of every
+criterion it names, comma-separated in `k` order (`P1.J1, P1.J3`). The neighbor-check bullet
+traces nothing and adds nothing. A criterion no journey traces keeps `—`: leave the gap visible
+for the verification below rather than writing a journey id that does not exist.
+`python3 ~/.claude/skills/swarm/ears_trace.py <plan index> --fill` prints exactly these values,
+one line per criterion (`R1.1 -> P1.J1, P1.J3`): copy the part right of `->` into each row. Where
+the script is not installed, fill the column by hand by the rule above; the result is the same.
+~~~
+**Impact:** a one-phase index ends with every traced criterion pointing at its journeys. Serves R1.1.
+This paragraph is the single owner of the N = 1 fill rule and its `--fill` pointer (reconciler
+decision); phase 3's Step 9 verification paragraph refers to `--fill` only when it fixes a gap.
+`ears_trace.py` exists only after phase 3 lands and is deployed only by phase 5's `./sync.sh`,
+which is why the sentence keeps the by-hand fallback.
+
+### Step 6: Analysis template — verbatim asks and the criteria draft
+**File:** `commands/analyze.md:524-531` (inside the `## Analysis Document Template` fence)
+**Change:** The Requirement IDs table holds the verbatim ask; a criteria table follows with ID,
+Pattern, Criterion only (phases and journeys are plan facts and live in the index).
+
+**Find:**
+~~~markdown
+### Requirement IDs
+<The distinct things the user asked for, numbered in the order written. A restatement of the
+raw input above, not a decomposition — the phases that serve each one live in the plan index.>
+
+| ID | What the user asked for |
+|---|---|
+| R1 | ... |
+| R2 | ... |
+~~~
+
+**Replace with:**
+~~~markdown
+### Requirement IDs
+<The distinct things the user asked for, numbered in the order written, each in the user's own
+words — a split of the raw input above, not a decomposition. The phases that serve each one
+live in the plan index.>
+
+| ID | What the user asked for (verbatim) |
+|---|---|
+| R1 | ... |
+| R2 | ... |
+
+#### Acceptance Criteria
+<One EARS criterion per row, R{n}.{m}, every R with at least one — drafted at Step 0,
+sharpened at Step 3. Pattern is one of ubiquitous, event, state, unwanted, optional, complex.>
+
+| ID | Pattern | Criterion |
+|---|---|---|
+| R1.1 | event | WHEN <trigger> THE SYSTEM SHALL <behavior> |
+| R2.1 | unwanted | IF <unwanted condition> THEN THE SYSTEM SHALL <behavior> |
+~~~
+**Impact:** analysis docs carry the same ids the index does. Serves R1.1, R1.2.
+
+### Step 7: Plan index template — `## Requirements` per Invariant 1
+**File:** `commands/analyze.md:642-650` (inside the `## Plan Index Template` fence)
+**Change:** The R table header gains `(verbatim)`; the `### Acceptance Criteria` table follows it
+inside `## Requirements` with the exact Invariant 1 header and columns. The example rows match the
+existing example Rs and the template's own phase numbers, and each row's criterion matches its
+named pattern (Proof J2 checks this mechanically).
+
+**Find:**
+~~~markdown
+## Requirements
+
+<Carried from the analysis document's Requirement IDs — the plan index must stand alone, because
+`create-task` shapes the cards from this table and never reads the analysis.>
+
+| ID | What the user asked for | Phases |
+|---|---|---|
+| R1 | Coba ulang: refill a reading that never finished | 3, 4 |
+| R2 | Swipe-left to soft-delete a history item | 1, 2 |
+~~~
+
+**Replace with:**
+~~~markdown
+## Requirements
+
+<Carried from the analysis document's Requirement IDs — the plan index must stand alone, because
+`create-task` shapes the cards from this table and never reads the analysis. Each ask is the
+user's own words, verbatim; Phases is the union of its criteria's Phases.>
+
+| ID | What the user asked for (verbatim) | Phases |
+|---|---|---|
+| R1 | Coba ulang: refill a reading that never finished | 3, 4 |
+| R2 | Swipe-left to soft-delete a history item | 1, 2 |
+
+### Acceptance Criteria
+
+<One row per criterion id R{n}.{m} (m from 1 within each R; every R has at least one). Pattern
+is one of ubiquitous, event, state, unwanted, optional, complex, and the Criterion is written in
+that pattern with its EARS keywords upper case. Phases is filled at Step 6. Journeys is `—` in
+the draft; it is filled from the phase plans' traced journeys — by plan-reconciler for N > 1, by
+Step 9 for N = 1 — as global ids P{phase}.J{k}.>
+
+| ID | Pattern | Criterion | Phases | Journeys |
+|---|---|---|---|---|
+| R1.1 | event | WHEN the user taps Coba ulang on a reading that never finished THE SYSTEM SHALL refill that reading in place | 3 | P3.J1 |
+| R1.2 | unwanted | IF the refill fails THEN THE SYSTEM SHALL keep the partial reading and show Coba ulang again | 4 | P4.J1 |
+| R2.1 | event | WHEN the user swipes left on a history item THE SYSTEM SHALL soft-delete it | 1, 2 | P1.J1, P2.J2 |
+| R2.2 | state | WHILE a history item is soft-deleted THE SYSTEM SHALL hide it from the history list | 2 | P2.J1 |
+~~~
+**Impact:** every new index carries the Invariant 1 shape. `parse_index` ignores both tables: the
+R table and the criteria table start with `ID`, not `#` (Proof J1 asserts this). Serves R1.1, R1.2.
+
+### Step 8: Termination — criteria under each R
+**File:** `commands/analyze.md:780-782` (inside the `## Termination` fence)
+**Change:** Each R line is followed by one indented line per criterion: id, pattern, text, phases,
+journeys.
+
+**Find:**
+~~~markdown
+Requirements:
+  R1 <what the user asked for>   -> phases 3, 4
+  R2 <what the user asked for>   -> phases 1, 2
+~~~
+
+**Replace with:**
+~~~markdown
+Requirements:
+  R1 <the user's ask, cut to one line>   -> phases 3, 4
+     R1.1 event     WHEN <trigger> THE SYSTEM SHALL <behavior>               -> phase 3     [P3.J1]
+     R1.2 unwanted  IF <condition> THEN THE SYSTEM SHALL <behavior>          -> phase 4     [P4.J1]
+  R2 <the user's ask, cut to one line>   -> phases 1, 2
+     R2.1 event     WHEN <trigger> THE SYSTEM SHALL <behavior>               -> phases 1, 2 [P1.J1, P2.J2]
+     R2.2 state     WHILE <state> THE SYSTEM SHALL <behavior>                -> phase 2     [P2.J1]
+~~~
+**Impact:** the user sees every criterion and its proof at the end of the run; an untraced one
+shows `[—]`. Serves R1.1.
+
+## Principles applied
+
+- Laziness protocol: one file, eight anchored text replacements; the criteria live in a separate table under `## Requirements` rather than a reworked R table, so `create-task` and `parse_index` need no change in this phase.
+- Make illegal states unrepresentable: an R's Phases is defined as the union of its criteria's Phases (this plan's Step 3, `/analyze` Step 6; also stated in the index template comment, Step 7), so the two tables cannot disagree by construction instead of by a later cross-check.
+- Build the lever: Proof J1/J2 extract the template block and run the real `parse_index` and an EARS-shape regex over it, instead of trusting a read of the diff; phase 3's `ears_trace.py` is the permanent lever, so this phase does not add a second script (Handoff).
+- Sequence into verifiable units: the Step 9 trace-check paragraph and Step 8 are left byte-identical, and J5 proves it, so phase 3's edits land on a known base.
+
+## Verification
+
+**Build:** `cd /home/miftah/.worktrees/claude-commands/ears-acceptance-criteria && python3 skills/swarm/swarm.py selftest`
+**Tests:** `cd /home/miftah/.worktrees/claude-commands/ears-acceptance-criteria && python3 skills/swarm/tests/test_plan_graph.py`
+**Proof:** the edited `commands/analyze.md` is the artifact; the journeys extract its templates and
+steps and check them mechanically.
+- Harness: `no harness` — the repo is markdown prompts; journeys are Python/grep checks over the edited file, plus the real `parse_index`.
+- Feature-map entries: `none` (the repo has no `features/` directory; the README's `/analyze` description is phase 5's).
+- Journeys (each run from `/home/miftah/.worktrees/claude-commands/ears-acceptance-criteria`; every script prints `PASS …` and exits 0, or prints the failing assertion and exits 1):
+  - **J1** · traces R1.1 — run the script below → passes when it prints `PASS J1`: the plan index template has `## Requirements` → the verbatim R table header → `### Acceptance Criteria` → header `| ID | Pattern | Criterion | Phases | Journeys |`; every row id is `R{n}.{m}`; every R in the R table has at least one criterion and its Phases equals the union of its criteria's Phases; `parse_index` on the template returns exactly phases `[1, 2]` (neither Requirements table is read as phases); the analysis template has the verbatim header and an `| ID | Pattern | Criterion |` table.
+    ```bash
+    python3 - <<'PY'
+    import re, sys
+    sys.path.insert(0, "skills/swarm")
+    from swarm import parse_index
+    t = open("commands/analyze.md").read()
+    def block(after):
+        i = t.index(after); s = t.index("```markdown\n", i) + len("```markdown\n")
+        return t[s:t.index("\n```\n", s)]
+    idx, ana = block("## Plan Index Template"), block("## Analysis Document Template")
+    req = idx[idx.index("## Requirements\n"):idx.index("\n## Scope")]
+    lines = [l for l in req.splitlines() if l.startswith("|")]
+    assert lines[0] == "| ID | What the user asked for (verbatim) | Phases |", lines[0]
+    assert "\n### Acceptance Criteria\n" in req, "no criteria heading"
+    assert req.index("| ID | What the user asked for (verbatim)") < req.index("### Acceptance Criteria")
+    crit = req[req.index("### Acceptance Criteria"):]
+    rows = [[c.strip() for c in l.strip("|").split("|")] for l in crit.splitlines() if l.startswith("|")]
+    assert rows[0] == ["ID", "Pattern", "Criterion", "Phases", "Journeys"], rows[0]
+    rows = [r for r in rows[2:]]
+    assert rows and all(re.fullmatch(r"R\d+\.\d+", r[0]) for r in rows), rows
+    rtab = [[c.strip() for c in l.strip("|").split("|")] for l in lines[2:] if not l.startswith("| ID | Pattern")]
+    rtab = [r for r in rtab if re.fullmatch(r"R\d+", r[0])]
+    for rid, _, ph in rtab:
+        mine = [r for r in rows if r[0].split(".")[0] == rid]
+        assert mine, f"{rid} has no criterion"
+        union = sorted({int(x) for r in mine for x in re.findall(r"\d+", r[3])})
+        assert union == sorted(int(x) for x in re.findall(r"\d+", ph)), (rid, union, ph)
+    _, phases = parse_index(idx)
+    assert [p["n"] for p in phases] == [1, 2], [p["n"] for p in phases]
+    assert "| ID | What the user asked for (verbatim) |" in ana
+    assert "| ID | Pattern | Criterion |" in ana
+    print("PASS J1")
+    PY
+    ```
+  - **J2** · traces R1.2 — run the script below → passes when it prints `PASS J2`: Step 0 names all six patterns in backticks; every criterion row in both templates has a Pattern from the six-name vocabulary and its text has the shape that pattern requires (upper-case EARS keywords, `THE SYSTEM SHALL`).
+    ```bash
+    python3 - <<'PY'
+    import re
+    t = open("commands/analyze.md").read()
+    step0 = t[t.index("### Step 0"):t.index("### Step 1")]
+    names = ["ubiquitous", "event", "state", "unwanted", "optional", "complex"]
+    for n in names:
+        assert f"| `{n}` |" in step0, f"Step 0 lacks pattern {n}"
+    shape = {
+        "ubiquitous": r"THE SYSTEM SHALL \S.*",
+        "event": r"WHEN \S.* THE SYSTEM SHALL \S.*",
+        "state": r"WHILE \S.* THE SYSTEM SHALL \S.*",
+        "unwanted": r"IF \S.* THEN THE SYSTEM SHALL \S.*",
+        "optional": r"WHERE \S.* THE SYSTEM SHALL \S.*",
+        "complex": r"(?:(?:WHILE|WHEN|IF|WHERE) \S.*){2,}THE SYSTEM SHALL \S.*",
+    }
+    rows = re.findall(r"^\| (R\d+\.\d+) \| (\w+) \| (.+?) \|", t, re.M)
+    assert len(rows) >= 6, rows
+    for rid, pat, text in rows:
+        assert pat in names, (rid, pat)
+        assert re.fullmatch(shape[pat], text.strip()), (rid, pat, text)
+    print(f"PASS J2 ({len(rows)} criterion rows)")
+    PY
+    ```
+  - **J3** · traces R1.3 — run the script below → passes when it prints `PASS J3`: the Step 7 planner YAML carries a `criteria:` key with `{id: R{n}.{m}, text: "…"}` entries, between `satisfies:` and `depends_on:`, and Step 6 maps criteria to phases.
+    ```bash
+    python3 - <<'PY'
+    import re
+    t = open("commands/analyze.md").read()
+    s7 = t[t.index("### Step 7"):t.index("### Step 8")]
+    y = s7[s7.index("```yaml\n"):s7.index("\n```\n", s7.index("```yaml\n"))]
+    assert re.search(r"^criteria:", y, re.M), "no criteria key"
+    assert y.index("satisfies:") < y.index("criteria:") < y.index("depends_on:")
+    items = re.findall(r'^  - \{id: (R\d+\.\d+), text: "([^"]+)"\}', y, re.M)
+    assert len(items) >= 1, y
+    assert "text" in s7 and "id" in s7 and "Every criterion whose Phases cell names this" in s7
+    s6 = t[t.index("### Step 6"):t.index("### Step 7")]
+    assert "**No criterion is unowned.**" in s6 and "R1.1 -> 3" in s6
+    print(f"PASS J3 ({len(items)} example criteria in planner input)")
+    PY
+    ```
+  - **J4** · traces R1.1 — run the script below → passes when it prints `PASS J4`: Step 9 tells an N=1 run to fill the Journeys column with `P1.J{k}` from traced journey bullets and keep `—` for an untraced criterion; the termination block lists criteria under each R.
+    ```bash
+    python3 - <<'PY'
+    t = open("commands/analyze.md").read()
+    s9 = t[t.index("### Step 9"):t.index("### Step 10")]
+    for needle in ("**Journeys** column from `phase-1.md`", "`P1.J{k}`", "**J{k}** · traces", "keeps `—`"):
+        assert needle in s9, needle
+    term = t[t.index("## Termination"):]
+    assert "     R1.1 event" in term and "     R2.2 state" in term
+    print("PASS J4")
+    PY
+    ```
+  - **J5** · traces R1.1, R1.3 — boundary: run the script below → passes when it prints `PASS J5`: Step 8 and Step 9's two verification paragraphs are byte-identical to `7ab5aca`, so phase 3 edits a known base. Precondition: phase 3 has not landed yet (it edits exactly these sections by design); once it has, this journey is superseded and is skipped, not failed.
+    ```bash
+    python3 - <<'PY'
+    import subprocess
+    old = subprocess.run(["git", "show", "7ab5aca:commands/analyze.md"], capture_output=True, text=True, check=True).stdout
+    new = open("commands/analyze.md").read()
+    def s8(x): return x[x.index("### Step 8"):x.index("### Step 9")]
+    def s9v(x): return x[x.index("Before terminating, verify"):x.index("### Step 10")]
+    assert s8(old) == s8(new), "Step 8 changed"
+    assert s9v(old) == s9v(new), "Step 9 verification paragraphs changed"
+    print("PASS J5")
+    PY
+    ```
+    Also run `git show --stat --format= <phase-1 commit>` → passes when the only file listed is `commands/analyze.md`.
+- Neighbor check: `python3 skills/swarm/swarm.py selftest` prints `selftest: all assertions passed` and `python3 skills/swarm/tests/test_plan_graph.py` prints `test_plan_graph: all assertions passed` — the index parser and the DAG checker that read this template's phase table still pass.
+- Cost: none (no LLM turns).
+
+**Exit criteria:** J1–J5 print PASS (each fails on the `7ab5aca` base — checked by a dry run); both neighbor checks pass; `grep -c 'R{n}.{m}' commands/analyze.md` ≥ 4 and each of `` `ubiquitous` `` `` `event` `` `` `state` `` `` `unwanted` `` `` `optional` `` `` `complex` `` appears in Step 0's pattern table.
+
+## Handoffs
+
+- **Phase 2 (R2):** `agents/phase-planner.md` must read the new `criteria:` input key (shape `- {id: R{n}.{m}, text: "…"}`) and write journeys as `  - **J{k}** · traces R…, … — … → passes when …` under `- Journeys:`, which is exactly what this phase's Step 9 N=1 fill parses.
+- **Phase 3 (R3):** Step 8 and Step 9's "Before terminating, verify" / "And verify the two decision sections" paragraphs are untouched (J5). Phase 3 adds the trace-check run of `ears_trace.py` there and does not restate the N=1 fill rule, which this phase owns together with its `--fill` pointer (reconciler decision). Phase 3 also rewrites the template's `## Open Questions` comment and the termination block's Open Questions comment — regions this phase does not touch. Line numbers in `commands/analyze.md` shift after this phase (Step 8 heading `:370` -> `:424`, "Before terminating, verify" `:414` -> `:475`, template `## Open Questions` `:697` -> `~:784`; measured by the reconciler's dry run of these edits); phase 3 anchors by text and its Find strings were dry-run against this phase's output.
+- **Phase 5 (R5):** the R table header text is now `What the user asked for (verbatim)`; if `skills/create-task/SKILL.md` or `skills/task/DESIGN.md` quote the old header, they update the quote. The README's `/analyze` description (`README.md:136-150`) should mention EARS criteria. No machine reader matches the header text today (grep found only `commands/analyze.md`).
+
+## Rollback
+
+`git revert <phase-1 commit>` — the phase touches only `commands/analyze.md`. If phase 3 has
+already landed on top, revert phase 3 first (it edits the same file), then this phase.
