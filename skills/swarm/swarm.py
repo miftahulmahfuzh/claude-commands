@@ -256,7 +256,13 @@ def _cell(value):
 
 
 def _ids(value):
-    return re.findall(r"R\d+", value or "")
+    """The requirement ids in a Satisfies cell: R-level, deduplicated, first-seen order.
+
+    The cell is R-level by contract (`R1, R2`), but EARS criterion ids (`R2.1`) live one
+    table up in the same index, and one that strays into the cell must not mint a
+    duplicate: `R2.1, R2.2` is still just R2. Unchecked, it was `["R2", "R2"]`.
+    """
+    return list(dict.fromkeys(re.findall(r"R\d+", value or "")))
 
 
 # ------------------------------------------------------------------------ the ledger
@@ -1927,6 +1933,41 @@ INDEX = """# Plan: Demo
 ## Rollback
 """
 
+# The same index as /analyze writes it since EARS criteria (2026-11-11): an R table and,
+# beneath it, an Acceptance Criteria table under ## Requirements, both ahead of the phase
+# table. Neither may be read as phases -- the R table's header does not start with `#`,
+# the criteria rows start `R1.1`, not a number -- and Satisfies stays R-level.
+REQUIREMENTS = """## Requirements
+
+| ID | What the user asked for (verbatim) | Phases |
+|---|---|---|
+| R1 | sort the branch list by last commit | 1, 2, 4 |
+| R2 | an e2e harness that proves it | 3, 4 |
+
+### Acceptance Criteria
+
+| ID | Pattern | Criterion | Phases | Journeys |
+|---|---|---|---|---|
+| R1.1 | event | WHEN the branch list loads THE SYSTEM SHALL order it by last commit, newest first | 1, 4 | P1.J1, P4.J1 |
+| R1.2 | ubiquitous | THE SYSTEM SHALL document the order in the README | 2 | P2.J1 |
+| R2.1 | unwanted | IF a branch has no commits THEN THE SYSTEM SHALL list it last | 3, 4 | P3.J1, P4.J2 |
+
+"""
+
+INDEX_EARS = INDEX.replace("## Phases\n", REQUIREMENTS + "## Phases\n", 1)
+
+# An index planned before EARS criteria: the R table alone, under its old header, and no
+# Acceptance Criteria table. It must parse exactly as it always did.
+INDEX_LEGACY = INDEX.replace("## Phases\n", """## Requirements
+
+| ID | What the user asked for | Phases |
+|---|---|---|
+| R1 | sort the branch list by last commit | 1, 2, 4 |
+| R2 | an e2e harness that proves it | 3, 4 |
+
+## Phases
+""", 1)
+
 
 def selftest():
     import tempfile
@@ -1950,6 +1991,26 @@ def selftest():
     eq("a real TaskID survives", phases[1]["task_id"], "P2-TP-A012")
     eq("multi-R", phases[3]["satisfies"], ["R1", "R2"])
     eq("difficulty", phases[3]["difficulty"], "HARD")
+
+    # --- EARS acceptance criteria are invisible to the phase parse (R5.1, R5.3) ------
+    # Each fixture is first checked to really carry what it claims, so a template edit
+    # that makes a .replace() above match nothing fails here instead of passing vacuously.
+    eq("the EARS fixture carries a criteria table",
+       "### Acceptance Criteria" in INDEX_EARS and "| R1.1 | event |" in INDEX_EARS, True)
+    eq("an Acceptance Criteria table changes no phase", parse_index(INDEX_EARS),
+       parse_index(INDEX))
+    eq("the legacy fixture carries an R table and no criteria table",
+       "| R1 | sort" in INDEX_LEGACY and "### Acceptance Criteria" not in INDEX_LEGACY, True)
+    eq("a legacy index parses as before", parse_index(INDEX_LEGACY), parse_index(INDEX))
+    strayed = INDEX_EARS.replace("| Wire up | R1, R2 |", "| Wire up | R1.1, R1.2, R2.1 |")
+    eq("the stray-criteria fixture differs", strayed != INDEX_EARS, True)
+    eq("criterion ids in Satisfies stay R-level and deduplicated",
+       parse_index(strayed)[1][3]["satisfies"], ["R1", "R2"])
+    eq("_ids: a criterion id is its R", _ids("R2.1"), ["R2"])
+    eq("_ids: two criteria of one R are one R", _ids("R2.1, R2.2"), ["R2"])
+    eq("_ids: first-seen order is kept", _ids("R3, R1.2, R3.1, R1"), ["R3", "R1"])
+    eq("_ids: R12.1 is R12, not R1", _ids("R12.1"), ["R12"])
+    eq("_ids: an em dash is no requirement", _ids("—"), [])
 
     # A column added in the middle must not shift the parse -- this is why the header
     # is read by name. Same table, one extra column before Depends on.

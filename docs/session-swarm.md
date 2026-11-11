@@ -334,43 +334,44 @@ The cost is that all of it had to be built and kept working.
 Already borrowed: Cursor's [pstack](../README.md#borrowed-from-pstack), which supplied
 `engineering-principles` (read once, by the planners) and `create-verification-skill` (the
 `verify-*` skills the verifier drives). Also from Cognition's follow-up, already true here: the
-reviewer gets a clean context, never the implementer's transcript.
+reviewer gets a clean context, never the implementer's transcript. And from
+[Kiro specs](https://kiro.dev/docs/specs/concepts), **acceptance criteria in EARS form**: each
+`R` in the plan index carries criteria `R{n}.{m}` ("WHEN <trigger> THE SYSTEM SHALL <behavior>"
+and the other EARS patterns) beside the user's verbatim ask, every Proof journey traces to
+criteria by id, `plan-reconciler` catches a criterion with no owner or no journey (checked by
+`skills/swarm/ears_trace.py`), and the verifier returns a verdict per criterion instead of
+reading prose.
 
 Candidates, ordered by how much they would sharpen analyze → orch → implement:
-
-1. **Acceptance criteria in EARS form** ([Kiro specs](https://kiro.dev/docs/specs/concepts)).
-   Write each `R1…Rn` row as "WHEN <trigger> THE SYSTEM SHALL <behavior>", and trace every
-   phase's Proof journey to one. The verifier then checks a list of claims instead of reading
-   prose, and a requirement with no journey is a gap the reconciler can catch.
-2. **Two-stage review: spec first, then quality**
+1. **Two-stage review: spec first, then quality**
    ([Superpowers](https://github.com/obra/superpowers)). Split the verifier's verdict into "does
    it do what the plan and the `R` rows say" and "is the code good". Run quality only after spec
    passes, so a reviewer does not polish code that solves the wrong problem.
-3. **Kent Beck's three warning signs, checked mechanically**
+2. **Kent Beck's three warning signs, checked mechanically**
    ([Augmented Coding](https://newsletter.kentbeck.com/p/augmented-coding-beyond-the-vibes)):
    loops, functionality nobody asked for, and tests disabled or deleted. The second and third are
    diffable: files outside the phase plan's `## Files` table, and removed, skipped or loosened
    assertions in test files. Those could run as a gate in `swarm.py verify` instead of relying on
    a model to notice.
-4. **A constitution the plans are checked against**
+3. **A constitution the plans are checked against**
    ([Spec Kit](https://github.com/github/spec-kit)). `engineering-principles` is close already.
    The step still missing is to have `plan-reconciler` fail a plan that breaks a repo-declared
    rule (for example "no new dependency without a line in Why", or "every migration is
    reversible"), so the check does not depend on a planner having remembered to apply it.
-5. **Architect / editor split as the default** ([Aider](https://aider.chat/2024/09/26/architect.html)).
+4. **Architect / editor split as the default** ([Aider](https://aider.chat/2024/09/26/architect.html)).
    Plan on the strongest model and implement on a cheaper one, since the plan already contains
    the code. Economy mode does this under quota pressure. Measuring it as the normal mode is the
    obvious next experiment, given that `/analyze` cost more than fourteen phases together.
-6. **Scope the reviewer, and enforce read-only with tools, not prose**
+5. **Scope the reviewer, and enforce read-only with tools, not prose**
    ([Claude Code best practices](https://code.claude.com/docs/en/best-practices)). "A reviewer
    that's asked to find problems will always find something." Give the verifier an explicit
    out-of-scope list (style, naming) and an agent definition with no Edit or Write tools, so
    "never edits code" is a permission and not a request.
-7. **A Ralph loop for stalled phases** ([Huntley](https://ghuntley.com/ralph/)). Today, a phase
+6. **A Ralph loop for stalled phases** ([Huntley](https://ghuntley.com/ralph/)). Today, a phase
    that dies is respawned from the integration branch. The alternative is a bounded loop: one item
    per pass, a `fix_plan.md` regenerated each time, and the test suite as backpressure. That may
    be cheaper for a phase stuck on a long tail of failing tests.
-8. **Keep review load in mind** ([Simon Willison](https://simonwillison.net/2025/Oct/5/parallel-coding-agents/)).
+7. **Keep review load in mind** ([Simon Willison](https://simonwillison.net/2025/Oct/5/parallel-coding-agents/)).
    Running parallel agents is limited by how much a human can review, not by compute. The
    `Decided without asking` block and the plan index's Decisions are the review queue. Making
    them the first thing the morning summary shows, ranked by how reversible each call is, would

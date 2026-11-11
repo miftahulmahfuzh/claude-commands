@@ -80,8 +80,14 @@ The two counts are not rivals, they are different altitudes:
 | "4 phases" | independently-shippable units of execution | `/analyze`, which read the code |
 
 So neither count is overridden. `/analyze` now numbers the user's asks `R1…Rn` and every phase
-declares which `R` it serves, in the plan index's **Requirements** table. That table is the whole
-input to the decision below — read it, do not re-derive it from the prose or from the code.
+declares which `R` it serves, in the plan index's **Requirements** section. That section holds two
+tables: the **R table** (`| ID | What the user asked for (verbatim) | Phases |`, one row per `R`)
+and, beneath it under `### Acceptance Criteria`, one EARS row per criterion `R{n}.{m}`
+(`| ID | Pattern | Criterion | Phases | Journeys |`). The R table's ID → Phases mapping is the
+whole input to the shape decision below — read it, do not re-derive it from the prose, the code,
+or the criteria table. The criteria only fill the parent body. A **legacy index** (planned before
+2026-11-11) has the R table alone, under the header `What the user asked for`, and no
+`### Acceptance Criteria`: shape it exactly the same way and leave the criteria out of the body.
 
 ```bash
 python3 $S/task_gh.py create --repo owner/repo "TITLE" --body-file parent.md
@@ -94,7 +100,8 @@ python3 $S/task_gh.py create --repo owner/repo "TITLE" --body-file phase-1.md --
   its **sub-issues**, in phase order. Nothing is lost: the user's count is the parent count, and
   `/analyze`'s count is the sub-issue count.
 - **Some phase serves two or more `R`s** → **one parent card** for the whole plan set, with every
-  phase beneath it, and the user's asks listed as bullets in its body. A phase spanning two `R`s
+  phase beneath it, and the user's asks listed as bullets in its body, each with its criteria
+  beneath it. A phase spanning two `R`s
   cannot be attached to either one, and that coupling is a real fact about the work — do not
   pretend it away by picking a parent.
 - **One phase, one `R`** → one card, no sub-issues. Do not create a parent for a single phase.
@@ -109,7 +116,10 @@ Sub-issues are created in phase order, because that order *is* GitHub's sub-issu
 - the plan index path, and the **branch and base sha**, which are the durable identifiers
 - the worktree path, marked as what it is: *cut on this machine on this date; recreate with
   `task_gh.py worktree`*. A `~/.worktrees/...` path means nothing on the other laptop.
-- the `R` (or Rs) it covers, in the user's own words
+- the `R` (or Rs) it covers, in the user's own words (the R table's verbatim cell), and under each
+  `R` its acceptance criteria as a checklist copied verbatim from the criteria table — every row
+  whose ID starts with that `R`, as `- [ ] **R1.1** WHEN … THE SYSTEM SHALL …`. A legacy index
+  has no criteria table: list the asks alone.
 - the phase table: number, title, and plan path — **plus the branch**, because `/analyze` writes
   the plan files *inside the worktree*, so `.workflows/plan/<slug>/phase-1.md` does not exist on
   `main` and a bare path reads as a dead link until the pull request merges

@@ -137,6 +137,15 @@ The user's asks are numbered `R1…Rn` and every phase declares which `R` it ser
 index says what the user wanted *and* how it decomposes. That mapping is what reconciles "make me
 2 cards" with a 4-phase plan set — see `create-task`.
 
+Beneath the `R` table, each ask is broken into **acceptance criteria in EARS form**, borrowed
+from [Kiro specs](https://kiro.dev/docs/specs/concepts): `R2.1` reads "WHEN <trigger> THE SYSTEM
+SHALL <behavior>", or one of the other patterns (ubiquitous "THE SYSTEM SHALL", `WHILE <state>`,
+`IF <unwanted condition> THEN`, `WHERE <feature>`). The verbatim ask stays beside them, because
+the rationale is the spec. Every Proof journey in a phase plan names the criteria it traces;
+`plan-reconciler` checks that every criterion has an owning phase and a journey, mechanically,
+with `skills/swarm/ears_trace.py`; and the verifier returns a verdict per criterion. A plan set
+written before criteria existed has none and runs exactly as before.
+
 For N > 1 the phases are planned **in parallel** — one `phase-planner` each — and then
 reconciled. Parallel planners can't see each other's plans, so each declares an **Interface
 Contract** (what it deletes, renames, creates, and requires from earlier phases), and
@@ -145,8 +154,9 @@ work, file collisions, and gaps — then **edits the plan files** to fix them. A
 between two plans is **decided** on the highest rung that speaks (invariant → exit criteria → code
 blocks → the index's Why and Requirements → the user's raw input) and recorded under
 **Decisions** with that rung, so the executors inherit the answer instead of asking for it.
-**Open Questions** is left for the residue: an unowned requirement id, or a fork where every
-branch is irreversible.
+**Open Questions** is left for the residue: a requirement or acceptance criterion no phase can
+own, or a fork where every branch is irreversible. A criterion that has an owner but no Proof
+journey is fixed by editing that phase's plan, never parked.
 
 Every phase must build and pass tests on its own, so the branch is reviewable at any point.
 
@@ -327,7 +337,7 @@ Dispatched by `subagent_type`. `haiku` for mechanical work, `opus` where judgmen
 | `readme-updater` | opus | update the most-impacted `package_readme.md`, creating it if absent |
 | `pusher` | haiku | stage, commit with a conventional message, push |
 | `integrator` | opus | merge one wave's branches in dependency order, run the full suite, fast-forward the set branch |
-| `verifier` | sonnet | prove landed phases work by driving the real app through the repo's `verify-*` skill; never edits code |
+| `verifier` | sonnet | prove landed phases work by driving the real app through the repo's `verify-*` skill, one verdict per acceptance criterion (per phase on a legacy set); never edits code |
 
 `pusher` owns **all** git side effects for command-driven work. Invoke it directly by saying
 `run pusher`.
@@ -429,6 +439,7 @@ python3 ~/.claude/skills/swarm/swarm.py verify --slug <slug> --apply
 python3 ~/.claude/skills/swarm/swarm.py reap   --slug <slug>       # close finished windows
 python3 ~/.claude/skills/swarm/swarm.py selftest
 python3 ~/.claude/skills/swarm/plan_graph.py <PLAN.md>   # the write-set gate, before spawning
+python3 ~/.claude/skills/swarm/ears_trace.py <PLAN.md>   # every EARS criterion owned and traced
 ```
 
 Which of a repo's paths are generated or binary — and which suite the `integrator` runs after
@@ -483,10 +494,11 @@ a `verify-*` skill already working in another repo. It keeps the detail for each
 over eleven real runs.
 
 The generated skill is what gives principle 7 (*prove it works*) teeth. A phase plan's **Proof**
-section names its journeys. The implementer runs them. Then the `verifier` agent, which neither
-wrote the code nor read the implementer's reasoning, runs them again and records the verdict:
-once per wave under the orchestrator, or once per set under `/implement` and `/do`. Small sets
-skip the separate verifier and land on the implementers' own evidence.
+section names its journeys, each labelled `J{k}` and tracing the acceptance criteria
+(`R{n}.{m}`) it proves. The implementer runs them. Then the `verifier` agent, which neither
+wrote the code nor read the implementer's reasoning, runs them again and records a verdict per
+criterion: once per wave under the orchestrator, or once per set under `/implement` and `/do`.
+Small sets skip the separate verifier and land on the implementers' own evidence.
 
 ---
 
@@ -694,7 +706,7 @@ claude-commands/
 ├── skills/                   # each a directory with SKILL.md + assets
 │   ├── create-task/
 │   ├── task/                 # + DESIGN.md, taskcore/task_gh/task_gl/todos/session.py
-│   ├── swarm/                # + swarm.py, plan_graph.py, tests/ — the orchestrator's mechanics
+│   ├── swarm/                # + swarm.py, plan_graph.py, ears_trace.py, tests/ — the orchestrator's mechanics
 │   ├── engineering-principles/     # from pstack — read by the planners
 │   ├── create-verification-skill/  # from pstack — + references/
 │   └── …                     # the standalone skills — see docs/other-tools.md
