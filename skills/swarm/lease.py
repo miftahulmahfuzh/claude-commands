@@ -289,7 +289,11 @@ def run(resource, cmd, start=None, wait_max=None, cap=None, environ=None, out=sy
         if last is not None or environ.get("SWARM_LEASE_VERBOSE"):
             print(f"lease: {resource} acquired after {age(time.time() - began)}",
                   file=out, flush=True)
-        child = subprocess.Popen(cmd, pass_fds=(fh.fileno(),))
+        try:
+            child = subprocess.Popen(cmd, pass_fds=(fh.fileno(),))
+        except OSError as err:
+            print(f"lease: could not run {cmd[0]!r}: {err}", file=out, flush=True)
+            return 127
         forward = lambda sig, _frame: child.send_signal(sig)   # noqa: E731
         old = {s: signal.signal(s, forward) for s in (signal.SIGINT, signal.SIGTERM,
                                                       signal.SIGHUP)}

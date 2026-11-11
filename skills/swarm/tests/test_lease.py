@@ -209,6 +209,44 @@ def worktrees_share_one_queue():
 
 
 @case
+def options_on_either_side():
+    """MEASURED 2026-11-11: `lease pg --capacity 2 -- npm ...` acquired, then Popen'd
+    "--capacity" and crashed. Options go before the --, on either side of the resource."""
+    d = repo()
+    try:
+        for argv in (["lease", "r", "--capacity", "2", "--", "sh", "-c", "exit 4"],
+                     ["lease", "--capacity", "2", "r", "--", "sh", "-c", "exit 4"],
+                     ["lease", "r", "--repo", d, "--wait-max", "5", "--", "sh", "-c", "exit 4"]):
+            r = subprocess.run([sys.executable, SWARM, *argv], cwd=d, capture_output=True,
+                               text=True, timeout=20)
+            eq(f"parsed and ran: {' '.join(argv[:5])}", (r.returncode, "Traceback" in r.stderr),
+               (4, False))
+        for argv in (["lease", "r"], ["lease", "r", "--"], ["lease", "r", "--", "--capacity"]):
+            r = subprocess.run([sys.executable, SWARM, *argv], cwd=d, capture_output=True,
+                               text=True, timeout=20)
+            eq(f"refused cleanly: {argv}", (r.returncode, "Traceback" in r.stderr), (2, False))
+        # The command the swarm-deck guard writes must parse.
+        r = subprocess.run([sys.executable, SWARM, "lease", "r", "--repo", d, "--",
+                            os.environ.get("SHELL") or "/bin/sh", "-c", "echo 'it''s'; exit 5"],
+                           cwd=d, capture_output=True, text=True, timeout=20)
+        eq("the guard's rewrite form runs", (r.returncode, r.stdout.strip()), (5, "its"))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+@case
+def failed_launch_releases():
+    d = repo()
+    try:
+        p = leased(d, "r", ["/nonexistent/binary"])
+        eq("a command that cannot start exits 127", p.wait(timeout=10), 127)
+        eq("and leaves no ticket or holder", holders(d, "r") + waiting(d, "r"), [])
+        eq("the next caller runs at once", leased(d, "r", ["true"]).wait(timeout=10), 0)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+@case
 def config_parsing():
     d = repo()
     try:

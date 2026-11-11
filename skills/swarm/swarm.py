@@ -1588,10 +1588,9 @@ def cmd_lease(args):
                           "resource": args.resource}))
         return 0 if moved else 1
     cmd = list(args.command or [])
-    if cmd and cmd[0] == "--":
-        cmd = cmd[1:]
-    if not args.resource or not cmd:
-        print("usage: swarm.py lease RESOURCE [--wait-max S] -- CMD...", file=sys.stderr)
+    if not args.resource or not cmd or cmd[0].startswith("-"):
+        print("usage: swarm.py lease RESOURCE [--wait-max S] [--capacity N] [--repo DIR] "
+              "-- CMD...   (options before the --, the command after it)", file=sys.stderr)
         return 2
     return lease.run(args.resource, cmd, start=start, wait_max=args.wait_max,
                      cap=args.capacity)
@@ -3197,14 +3196,23 @@ def main(argv=None):
     p.add_argument("--capacity", type=int,
                    help="holders at once (default: the resource's max_concurrent, else 1)")
     p.add_argument("resource", nargs="?")
-    p.add_argument("command", nargs=argparse.REMAINDER)
 
     p = sub.add_parser("track", help="make .workflows/orchestration/ survive .gitignore")
     p.add_argument("--dry-run", action="store_true")
 
     sub.add_parser("selftest", help="offline checks, no git or tmux needed")
 
+    argv = list(sys.argv[1:] if argv is None else argv)
+    command = None
+    # `lease RES [opts] -- CMD...`: everything after the first `--` is the command, verbatim,
+    # and options may sit on either side of RES. An argparse REMAINDER took `--capacity 2 --
+    # npm ...` as the command and Popen'd "--capacity" -- after the lease was acquired.
+    if argv[:1] == ["lease"] and "--" in argv:
+        cut = argv.index("--")
+        argv, command = argv[:cut], argv[cut + 1:]
     args = parser.parse_args(argv)
+    if args.cmd == "lease":
+        args.command = command
     return {"init": cmd_init, "waves": cmd_waves, "spawn": cmd_spawn,
             "reap": cmd_reap, "report": cmd_report, "land": cmd_land,
             "verify": cmd_verify, "status": cmd_status, "watch": cmd_watch, "doctor": cmd_doctor,
