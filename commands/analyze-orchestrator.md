@@ -149,7 +149,15 @@ Once per repo, then idempotently every run:
 
 ```bash
 python3 ~/.claude/skills/swarm/swarm.py track
+python3 ~/.claude/skills/swarm/swarm.py doctor     # 0 ready · 2 problems, each with its fix
 ```
+
+`doctor` checks the machine, not the plan: the `swarm-deck` mod is configured, no deny list hides
+a tool the swarm uses (`SendMessage`, `Monitor`, `PushNotification`, the notes tools), and a
+Claude Code shell is quiet on a bare `cd`. MEASURED 2026-11-11: all three were wrong on one
+morning and each was found mid-run by the owner. A problem is not a stop — the watch detects
+finished phases without any of them — so carry each one, with its `fix`, into the ledger note at
+`init` and the termination block's `Decided without asking`, and proceed.
 
 This re-includes `.workflows/orchestration/` and nothing else. It does **not** un-ignore
 `.workflows/plan/` — that directory is ignored deliberately in at least one repo here, holding

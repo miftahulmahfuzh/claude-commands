@@ -69,6 +69,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -1383,6 +1384,158 @@ def cmd_watch(args):
         time.sleep(args.interval)
 
 
+# ------------------------------------------------------------------------- doctor
+
+# Tools a swarm leans on. Denying one does not stop a set any more -- the watch and the mod
+# detect a finished phase without a message -- but each one denied is a slower or quieter night,
+# and none of them is ever the deny someone meant to write.
+SWARM_TOOLS = ("SendMessage", "ListAgents", "Monitor", "PushNotification", "Agent", "Bash",
+               "Edit", "Write", "Skill")
+# Noise a login shell prints, as opposed to a real error the command meant. `zle` is what zsh
+# says about line editing when there is no terminal, which is every Claude Code shell.
+SHELL_NOISE_OK = re.compile(r"can't change option: zle")
+
+
+def deny_lists(repo, home=None):
+    """(file, [denied tools]) for every settings file that can deny a tool in this repo."""
+    home = Path(home or Path.home())
+    found = []
+    for path in (Path(repo) / ".claude" / "settings.json",
+                 Path(repo) / ".claude" / "settings.local.json",
+                 home / ".claude" / "settings.json"):
+        data = load(path)
+        deny = (data.get("permissions") or {}).get("deny") or []
+        if deny:
+            found.append((str(path), [str(x) for x in deny]))
+    return found
+
+
+def blocked_tools(deny):
+    """The swarm's own tools, and the notes tools, that a deny list names."""
+    swarm = [t for t in SWARM_TOOLS if t in deny or f"{t}(*)" in deny]
+    notes = [t for t in deny if t.startswith("mcp__notes")]
+    return swarm, notes
+
+
+def mod_dirs(home=None, environ=None):
+    """Where Claude Code loads plugin folders from, by CLAUDE_CODE_PLUGIN_DIRS."""
+    environ = os.environ if environ is None else environ
+    raw = environ.get("CLAUDE_CODE_PLUGIN_DIRS") or \
+        (load(Path(home or Path.home()) / ".claude" / "settings.json").get("env") or {}) \
+        .get("CLAUDE_CODE_PLUGIN_DIRS") or ""
+    return [d for d in re.split(r"[:,]", raw) if d.strip()]
+
+
+def shell_noise(stderr):
+    """The lines a Claude Code shell printed on a bare `cd` that it should not have."""
+    return [line for line in stderr.splitlines()
+            if line.strip() and not SHELL_NOISE_OK.search(line)]
+
+
+# A function definition line in `typeset -f` output: `name () {`.
+FUNC_HEAD = re.compile(r"^([^\s()]+) \(\) \{?$")
+
+
+def snapshot_functions(dump):
+    """`typeset -f` output minus every function whose name starts with `_`.
+
+    That is what Claude Code's shell snapshot keeps. MEASURED 2026-11-11: gvm's `cd` override and
+    `setValueForKeyFakeAssocArray` survived into the snapshot while the `_encode`/`_decode` helpers
+    they call did not, so every `cd` in every Bash call printed twelve errors -- and an interactive
+    shell, which loads gvm whole, printed nothing. A probe has to rebuild the snapshot to see it.
+    """
+    kept, keep = [], True
+    for line in dump.splitlines():
+        head = FUNC_HEAD.match(line)
+        if head:
+            keep = not head.group(1).startswith("_")
+        if keep:
+            kept.append(line)
+    return "\n".join(kept) + "\n"
+
+
+def shell_probe(shell, timeout=20):
+    """Rebuild a Claude Code shell snapshot of this shell, run a bare cd in it, return stderr.
+
+    Self-contained on purpose: the snapshots under ~/.claude/shell-snapshots belong to live
+    sessions, are deleted when they exit, and may predate an rc fix -- reading one of them reports
+    on somebody else's past, not on what the next spawned phase will get.
+    """
+    env = dict(os.environ, CLAUDECODE="1")
+    dump = subprocess.run([shell, "-ic", "typeset -f"], capture_output=True, text=True, env=env,
+                          timeout=timeout, stdin=subprocess.DEVNULL).stdout
+    with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as handle:
+        handle.write(snapshot_functions(dump))
+        snap = handle.name
+    try:
+        return subprocess.run([shell, "-c", f"source {shlex.quote(snap)} 2>/dev/null || true; "
+                                             "cd / && true"],
+                              capture_output=True, text=True, env=env, timeout=timeout,
+                              stdin=subprocess.DEVNULL).stderr
+    finally:
+        os.unlink(snap)
+
+
+def cmd_doctor(args):
+    """Check the machine before a swarm runs on it, and say what to fix.
+
+    MEASURED 2026-11-11 on ears-acceptance-criteria, every one found mid-run and each costing a
+    human to notice: a leftover deny list hid SendMessage and the notes tools from every session;
+    a permission dialog stalled a phase that the mod would have answered, had it been loaded;
+    and every Bash call printed twelve lines of gvm errors into every phase's context. None of it
+    was about the plan. All of it is checkable before the first spawn.
+    """
+    repo = main_worktree(os.getcwd())
+    if not repo:
+        return soft("not inside a git repository")
+    problems, ok = [], []
+
+    dirs = mod_dirs()
+    deck = [d for d in dirs if Path(d).name == "swarm-deck"]
+    if deck and (Path(deck[0]) / "hooks" / "register.js").exists():
+        ok.append(f"swarm-deck mod loads from {deck[0]}")
+    else:
+        problems.append({"check": "mod",
+                         "detail": "swarm-deck is not in CLAUDE_CODE_PLUGIN_DIRS"
+                                   + (f" (it names {dirs})" if dirs else ""),
+                         "why": "without it nothing answers permission dialogs, no phase row "
+                                "goes `finished`, and nothing wakes the coordinator but the watch",
+                         "fix": 'add "CLAUDE_CODE_PLUGIN_DIRS": "<claude-commands>/mods/swarm-deck" '
+                                "to env in ~/.claude/settings.json"})
+
+    for path, deny in deny_lists(repo):
+        swarm, notes = blocked_tools(deny)
+        if swarm:
+            problems.append({"check": "deny", "detail": f"{path} denies {', '.join(swarm)}",
+                             "why": "every session in this repo loses them, phases included",
+                             "fix": f"remove those entries from permissions.deny in {path}"})
+        if notes:
+            problems.append({"check": "deny", "detail": f"{path} denies {len(notes)} notes tools",
+                             "why": "/n cannot save or link the set's notes",
+                             "fix": f"remove the mcp__notes__* entries from permissions.deny in {path}"})
+    if not any(p["check"] == "deny" for p in problems):
+        ok.append("no deny list hides a tool the swarm uses")
+
+    shell = os.environ.get("SHELL") or "/bin/sh"
+    try:
+        noise = shell_noise(shell_probe(shell))
+    except (OSError, subprocess.TimeoutExpired) as err:
+        noise = [f"could not start {shell}: {err}"]
+    if noise:
+        problems.append({"check": "shell", "detail": f"{shell} prints {len(noise)} line(s) on a "
+                                                       f"bare cd in a Claude Code shell: "
+                                                       f"{noise[0][:160]}",
+                         "why": "it lands in every Bash result of every phase -- tokens and noise",
+                         "fix": "guard the offending rc lines with [[ -z \"$CLAUDECODE\" ]] "
+                                "(Claude Code sets CLAUDECODE=1 in its shells)"})
+    else:
+        ok.append(f"{shell} is quiet in a Claude Code shell")
+
+    print(json.dumps({"swarm": True, "repo": repo, "ok": not problems, "passed": ok,
+                      "problems": problems}, indent=2))
+    return 2 if problems else 0
+
+
 # ------------------------------------------------------------------------- landing
 
 # A path is a migration if any directory on it is named `migrations` or `migrate`.
@@ -2555,6 +2708,29 @@ def selftest():
     eq("a window closing on unfinished work is an ACT line",
        any("window closed but it is not done" in e for e in watch_events(seed, gone, 300)), True)
 
+    # doctor: deny lists, the mod path, shell noise -- the three things that broke 2026-11-11.
+    with tempfile.TemporaryDirectory() as tmp:
+        repo_dir, home_dir = Path(tmp) / "repo", Path(tmp) / "home"
+        (repo_dir / ".claude").mkdir(parents=True)
+        (home_dir / ".claude").mkdir(parents=True)
+        (repo_dir / ".claude" / "settings.local.json").write_text(json.dumps({"permissions": {
+            "deny": ["SendMessage", "LSP", "mcp__notes__create", "mcp__notes__get"]}}))
+        (home_dir / ".claude" / "settings.json").write_text(json.dumps(
+            {"env": {"CLAUDE_CODE_PLUGIN_DIRS": "/x/mods/swarm-deck"}}))
+        lists = deny_lists(repo_dir, home_dir)
+        eq("one deny list found", len(lists), 1)
+        eq("swarm tool and notes tools named", blocked_tools(lists[0][1]),
+           (["SendMessage"], ["mcp__notes__create", "mcp__notes__get"]))
+        eq("mod dir from settings env", mod_dirs(home_dir, environ={}), ["/x/mods/swarm-deck"])
+        eq("env wins over settings", mod_dirs(home_dir, environ={"CLAUDE_CODE_PLUGIN_DIRS": "/a:/b"}),
+           ["/a", "/b"])
+    dump = "cd () {\n\t_encode x\n}\n_encode () {\n\techo x\n}\nls () {\n\tcommand ls\n}"
+    eq("the snapshot keeps cd and ls and drops the _ helper",
+       snapshot_functions(dump), "cd () {\n\t_encode x\n}\nls () {\n\tcommand ls\n}\n")
+    eq("zle is not noise", shell_noise("(eval):1: can't change option: zle\n"), [])
+    eq("gvm is noise", shell_noise("setValueForKeyFakeAssocArray:27: command not found: _encode\n"),
+       ["setValueForKeyFakeAssocArray:27: command not found: _encode"])
+
     if failures:
         for line in failures:
             print(f"FAIL {line}", file=sys.stderr)
@@ -2628,6 +2804,8 @@ def main(argv=None):
                         "else 5m)")
     p.add_argument("--once", action="store_true", help="print one reading and exit")
 
+    sub.add_parser("doctor", help="check the machine before a swarm runs on it")
+
     p = sub.add_parser("land", help="merge the set to main, push it, delete the branch")
     p.add_argument("--slug", required=True)
     p.add_argument("--step", required=True,
@@ -2676,7 +2854,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     return {"init": cmd_init, "waves": cmd_waves, "spawn": cmd_spawn,
             "reap": cmd_reap, "report": cmd_report, "land": cmd_land,
-            "verify": cmd_verify, "status": cmd_status, "watch": cmd_watch,
+            "verify": cmd_verify, "status": cmd_status, "watch": cmd_watch, "doctor": cmd_doctor,
             "find": cmd_find, "track": cmd_track, "launch": cmd_launch,
             "selftest": lambda _: selftest()}[args.cmd](args)
 

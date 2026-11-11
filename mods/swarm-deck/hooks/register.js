@@ -486,6 +486,9 @@ let owner = false
 /** What the last refresh saw, so a wake names only what changed. Null until seeded. */
 let seen = null
 
+/** The ledger milestones last announced (landed, failed phases). Null until seeded. */
+let announced = null
+
 /** A shell older than this lights the band, flags the deck and wakes the coordinator. */
 let maxShellMs = 5 * 60000
 
@@ -671,7 +674,19 @@ async function refresh($) {
   $.ui.invalidate('ui.render')
   // A phase is never woken by its own deck: only the set's live coordinator acts on it.
   if (swarm !== null) return
-  owner = await owns($, fleetSlug)
+  const ledger = await ownLedger($, fleetSlug)
+  owner = ledger !== null && !ledger.landed
+  if (ledger !== null) {
+    const m = milestones(announced && announced.slug === fleetSlug ? announced : null, ledger)
+    announced = Object.assign({ slug: fleetSlug }, m.next)
+    for (const line of m.lines) {
+      try {
+        await $.ui.notify(fleetSlug + ' ' + line, { title: 'swarm' })
+      } catch (err) {
+        // No channel, or a hook refused it: the band and the termination block still say it.
+      }
+    }
+  }
   const now = await $.clock.now()
   const seenSlug = seen && seen.slug
   const found = changes(seenSlug === fleetSlug ? seen : null, rows, latest, now)
@@ -763,16 +778,42 @@ function changes(prev, rows, latest, now) {
   return { next: next, events: events }
 }
 
-async function owns($, slug) {
+/** The set's ledger when THIS session coordinates it, landed or not; else null. */
+async function ownLedger($, slug) {
   try {
     const me = await $.session.id()
     const found = await discover($)
-    if (!me || !found.root) return false
+    if (!me || !found.root) return null
     const ledger = JSON.parse(await $.fs.read(found.root + '/.workflows/orchestration/' + slug + '/ledger.json'))
-    return ledger.coordinator_session_id === me && !ledger.landed
+    return ledger.coordinator_session_id === me ? ledger : null
   } catch (err) {
-    return false
+    return null
   }
+}
+
+/**
+ * What the person should hear about even while away: the set landed, or a phase failed.
+ * Pure. Seeds on the first reading like `changes`, so a reload never re-announces.
+ *
+ * Raised by the mod, not asked of the model: the command's PushNotification instruction is a
+ * prompt, and the night it matters is the night a prompt gets skipped.
+ */
+function milestones(prev, ledger) {
+  const next = { landed: Boolean(ledger.landed), failed: {} }
+  const lines = []
+  const phases = Array.isArray(ledger.phases) ? ledger.phases : []
+  for (const p of phases) {
+    if (p.status === 'failed') {
+      next.failed[p.n] = true
+      if (prev && !prev.failed[p.n]) lines.push('phase ' + p.n + ' failed' + (p.note ? ': ' + oneLine(p.note, 120) : ''))
+    }
+  }
+  if (prev && next.landed && !prev.landed) {
+    const sha = String((ledger.landed && ledger.landed.commit) || '').slice(0, 7)
+    const done = phases.filter(p => p.status === 'done').length
+    lines.push('landed: ' + done + '/' + phases.length + ' phases' + (sha ? ', main @ ' + sha : ''))
+  }
+  return { next: next, lines: lines }
 }
 
 /**

@@ -676,6 +676,14 @@ Next — decide it and re-plan against the current tree, in a new session:
 This is the only branch that ends without either a commit or a drift note, and it is not a
 question: the session is over when it prints, and the swarm has been told.
 
+**Then push one notification** where the `PushNotification` tool exists, and only for the outcomes
+nobody else will announce: **landed** (`<SLUG> landed: <total> phase(s), <base> @ <sha>`),
+**landing failed**, **drifted**, and **undecidable** — each as the block's first line, under 200
+characters. Never for a phase with more to come, and never when this phase is swarm-tracked: its
+coordinator owns the set's one notification (`analyze-orchestrator.md` Termination). This session
+usually runs unwatched in a tmux window `/analyze` opened, so the termination block is read by
+whoever looks; the notification is for whoever is away, and a stop nobody hears about is a stall.
+
 ---
 
 ## Deciding Without Asking

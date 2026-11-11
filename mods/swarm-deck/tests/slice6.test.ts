@@ -246,3 +246,33 @@ test('the live coordinator\'s own asks are answered too', async ($, on) => {
   const out: any = await $.tool.check({ tool: 'Bash', input: { command: 'rm -f .git/index-p4' }, approver: 'person' } as any)
   expect(out.decision).toBe('allow')
 })
+
+test('the coordinator is notified, natively, when its set lands or a phase fails -- once each', async ($, on) => {
+  mock.env(on, {})
+  const clock = mock.clock(on)
+  storeSpy(on, { [ROW]: row({ updatedAt: 0 }) })
+  const ledger: any = { slug: 'ears', coordinator_session_id: 'orch',
+                        phases: [{ n: 1, status: 'done' }, { n: 2, status: 'spawned' }] }
+  on('session.start', () => ({ cwd: '/repo' }))
+  on('session.id', () => ({ value: 'orch' }))
+  on('session.usage', () => USAGE)
+  on('command.register', () => ({ value: undefined }))
+  on('session.repo', () => ({ value: { root: '/repo', remote: null } }))
+  on('fs.list', () => ({ value: [{ name: 'ears', kind: 'dir', size: 0, isLink: false }] }))
+  on('fs.read', () => ({ value: JSON.stringify(ledger) }))
+  on('prompt.submit', ($: any, e: any) => ({ text: e.text }))
+  const told: string[] = []
+  on('ui.notify', ($: any, e: any) => { told.push(e.text); return { value: { isSent: true, channel: 'terminal' } } })
+
+  await $.session.start(START)
+  expect(told).toEqual([])
+
+  ledger.phases[1] = { n: 2, status: 'failed', note: 'pytest red' }
+  await clock.advance(15000)
+  expect(told).toEqual(['ears phase 2 failed: pytest red'])
+
+  ledger.landed = { commit: '74e78853717ea52af0f2cbb67fbfabe93d013ee2' }
+  await clock.advance(15000)
+  await clock.advance(15000)
+  expect(told).toEqual(['ears phase 2 failed: pytest red', 'ears landed: 1/2 phases, main @ 74e7885'])
+})

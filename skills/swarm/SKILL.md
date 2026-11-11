@@ -842,6 +842,7 @@ it yourself.**
 | `reap --slug S [--phase N]` | capture the scrollback, then close the windows of finished phases |
 | `report --slug S --phase N --status ...` | record an outcome -- this is the report; a message, where `SendMessage` exists, only speeds it up |
 | `verify --slug S [--apply]` | re-derive status from git and todos.md; never resets a phase whose window is live |
+| `doctor` | before a set: the swarm-deck mod is configured, no deny list hides `SendMessage`/`Monitor`/`PushNotification`/notes tools, a Claude Code shell is quiet on `cd` (rebuilt snapshot); exit 2 lists each problem with its fix |
 | `watch --slug S [--max-shell 5m] [--once]` | for the coordinator's `Monitor`: one line per phase that finished, window that closed on unfinished work, or shell past `MAX_SHELL_SCRIPT_DURATION`; exits when the set is terminal |
 | `land --slug S --step check\|merge\|push\|cleanup` | merge the set into `main`, push it, delete the worktrees and the branch |
 | `status --slug S` | durable + runtime, merged, for a human |

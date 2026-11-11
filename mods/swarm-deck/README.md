@@ -164,6 +164,12 @@ it). The deck lists them under the row; one past `MAX_SHELL_SCRIPT_DURATION` (de
 once per multiple of the threshold — a progress report the phase never had to remember to send.
 A backgrounded command returns at once and is not timed.
 
+**Landed and failed, out loud.** *The termination block is written for someone at the window.*
+The coordinator's deck raises a native notification (`$.ui.notify`) when its set's ledger records
+`landed` or a phase turns `failed` — once each, seeded on the first reading so a reload never
+re-announces. It is raised by the mod, not asked of the model, because the command's own
+`PushNotification` step is a prompt and the night it matters is the night a prompt gets skipped.
+
 **Permission dialogs.** *A dialog at 3am is a stopped phase, and the owner answers Yes anyway.*
 Claude Code's own safety checks ask even under `bypassPermissions` — measured on the same night:
 phase 4's pusher stopped twice on "Dangerous rm operation on possibly-empty variable path" for
