@@ -40,42 +40,42 @@
     },
     {
       "card": null,
-      "commit": null,
+      "commit": "fa4490b",
       "depends_on": [
         1,
         2
       ],
       "difficulty": "HARD",
       "n": 3,
-      "note": null,
+      "note": "ears_trace.py + test (9 cases), reconciler rules 6-7/ledger/finalize/verify, /analyze Step 8 trace rule + Step 9 N=1 check + Open Questions residue x4; no decisions, no drift; proof: verified-first-pass /tmp/claude-1000/-home-miftah--worktrees-claude-commands-ears-acceptance-criteria/af5b03f4-0cfe-4de6-8efc-dea5805e60be/scratchpad/p3-proof | wave1 verifier: verified (R3.1-R3.3)",
       "package": "skills/swarm",
       "plan": ".workflows/plan/ears-acceptance-criteria/phase-3.md",
-      "reported_at": null,
+      "reported_at": "2026-11-11T09:18:05+07:00",
       "satisfies": [
         "R3"
       ],
-      "status": "spawned",
-      "task_id": null,
+      "status": "done",
+      "task_id": "P1-CL-A026",
       "title": "Reconciler enforces the trace (+ ears_trace.py)"
     },
     {
       "card": null,
-      "commit": null,
+      "commit": "b5e72e8",
       "depends_on": [
         1,
         2
       ],
       "difficulty": "NORMAL",
       "n": 4,
-      "note": null,
+      "note": "verifier.md rewritten around the Acceptance Criteria checklist (criteria:/neighbor:/trace_drift:, legacy fallback); orchestrator 6b + implement 5a pass plan_index; re-checked green on top of phase 3 (fa4490b); proof: verified-first-pass (no harness, grep journeys J1-J4 + neighbor) | wave1 verifier: verified (R4.1-R4.2)",
       "package": "agents",
       "plan": ".workflows/plan/ears-acceptance-criteria/phase-4.md",
-      "reported_at": null,
+      "reported_at": "2026-11-11T09:18:05+07:00",
       "satisfies": [
         "R4"
       ],
-      "status": "spawned",
-      "task_id": null,
+      "status": "done",
+      "task_id": "P1-CL-A027",
       "title": "Verifier reports per criterion"
     },
     {
@@ -96,7 +96,7 @@
       "satisfies": [
         "R5"
       ],
-      "status": "pending",
+      "status": "spawned",
       "task_id": null,
       "title": "Consumers, docs and deploy"
     }
@@ -104,7 +104,7 @@
   "plan": "/home/miftah/.worktrees/claude-commands/ears-acceptance-criteria/.workflows/orchestration/ears-acceptance-criteria/PLAN.md",
   "repo": "/home/miftah/claude-commands",
   "slug": "ears-acceptance-criteria",
-  "updated": "2026-11-11T08:54:54+07:00",
-  "verified_at": "2026-11-11T08:33:49+07:00",
+  "updated": "2026-11-11T09:18:05+07:00",
+  "verified_at": "2026-11-11T08:57:59+07:00",
   "worktree": "/home/miftah/.worktrees/claude-commands/ears-acceptance-criteria"
 }
