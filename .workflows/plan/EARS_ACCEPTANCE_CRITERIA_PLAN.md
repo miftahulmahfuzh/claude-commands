@@ -142,6 +142,7 @@ plan index there); candidates 2–7 of the Borrowed list; `CHANGELOG.md` (left t
 **Owns:** `agents/verifier.md` (input `plan_index`, steps read the criteria table + journey traces outside fenced code blocks, return `criteria:` list, `legacy` fallback); the verifier dispatch paragraphs in `commands/analyze-orchestrator.md` (:633-645) and `commands/implement.md` (:494-505, from `**Independent verification first**` through `before landing.`) to pass `plan_index` and act on failed criteria.
 **Does not touch:** `commands/implement.md` outside the Step 5a verifier paragraph (phase 5 owns `:196`), swarm scripts.
 **Exit criteria:** verifier return value has `criteria: [{id, verdict, journeys, evidence}]`; both dispatch sites pass `plan_index`; a legacy index path is documented.
+**Done:** ✅ phase 4/5 complete (`P1-CL-A027`, 2026-11-11) — Proof J1–J4 + neighbor check pass; `swarm.py selftest` and `test_plan_graph.py` (27 cases) green. `**Status:**` above is left to the coordinator (swarm-tracked set); the authoritative phase status is the swarm ledger.
 
 ### Phase 5 — Consumers, docs and deploy
 **Satisfies:** R5

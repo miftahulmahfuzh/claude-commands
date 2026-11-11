@@ -492,15 +492,18 @@ and use the normal rules. In economy mode:
 - The coordinator passes `--model sonnet` to every `swarm.py spawn` and `swarm.py launch`. `swarm.py` reads the mod's quota file and defaults to Sonnet in economy mode on its own, but the explicit flag keeps the choice in the command.
 
 **Independent verification first** (unless the small-set rule applies). Dispatch the **`verifier`** agent (`subagent_type:
-"verifier"`) with this worktree, the base the set branched from, and every phase plan of the
-set. It drives the plans' Proof sections with fresh context; you wrote the code, so your own
-Proof run does not count as this check. Then:
+"verifier"`) with this worktree, the base the set branched from, the plan index you were handed
+with `-f` (as `plan_index`), and every phase plan of the set. It drives the plans' Proof sections
+with fresh context and returns one verdict per acceptance criterion (`criteria:`) beside the
+per-phase verdicts, or `criteria: legacy` for an index with no Acceptance Criteria table; you
+wrote the code, so your own Proof run does not count as this check. Then:
 - `verified` → land.
-- `failed` → do not land. Fix what it showed (its `repro` lines are the reproduction), re-run
-  the failing journeys yourself, then dispatch the verifier once more. A second `failed` stops
-  without landing: report both verdicts and the evidence dir.
-- `inconclusive` → land, and carry every inconclusive claim and its reason into the
-  Termination block, so the gap is visible, not buried.
+- `failed` → do not land. Fix what it showed (its `repro` lines are the reproduction; its
+  `failed` criterion ids say which requirement broke), re-run the failing journeys yourself,
+  then dispatch the verifier once more. A second `failed` stops without landing: report both
+  verdicts, the failed criterion ids and the evidence dir.
+- `inconclusive` → land, and carry every inconclusive claim and criterion id, with its reason
+  (`no journey` included), into the Termination block, so the gap is visible, not buried.
 - `map_drift` entries → fix those `features/*.md` entries (they are docs, and yours to fix)
   before landing.
 

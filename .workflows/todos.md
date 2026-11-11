@@ -6,32 +6,22 @@
 
 **Last Updated**: 2026-11-11
 
-**Total Active Tasks**: 2
+**Total Active Tasks**: 1
 
 ## Quick Stats
 - P0 Critical: 0
-- P1 High: 2
+- P1 High: 1
 - P2 Medium: 0
 - P3 Low: 0
 - P4 Backlog: 0
 - Blocked: 0
-- Completed Today: 20
-- Completed This Week: 20
-- Completed This Month: 21
+- Completed Today: 21
+- Completed This Week: 21
+- Completed This Month: 22
 
 ---
 
 ## Active Tasks
-
-- [ ] **P1-CL-A027** Phase 4: Verifier reports per criterion
-  - **Difficulty**: NORMAL
-  - **Type**: Feature
-  - **Context**: `agents/verifier.md` and the verifier dispatch paragraphs in `analyze-orchestrator.md` and `implement.md`. Exit: verifier returns `criteria: [{id, verdict, journeys, evidence}]`; both dispatch sites pass `plan_index`; legacy path documented.
-  - **Status**: open
-  - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 4 of 5)
-  - **Satisfies**: R4 — The verifier checks the list of criteria, reporting a verdict per criterion id.
-  - **Depends on**: **P1-CL-A024**, **P1-CL-A025**
-  - **Plan**: `.workflows/plan/P1-CL-A027.md`
 
 - [ ] **P1-CL-A028** Phase 5: Consumers, docs and deploy
   - **Difficulty**: NORMAL
@@ -62,6 +52,22 @@
   - **Method**: /do (swarm phase 3 of 5, branch `feature/ears-acceptance-criteria`, shared worktree)
   - **Files**: skills/swarm/ears_trace.py, skills/swarm/tests/test_ears_trace.py, agents/plan-reconciler.md, commands/analyze.md
   - **Verification**: py_compile passed; test_ears_trace.py (9 cases), test_plan_graph.py, swarm.py selftest pass; Proof J1-J5 + neighbor check verified first pass (`--fill` over this index prints 14 lines)
+
+- [x] **P1-CL-A027** Phase 4: Verifier reports per criterion
+  - **Difficulty**: NORMAL
+  - **Type**: Feature
+  - **Context**: `agents/verifier.md` and the verifier dispatch paragraphs in `analyze-orchestrator.md` and `implement.md`. Exit: verifier returns `criteria: [{id, verdict, journeys, evidence}]`; both dispatch sites pass `plan_index`; legacy path documented.
+  - **Status**: completed 2026-11-11
+  - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 4 of 5)
+  - **Satisfies**: R4 — The verifier checks the list of criteria, reporting a verdict per criterion id.
+  - **Depends on**: **P1-CL-A024**, **P1-CL-A025**
+  - **Plan**: `.workflows/plan/P1-CL-A027.md`
+  - **Completed**: 2026-11-11 08:55
+  - **Method**: /do (swarm phase 4 of 5, branch `feature/ears-acceptance-criteria`, shared worktree)
+  - **Files**: agents/verifier.md, commands/analyze-orchestrator.md, commands/implement.md
+  - **Verification**: swarm.py selftest passed; test_plan_graph.py 27 cases passed; Proof J1-J4 + neighbor check pass (grep journeys); verified first pass
+  - **Drift**:
+    - verifier.md was 87 lines, plan said 88; content matched, whole-file replacement applied as written
 
 - [x] **P1-CL-A025** Phase 2: Phase plans trace journeys to criteria
   - **Difficulty**: NORMAL
