@@ -185,10 +185,41 @@ which rung decided it is the opposite of inventing.
   would recognise as separate — a numbered list in the prompt is already that split, so use
   its numbering. One paragraph asking for one thing is `R1` alone.
 
-  This is a *restatement*, not a decomposition: an R is what the user wants, a phase is how
-  it gets built, and the mapping between them is what Step 6 decides. Every downstream
+  Each R row carries **the user's own words for that ask, verbatim** — the numbered item copied
+  whole, or the sentence(s) of prose that ask for it. Not a paraphrase: the rationale is the
+  specification, and a tidied restatement is where an ask quietly loses the clause that mattered.
+
+  This is a *split* of the request, not a decomposition: an R is what the user wants, a phase is
+  how it gets built, and the mapping between them is what Step 6 decides. Every downstream
   consumer — the phase table, `/implement`, and `create-task` when it shapes the cards —
   reads that mapping instead of re-deriving it from the prose.
+
+- **Acceptance criteria** — under each R, draft one or more criteria `R{n}.{m}` (`m` counts from
+  1 within each R): the testable behaviors that show the ask is met. Each criterion is one
+  sentence in exactly one EARS pattern, EARS keywords in upper case, and is recorded with the
+  name of its pattern:
+
+  | Pattern | Shape | Use it for |
+  |---|---|---|
+  | `ubiquitous` | THE SYSTEM SHALL <behavior> | always true, no trigger |
+  | `event` | WHEN <trigger> THE SYSTEM SHALL <behavior> | a response to something happening |
+  | `state` | WHILE <state> THE SYSTEM SHALL <behavior> | holds for as long as a condition does |
+  | `unwanted` | IF <unwanted condition> THEN THE SYSTEM SHALL <behavior> | errors, bad input, failure paths |
+  | `optional` | WHERE <feature or option> THE SYSTEM SHALL <behavior> | only where a feature, flag or config applies |
+  | `complex` | a combination, e.g. WHILE <state> WHEN <trigger> THE SYSTEM SHALL <behavior> | a behavior that needs two of the above |
+
+  The rules, each of which a later step checks rather than trusts:
+  - **Every R has at least one criterion.** An R with none has nothing a Proof journey can
+    trace, so its proof is whatever the phase felt like writing.
+  - **One behavior per criterion, observable from outside** — something a command, a read-back
+    or a scripted drive can show passing or failing. "THE SYSTEM SHALL be robust" is not one.
+  - **A criterion narrows its R; it never adds to it.** A criterion that needs a behavior the
+    user did not ask for is an inference: state it under the analysis's assumptions (Step 3), or
+    leave it out.
+  - **The verbatim ask stays beside its criteria.** The criteria are the checkable form; the ask
+    is the rationale they are checked against. Neither replaces the other.
+
+  Draft them here, from the user's words. Step 3 sharpens them once the dataflow is known.
 
 ### Step 1: Read Explicitly Mentioned Files
 
@@ -228,6 +259,12 @@ For each file you encounter, document:
 - What are the success criteria?
 - What edge cases or constraints matter?
 - What are you assuming?
+- **Do the Step 0 acceptance criteria survive the dataflow?** Rewrite each one against what
+  the exploration found: the real trigger (the command, endpoint, step or event the code
+  actually has), the real state, the real failure path. Add an `unwanted` criterion for a
+  failure the ask implies but the draft missed; merge two that turned out to be one behavior.
+  Keep every criterion in exactly one EARS pattern. Renumber only within an R, and only now —
+  from Step 6 on the ids are referenced and never change.
 
 This bridges raw input and implementation.
 
@@ -315,20 +352,25 @@ introduce the new thing → move callers → delete the old thing.
 Cap at **20 phases**. If the work needs more, group related ones and say what you grouped.
 `--phases N` overrides the decision.
 
-**Then map the phases onto the requirement IDs from Step 0.** Every phase declares the R (or
-Rs) it serves, and every R is served by at least one phase. Two properties matter, and both are
-checkable rather than felt:
+**Then map the phases onto the requirement IDs from Step 0, criterion by criterion.** Every
+acceptance criterion `R{n}.{m}` is owned by the phase (or phases) whose change makes it true, and
+an R's phases are exactly the union of its criteria's phases. Every phase declares the R (or Rs)
+it serves, and every R is served by at least one phase. Three properties matter, and all three
+are checkable rather than felt:
 
 - **No R is unowned.** An R that no phase satisfies is work you decomposed away — fix the
   decomposition, do not drop the R.
+- **No criterion is unowned.** A criterion no phase makes true is a behavior the user asked for
+  that nothing will build and nothing will prove. Fix the decomposition, do not drop the
+  criterion.
 - **Prefer phases that serve exactly one R.** A phase spanning two Rs couples two things the
   user asked for separately, so it cannot be tracked, reviewed, or shipped against either one
   alone. Split it if the split leaves both halves building green; if it genuinely cannot be
   split — one schema migration both features need — keep it and say so, because that coupling is
   a real fact about the work and downstream consumers act on it.
 
-State it in one line before proceeding:
-`Plan: 4 phases — 23 files across 5 packages, deletion order matters. R1 -> 3,4 · R2 -> 1,2.`
+State it in one line before proceeding, each R's criteria in parentheses:
+`Plan: 4 phases — 23 files across 5 packages, deletion order matters. R1 -> 3,4 (R1.1 -> 3 · R1.2 -> 4) · R2 -> 1,2 (R2.1 -> 1,2 · R2.2 -> 2).`
 
 **`Depends on` is load-bearing beyond ordering.** `/analyze-orchestrator` reads that column as a
 DAG and runs every phase that shares no edge concurrently, in its own session. A dependency
@@ -337,7 +379,10 @@ dependency omitted for tidiness produces two sessions editing the same file at o
 edges that are true, and only those.
 
 Then write a **draft** `<plans-dir>/<SLUG>_PLAN.md` with the phase table filled in and
-each phase's boundary stated. This draft is the contract the planners plan against.
+each phase's boundary stated. This draft is the contract the planners plan against. Its
+`## Requirements` section is complete in the draft too: the R table (verbatim asks, Phases) and,
+beneath it, the `### Acceptance Criteria` table (Pattern, Criterion, Phases) — with every
+Journeys cell `—`, because no journey exists until the phase plans do.
 
 ### Step 7: Write the Phase Plans
 
@@ -354,6 +399,9 @@ phase_number: N
 phase_title: "{title}"
 phase_scope: "{what this phase owns — and what it must NOT touch}"
 satisfies: [{requirement ids this phase serves, e.g. R1}]
+criteria:                                              # every criterion Step 6 gave this phase
+  - {id: R1.1, text: "WHEN <trigger> THE SYSTEM SHALL <behavior>"}
+  - {id: R1.2, text: "IF <unwanted condition> THEN THE SYSTEM SHALL <behavior>"}
 depends_on: [{earlier phase numbers}]
 other_phases:                                          # boundaries only, not full plans
   - number: 1
@@ -364,6 +412,12 @@ output_file: "{worktree_root}/.workflows/plan/{slug}/phase-{N}.md"
 
 Planners read files themselves — pass paths, never file contents. They write their plan file and
 return a short summary plus their interface contract. They do not edit code.
+
+`criteria` is the one exception to "paths, not contents": pass each criterion's **text** with its
+id, copied exactly from the draft index's Acceptance Criteria table. The planner writes one Proof
+journey per criterion and traces it by id, and a journey written against an id alone is written
+against the planner's guess of what the id says. Every criterion whose Phases cell names this
+phase goes in its list — none left out, none from another phase.
 
 With N = 1 this is one planner. Dispatch it the same way.
 
@@ -410,6 +464,16 @@ morning for the price of one commit.
 For N = 1, promote the draft yourself: fill the phase row from the planner's return value, set
 `**Status:** planned`, and leave the Reconciliation Log with the note
 `single phase — nothing to reconcile`.
+
+Then fill the Acceptance Criteria table's **Journeys** column from `phase-1.md` — with one phase
+there is no reconciler to do it. For each journey bullet under `## Verification` → `- Journeys:`
+of the form `**J{k}** · traces R1.1, R1.2 — …`, add `P1.J{k}` to the Journeys cell of every
+criterion it names, comma-separated in `k` order (`P1.J1, P1.J3`). The neighbor-check bullet
+traces nothing and adds nothing. A criterion no journey traces keeps `—`: leave the gap visible
+for the verification below rather than writing a journey id that does not exist.
+`python3 ~/.claude/skills/swarm/ears_trace.py <plan index> --fill` prints exactly these values,
+one line per criterion (`R1.1 -> P1.J1, P1.J3`): copy the part right of `->` into each row. Where
+the script is not installed, fill the column by hand by the rule above; the result is the same.
 
 Before terminating, verify: every phase has a plan file, every plan file's code blocks are
 complete, every impact point in the analysis is owned by some phase, and **every requirement ID
@@ -522,13 +586,23 @@ Create `<analysis-dir>/<session-id>_code_analyzer.md`:
 - file1.go
 
 ### Requirement IDs
-<The distinct things the user asked for, numbered in the order written. A restatement of the
-raw input above, not a decomposition — the phases that serve each one live in the plan index.>
+<The distinct things the user asked for, numbered in the order written, each in the user's own
+words — a split of the raw input above, not a decomposition. The phases that serve each one
+live in the plan index.>
 
-| ID | What the user asked for |
+| ID | What the user asked for (verbatim) |
 |---|---|
 | R1 | ... |
 | R2 | ... |
+
+#### Acceptance Criteria
+<One EARS criterion per row, R{n}.{m}, every R with at least one — drafted at Step 0,
+sharpened at Step 3. Pattern is one of ubiquitous, event, state, unwanted, optional, complex.>
+
+| ID | Pattern | Criterion |
+|---|---|---|
+| R1.1 | event | WHEN <trigger> THE SYSTEM SHALL <behavior> |
+| R2.1 | unwanted | IF <unwanted condition> THEN THE SYSTEM SHALL <behavior> |
 
 ---
 
@@ -642,12 +716,28 @@ may not — do not paraphrase it away.>
 ## Requirements
 
 <Carried from the analysis document's Requirement IDs — the plan index must stand alone, because
-`create-task` shapes the cards from this table and never reads the analysis.>
+`create-task` shapes the cards from this table and never reads the analysis. Each ask is the
+user's own words, verbatim; Phases is the union of its criteria's Phases.>
 
-| ID | What the user asked for | Phases |
+| ID | What the user asked for (verbatim) | Phases |
 |---|---|---|
 | R1 | Coba ulang: refill a reading that never finished | 3, 4 |
 | R2 | Swipe-left to soft-delete a history item | 1, 2 |
+
+### Acceptance Criteria
+
+<One row per criterion id R{n}.{m} (m from 1 within each R; every R has at least one). Pattern
+is one of ubiquitous, event, state, unwanted, optional, complex, and the Criterion is written in
+that pattern with its EARS keywords upper case. Phases is filled at Step 6. Journeys is `—` in
+the draft; it is filled from the phase plans' traced journeys — by plan-reconciler for N > 1, by
+Step 9 for N = 1 — as global ids P{phase}.J{k}.>
+
+| ID | Pattern | Criterion | Phases | Journeys |
+|---|---|---|---|---|
+| R1.1 | event | WHEN the user taps Coba ulang on a reading that never finished THE SYSTEM SHALL refill that reading in place | 3 | P3.J1 |
+| R1.2 | unwanted | IF the refill fails THEN THE SYSTEM SHALL keep the partial reading and show Coba ulang again | 4 | P4.J1 |
+| R2.1 | event | WHEN the user swipes left on a history item THE SYSTEM SHALL soft-delete it | 1, 2 | P1.J1, P2.J2 |
+| R2.2 | state | WHILE a history item is soft-deleted THE SYSTEM SHALL hide it from the history list | 2 | P2.J1 |
 
 ## Scope
 
@@ -778,8 +868,12 @@ Branch:   feature/<slug>  (base <ref> @ <sha>)
 Session:  analyze-<slug>  <or the reason it kept its old name>
 
 Requirements:
-  R1 <what the user asked for>   -> phases 3, 4
-  R2 <what the user asked for>   -> phases 1, 2
+  R1 <the user's ask, cut to one line>   -> phases 3, 4
+     R1.1 event     WHEN <trigger> THE SYSTEM SHALL <behavior>               -> phase 3     [P3.J1]
+     R1.2 unwanted  IF <condition> THEN THE SYSTEM SHALL <behavior>          -> phase 4     [P4.J1]
+  R2 <the user's ask, cut to one line>   -> phases 1, 2
+     R2.1 event     WHEN <trigger> THE SYSTEM SHALL <behavior>               -> phases 1, 2 [P1.J1, P2.J2]
+     R2.2 state     WHILE <state> THE SYSTEM SHALL <behavior>                -> phase 2     [P2.J1]
 
 Phases:
   1. <title>  [R2]  -> .workflows/plan/<slug>/phase-1.md

@@ -4,32 +4,88 @@
 
 **Package Code**: CL
 
-**Last Updated**: 2026-10-27
+**Last Updated**: 2026-11-11
 
-**Total Active Tasks**: 0
+**Total Active Tasks**: 4
 
 ## Quick Stats
 - P0 Critical: 0
-- P1 High: 0
+- P1 High: 4
 - P2 Medium: 0
 - P3 Low: 0
 - P4 Backlog: 0
-- Blocked: 0
-- Completed Today: 17
-- Completed This Week: 17
-- Completed This Month: 18
+- Blocked: 3
+- Completed Today: 18
+- Completed This Week: 18
+- Completed This Month: 19
 
 ---
 
 ## Active Tasks
 
-*No active tasks*
+- [ ] **P1-CL-A025** Phase 2: Phase plans trace journeys to criteria
+  - **Difficulty**: NORMAL
+  - **Type**: Feature
+  - **Context**: `agents/phase-planner.md` input `criteria`, step 6, hard requirements, output format and return value. Exit: output format shows `**Criteria:**` and `**J{k}** · traces R…` journeys; untraced journeys and owned criteria without a journey are forbidden.
+  - **Status**: in_progress
+  - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 2 of 5)
+  - **Satisfies**: R2 — Every phase plan Proof journey traces to one or more EARS criteria by id.
+  - **Depends on**: none
+  - **Plan**: `.workflows/plan/P1-CL-A025.md`
+
+- [ ] **P1-CL-A026** Phase 3: Reconciler enforces the trace (+ ears_trace.py)
+  - **Difficulty**: HARD
+  - **Type**: Feature
+  - **Context**: New `skills/swarm/ears_trace.py` + test, `agents/plan-reconciler.md` rules 6-7, `commands/analyze.md` Step 8/9/11. Exit: `test_ears_trace.py` passes; `--fill` over this index prints 14 lines; rule 7 and Step 8 carry the identical trace-rule paragraph.
+  - **Status**: blocked
+  - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 3 of 5)
+  - **Satisfies**: R3 — plan-reconciler checks the trace: every criterion has an owning phase and a Proof journey.
+  - **Depends on**: **P1-CL-A024**, **P1-CL-A025**
+  - **Plan**: `.workflows/plan/P1-CL-A026.md`
+
+- [ ] **P1-CL-A027** Phase 4: Verifier reports per criterion
+  - **Difficulty**: NORMAL
+  - **Type**: Feature
+  - **Context**: `agents/verifier.md` and the verifier dispatch paragraphs in `analyze-orchestrator.md` and `implement.md`. Exit: verifier returns `criteria: [{id, verdict, journeys, evidence}]`; both dispatch sites pass `plan_index`; legacy path documented.
+  - **Status**: blocked
+  - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 4 of 5)
+  - **Satisfies**: R4 — The verifier checks the list of criteria, reporting a verdict per criterion id.
+  - **Depends on**: **P1-CL-A024**, **P1-CL-A025**
+  - **Plan**: `.workflows/plan/P1-CL-A027.md`
+
+- [ ] **P1-CL-A028** Phase 5: Consumers, docs and deploy
+  - **Difficulty**: NORMAL
+  - **Type**: Feature
+  - **Context**: `swarm.py` `_ids` dedupe + fixtures, swarm/create-task/task SKILL.md, implement.md:196, README, CLAUDE.md, architecture-notes, session-swarm, then `./sync.sh`. Exit: selftest and both tests pass from repo and `~/.claude`; drift check clean.
+  - **Status**: blocked
+  - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 5 of 5)
+  - **Satisfies**: R5 — Keep consumers working (swarm.py, create-task, skills/task); old non-EARS plan sets still execute; run ./sync.sh.
+  - **Depends on**: **P1-CL-A024**, **P1-CL-A025**, **P1-CL-A026**, **P1-CL-A027**
+  - **Plan**: `.workflows/plan/P1-CL-A028.md`
+
 
 ---
 
 ## Completed Tasks
 
 ### Recently Completed
+- [x] **P1-CL-A024** Phase 1: /analyze writes EARS criteria
+  - **Difficulty**: NORMAL
+  - **Type**: Feature
+  - **Context**: `commands/analyze.md` Steps 0/3/6/7/9-fill, index template Requirements section and termination block. Exit: index template carries R table + Acceptance Criteria table per Invariant 1; grep finds `R{n}.{m}` and all six pattern names.
+  - **Status**: done
+  - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 1 of 5)
+  - **Satisfies**: R1 — /analyze writes each requirement in the plan index in EARS form (WHEN … THE SYSTEM SHALL …), raw asks kept verbatim.
+  - **Depends on**: none
+  - **Plan**: `.workflows/plan/P1-CL-A024.md`
+  - **Completed**: 2026-11-11 08:32
+  - **Method**: /do (swarm phase 1 of 5, branch `feature/ears-acceptance-criteria`, shared worktree)
+  - **Files**: commands/analyze.md, .workflows/todos.md, .workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md, .workflows/plan/P1-CL-A024.md, .workflows/plan/P1-CL-A025.md, .workflows/plan/P1-CL-A026.md, .workflows/plan/P1-CL-A027.md, .workflows/plan/P1-CL-A028.md
+  - **Verification**: swarm.py selftest passed; test_plan_graph.py passed (27 cases); Proof J1-J5 all PASS first pass
+  - **Decided**:
+    - readme-updater for this phase → skipped: README/docs are owned by phase 5 of this set and concurrent phases share the worktree (narrower blast radius tie-break; plan index Phase 5 Owns README.md)
+    - plan index `**Status:**` left to the swarm coordinator; phase 1 ticked with a `**Done:**` line under `### Phase 1` instead (surrounding convention: SWARM_WRITE_SET_GATE_PLAN.md leaves Status to the coordinator in swarm-tracked sets)
+
 - [x] **P1-CL-A022** Phase 2: Per-repo artifact classes and test commands
   - **Difficulty**: HARD
   - **Type**: Refactor

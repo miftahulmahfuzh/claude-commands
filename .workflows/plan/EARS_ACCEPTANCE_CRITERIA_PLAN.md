@@ -110,17 +110,18 @@ plan index there); candidates 2–7 of the Borrowed list; `CHANGELOG.md` (left t
 
 | # | Title | Satisfies | Package | Files | Depends on | Difficulty | Plan | TaskID | Card |
 |---|-------|-----------|---------|-------|-----------|------------|------|--------|------|
-| 1 | /analyze writes EARS criteria | R1 | `commands` | 1 | — | NORMAL | `.workflows/plan/ears-acceptance-criteria/phase-1.md` | — | — |
-| 2 | Phase plans trace journeys to criteria | R2 | `agents` | 1 | — | NORMAL | `.workflows/plan/ears-acceptance-criteria/phase-2.md` | — | — |
-| 3 | Reconciler enforces the trace (+ ears_trace.py) | R3 | `skills/swarm` | 4 | 1, 2 | HARD | `.workflows/plan/ears-acceptance-criteria/phase-3.md` | — | — |
-| 4 | Verifier reports per criterion | R4 | `agents` | 3 | 1, 2 | NORMAL | `.workflows/plan/ears-acceptance-criteria/phase-4.md` | — | — |
-| 5 | Consumers, docs and deploy | R5 | `skills` | 10 | 1, 2, 3, 4 | NORMAL | `.workflows/plan/ears-acceptance-criteria/phase-5.md` | — | — |
+| 1 | /analyze writes EARS criteria | R1 | `commands` | 1 | — | NORMAL | `.workflows/plan/ears-acceptance-criteria/phase-1.md` | P1-CL-A024 | — |
+| 2 | Phase plans trace journeys to criteria | R2 | `agents` | 1 | — | NORMAL | `.workflows/plan/ears-acceptance-criteria/phase-2.md` | P1-CL-A025 | — |
+| 3 | Reconciler enforces the trace (+ ears_trace.py) | R3 | `skills/swarm` | 4 | 1, 2 | HARD | `.workflows/plan/ears-acceptance-criteria/phase-3.md` | P1-CL-A026 | — |
+| 4 | Verifier reports per criterion | R4 | `agents` | 3 | 1, 2 | NORMAL | `.workflows/plan/ears-acceptance-criteria/phase-4.md` | P1-CL-A027 | — |
+| 5 | Consumers, docs and deploy | R5 | `skills` | 10 | 1, 2, 3, 4 | NORMAL | `.workflows/plan/ears-acceptance-criteria/phase-5.md` | P1-CL-A028 | — |
 
 ### Phase 1 — /analyze writes EARS criteria
 **Satisfies:** R1
 **Owns:** `commands/analyze.md` Step 0 (criteria derived per R), Step 3, Step 6 (criteria → phases), Step 7 planner input (`criteria:`), Step 9's N=1 Journeys fill paragraph (sole owner of the fill rule and its `ears_trace.py --fill` pointer, with a by-hand fallback), the analysis-document template's Requirement IDs, the plan index template's `## Requirements` section, the termination block's Requirements lines.
 **Does not touch:** Step 8, Step 9's two verification paragraphs, the contract bullet on Open Questions, Step 11, the template's `## Open Questions` comment and the termination block's Open Questions comment (all phase 3); any agent file; any script.
 **Exit criteria:** the index template carries the R table + Acceptance Criteria table exactly as Invariant 1; Step 0/6/7 instruct writing and passing criteria; grep finds `R{n}.{m}` and all six pattern names in `commands/analyze.md`.
+**Done:** ✅ phase 1/5 complete (`P1-CL-A024`, 2026-11-11 08:32) — Proof J1–J5 pass; `swarm.py selftest` and `test_plan_graph.py` (27 cases) green. `**Status:**` above is left to the coordinator (swarm-tracked set); the authoritative phase status is the swarm ledger.
 
 ### Phase 2 — Phase plans trace journeys to criteria
 **Satisfies:** R2
