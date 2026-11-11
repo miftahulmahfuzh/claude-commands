@@ -660,14 +660,21 @@ Loop until `runnable_now` is empty:
 6b. **Verify the wave independently.** Once the wave's work is on the branch the next wave
    will be cut from (the integration branch after step 6, or the shared worktree's branch),
    dispatch one **`verifier`** agent (`subagent_type: "verifier"`) for the whole wave: that
-   checkout, the commit before the wave, and the wave's phase plans. It never wrote any of
-   it, so its verdict is what counts. Each phase's own Proof run is the weaker witness.
+   checkout, the commit before the wave, the plan index you were handed with `-f` (as
+   `plan_index`), and the wave's phase plans. It never wrote any of it, so its verdict is what
+   counts. Each phase's own Proof run is the weaker witness.
    One verifier per wave, not per phase, keeps this to one launch and one drive session.
+   Beside the per-phase verdicts it returns one verdict per acceptance criterion (`criteria:`),
+   or `criteria: legacy` for an index with no Acceptance Criteria table. Act per phase, as
+   below, and name criterion ids in what you record:
    - `verified` → go on.
    - `failed` phase → mark it `failed` in the ledger with the verifier's `repro` lines and
-     evidence dir. `stalled` then holds its dependents back on its own. Keep driving
+     evidence dir, and put the ids of its `failed` criteria first in the `--note`
+     (`verifier failed R2.1, R2.3: <first repro line>`; `verifier failed neighbor: …` when only
+     its neighbor check failed). `stalled` then holds its dependents back on its own. Keep driving
      everything else that is runnable, as with any failed phase.
-   - `inconclusive` → go on, and carry the claims and reasons into the final report.
+   - `inconclusive` → go on, and carry the claims and reasons into the final report, listing
+     every `inconclusive` criterion id with its reason (`no journey` included).
    - `map_drift` → the coordinator fixes those `features/*.md` entries in its ledger commit.
    Skip it for a wave that changed no runnable behavior, and say so in the round's notes.
 

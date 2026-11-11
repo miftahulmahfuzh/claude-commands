@@ -187,6 +187,42 @@ the worst possible green. The two that bite most often are per-checkout build ar
 worktree lacks (hardlink them; a symlinked `node_modules` passes vitest and tsc and then fails
 the build) and a runner that resolves imports outside this tree. The example above carries both.
 
+## `ears_trace.py` — the criteria trace check
+
+A plan index written since 2026-11-11 carries, under `## Requirements`, an `### Acceptance
+Criteria` table: one EARS row per criterion `R{n}.{m}` with its owning phases. Each phase plan
+names the criteria it owns on a `**Criteria:**` line and labels every Proof journey
+`**J{k}** · traces R…`. This script reads both and reports every criterion with **no owning
+phase** or **no tracing journey**:
+
+```bash
+python3 ~/.claude/skills/swarm/ears_trace.py <PLAN.md>          # --json for the machine form
+python3 ~/.claude/skills/swarm/ears_trace.py <PLAN.md> --fill   # the Journeys column values
+```
+
+Exit codes mirror `plan_graph.py`: **0** every criterion owned and traced — or a **legacy** index
+with no `### Acceptance Criteria` heading, which has nothing to check; **2** at least one gap;
+**1** the index or a phase plan could not be read. Read-only, stdlib only, and it imports nothing
+the executors need: `/implement`, `/do` and `swarm.py` never read criteria, so a legacy set runs
+exactly as before.
+
+It names five gap kinds: `unowned` (no phase owns the criterion), `untraced` (owned, but no
+journey traces it), `unknown_id` (a journey or `**Criteria:**` line names an id the table lacks),
+`misassigned` (a plan claims a criterion the index gives to another phase) and `unclaimed` (the
+index gives a phase a criterion its `**Criteria:**` line omits). Every reader skips fenced code
+blocks, so an index or plan that quotes the format in an example is not read as using it.
+
+`plan-reconciler` runs it and acts on the gaps by the trace rule (its rules 6–7, `/analyze`
+Step 8): an owned but untraced criterion is fixed by editing that phase's plan to add a journey;
+an unowned one is assigned to a phase; only a criterion no phase can own lands in Open Questions.
+`/analyze` Step 9 runs it too, so a one-phase set gets the same check. `--fill` gives the
+`P{phase}.J{k}` lists the reconciler (or `/analyze` Step 9 for a one-phase set) writes into the
+index's Journeys column. The verifier then reports one verdict per criterion.
+
+`swarm.py` stays criteria-blind on purpose: `parse_index` reads only the `#`-headed phase table,
+and a Satisfies cell is R-level — `_ids` folds a stray `R2.1` into `R2` and drops duplicates.
+`swarm.py selftest` asserts both against an index carrying the criteria table and a legacy one.
+
 ## Nobody in a swarm waits for a human
 
 A swarm exists to turn a night into N phases of progress. A question suspends that, and the cost
@@ -388,9 +424,11 @@ Then, until nothing is runnable and nothing is live:
    `verify` and never before it — an unverified `done` is a claim, and its window is the
    evidence. It closes every verified `done` phase regardless of its wave-mates.
 6b. **Prove the wave, with an agent that did not write it.** `swarm.py verify` proves the
-   commits landed, not that the feature works. Dispatch one `verifier` agent per wave
-   (`agents/verifier.md`; the details are in step 6b of `analyze-orchestrator.md`). A `failed`
-   verdict marks that phase failed in the ledger, with the repro, and its dependents stall.
+   commits landed, not that the feature works. Dispatch one `verifier` agent per wave with the
+   plan index (`agents/verifier.md`; the details are in step 6b of `analyze-orchestrator.md`). It
+   returns one verdict per acceptance criterion (`criteria:`), or `criteria: legacy` for an index
+   with no criteria table, beside the per-phase verdicts. A `failed` verdict marks that phase
+   failed in the ledger, with the repro and its failed criterion ids, and its dependents stall.
    Sets of at most 2 phases may skip it under the small-set rule (step 6b of
    `analyze-orchestrator.md`), recorded as `self-verified (small-set rule)`.
 7. **Re-compute.** `waves` again; a finished phase may have unblocked others. Go to 1.

@@ -129,11 +129,32 @@ reconciler's ledger in `agents/plan-reconciler.md` to match.
 **Reconciliation decides behavioral forks; it does not park them.** The plan index has two
 sections and the split is load-bearing: `## Decisions` holds every fork settled on the precedence
 ladder, each with the rung that settled it, and the executors inherit those instead of asking;
-`## Open Questions` is reserved for an unowned requirement id or a fork where *every* branch is
+`## Open Questions` is reserved for an unowned requirement id or criterion, or a fork where *every* branch is
 irreversible, which is the only thing that still refuses `/analyze`'s Step 11 launch. Parking an
 ordinary contradiction there is what cost a six-phase set an entire night — every phase touching
-it meets the same fork alone, at 3am. `/analyze` Step 8 and `agents/plan-reconciler.md` rule 6
+it meets the same fork alone, at 3am. `/analyze` Step 8 and `agents/plan-reconciler.md` rules 6–7
 must stay in step on this.
+
+**Acceptance criteria are EARS rows, traced to journeys** (from
+[Kiro specs](https://kiro.dev/docs/specs/concepts), see `docs/session-swarm.md`). Since 2026-11-11
+the index's `## Requirements` holds two tables: the R table
+(`ID | What the user asked for (verbatim) | Phases`, R-level — the one create-task shapes cards
+from) and beneath it `### Acceptance Criteria` (`ID | Pattern | Criterion | Phases | Journeys`),
+one EARS row per `R{n}.{m}`, pattern one of ubiquitous, event (`WHEN`), state (`WHILE`), unwanted
+(`IF … THEN`), optional (`WHERE`) or complex. Each phase plan names its criteria on a
+`**Criteria:**` line and labels every Proof journey `**J{k}** · traces R…`; the global journey id
+is `P{phase}.J{k}`. The tables are separate on purpose: criteria rows inside the R table would
+break create-task's R → cards mapping, and `parse_index` must never take either table for the
+`#`-headed phase table. `skills/swarm/ears_trace.py` (read-only, stdlib, modelled on
+`plan_graph.py`) reports every criterion with no owning phase or no tracing journey — exit 0
+clean or legacy, 1 unreadable, 2 gaps — and `--fill` prints the Journeys column. The reconciler
+runs it: an owned but untraced criterion is fixed by editing the plan, an unowned one is
+assigned, and only a criterion no phase can own reaches Open Questions — `/analyze` Step 8 and
+reconciler rules 6–7 say this identically. The verifier returns a verdict per criterion.
+**Legacy sets** (no `### Acceptance Criteria` heading) stay valid: the checker exits 0, the
+verifier falls back to per-phase Proof and marks its report `legacy`, and nothing that executes
+plans (`/implement`, `/do`, `swarm.py`) reads criteria at all. `swarm.py _ids` keeps a Satisfies
+cell R-level and deduplicated even if a criterion id strays into it.
 
 Downstream, plans are **adopted, never regenerated** — and adopted means *executed*, not
 summarized. `/implement` and `/do` both read the plan file in their own main context; a plan

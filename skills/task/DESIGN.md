@@ -287,6 +287,11 @@ every phase declares which `R` it serves. This is the same move the **Interface
 Contract** made for reconciliation: publish the one fact the next stage needs so
 it does not have to re-derive everything.
 
+Since 2026-11-11 each `R` also carries EARS acceptance criteria `R{n}.{m}`, in a separate
+`### Acceptance Criteria` table beneath the R table. The two tables are kept apart so the card
+shape still comes from the R rows alone; the criteria only fill the parent body, as a checklist
+under each `R`. An index without the criteria table is legacy and is carded exactly as before.
+
 **The two counts are not rivals.** "2 cards" is deliverables; "4 phases" is
 execution units. Both are correct at different altitudes, so both survive: one
 parent card per `R`, its phases as sub-issues, in phase order. When a phase serves

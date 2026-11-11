@@ -1,0 +1,355 @@
+# Phase 4: Verifier reports per criterion
+
+**Plan set:** `EARS_ACCEPTANCE_CRITERIA_PLAN.md`
+**Analysis:** `.workflows/analyze/20261111-080843-E4RS_code_analyzer.md`
+**Satisfies:** R4: the verifier checks the list of criteria and reports a verdict per criterion id instead of reading prose
+**Criteria:** R4.1, R4.2
+**Depends on:** Phase 1, 2
+**Difficulty:** NORMAL
+**Package:** `agents`
+
+---
+
+## Goal
+
+When the verifier gets a plan index, it builds its checklist from the index's
+`### Acceptance Criteria` table and the phase plans' traced journeys (`**J{k}** · traces R…`).
+It returns exactly one verdict per criterion id, with evidence, beside the per-phase verdicts
+the dispatchers already act on. An index without that table still gets today's per-phase prose
+verification, and the report says `criteria: legacy`. Both dispatch sites (the wave verifier in
+`/analyze-orchestrator` and the solo verifier in `/implement`) hand it `plan_index` and name
+failed or inconclusive criterion ids in what they record.
+
+## Interface Contract
+
+**Deletes:** none. The per-phase `phases:` return block stays. The neighbor journey moves out of
+the per-phase `proved/failed/inconclusive` lists into the new top-level `neighbor:` list; the
+per-phase verdict still counts it.
+**Renames:** none
+**Creates:**
+- verifier input key `plan_index` (optional path to `<SLUG>_PLAN.md`; absent → legacy) (`agents/verifier.md`, Input)
+- verifier return keys: top-level `criteria:` (a list of `{id, phases, verdict, journeys, evidence | observed+repro+evidence | reason}`, or the scalar `legacy`), `neighbor:` (list), `trace_drift:` (list), plus an optional `journey: "P{n}.J{k}"` on each per-phase claim (`agents/verifier.md`, Return value)
+- verifier verdict rule per criterion: `failed` if any tracing journey failed; `verified` only if at least one journey traces it and every tracing journey passed with evidence; otherwise `inconclusive` (`reason: "no journey"` when none traces it)
+**Signature changes:** verifier Input `{worktree, base, phases}` → `{worktree, base, plan_index?, phases}`. Return gains keys only, so existing readers of `verdict`, `evidence_dir`, `phases[].verdict`, `repro`, `map_drift` keep working.
+**Requires (from earlier phases):**
+- Plan index carries `### Acceptance Criteria` under `## Requirements` with columns `| ID | Pattern | Criterion | Phases | Journeys |`, ids `R{n}.{m}` (Phase 1, Invariant 1)
+- Phase plans carry a `**Criteria:**` header line and journeys as `  - **J{k}** · traces R1.1, R1.2 — … → passes when …`, with the neighbor check as a separate untraced bullet (Phase 2, Invariant 1)
+- Optional only: `skills/swarm/ears_trace.py <index> --json` (Phase 3). The verifier may use it as a cross-check but reads the table itself when the script is absent or fails. Nothing here depends on its JSON field names.
+**Leaves alone (owned by others):** `commands/analyze.md` (Phases 1, 3), `agents/phase-planner.md` (Phase 2), `agents/plan-reconciler.md` and `skills/swarm/ears_trace.py` (Phase 3), `commands/implement.md` outside lines 494–505, incl. `:196` (Phase 5), `skills/swarm/swarm.py`, all `skills/*/SKILL.md`, README, CLAUDE.md, `docs/*` (Phase 5). No `./sync.sh` (Invariant 6).
+
+## Files
+
+| File | Action | What changes |
+|---|---|---|
+| `agents/verifier.md:1-88` | modify (whole-file replacement) | description, Input gains `plan_index`, new "The checklist" section, steps read criteria + traces and judge each criterion, Return value gains `criteria`/`neighbor`/`trace_drift`, legacy fallback |
+| `commands/analyze-orchestrator.md:633-645` | modify | step 6b passes `plan_index`; failed criterion ids go in the ledger `--note`; inconclusive criterion ids go into the final report |
+| `commands/implement.md:494-505` | modify | Step 5a verifier paragraph passes `plan_index`; failed and inconclusive criterion ids are carried into the fix loop and the Termination block |
+
+## Implementation Steps
+
+### Step 1: Rewrite the verifier spec around the criteria checklist
+**File:** `agents/verifier.md:1-88` (replace the whole file; lines 8–13 and 15–16 of the
+intro are kept verbatim, and old steps 2–7 are kept with the edits shown)
+**Change:** Add `plan_index` to Input. Add a "The checklist" section that defines how the
+criteria list is built, the legacy test, and the verdict rule. Renumber the steps to 1–9: step 2
+builds the checklist, step 5 records each journey result against its `P{n}.J{k}` id and reports
+the neighbor separately, step 7 judges each criterion. Extend the Return value.
+**Code:**
+````markdown
+---
+name: verifier
+description: Independently prove that landed phases meet their plans' acceptance criteria, reporting one verdict per criterion id (or per phase, from Proof prose, for a legacy plan set), by driving the real app with the repo's verification skill and capturing evidence. Never the agent that wrote the code; never edits code. Dispatched by the swarm coordinator after a wave lands, or by /implement and /do for a single phase. Use the sonnet model.
+model: sonnet
+color: green
+---
+
+You verify other agents' work. You did not write it, and you have not read their reasoning,
+which is what makes your verdict worth having. Treat every claim in a completion report as
+unproven until you observe it yourself.
+
+**You never edit product code, tests or plans.** You run things and write evidence.
+If something is broken, your job is to show it, not to fix it.
+
+In quota economy mode (the swarm-deck context block says ECONOMY MODE) the mod refuses to spawn you and
+the phase records `self-verified (quota economy, N%)` instead; do not try to work around the refusal.
+
+## Input
+
+```yaml
+worktree: "{absolute path: the checkout that holds the landed work}"
+base: "{commit or branch before the work, for the diff}"
+plan_index: "{path to the set's <SLUG>_PLAN.md}"   # optional; absent means a legacy report
+phases:
+  - number: N
+    plan_file: "{path}"   # read its **Criteria:** line, Verification > Proof and Exit criteria
+```
+
+## The checklist
+
+The checklist is the list of acceptance criteria, not the Proof prose. You build it once, in
+step 2, before driving anything.
+
+**Criteria mode.** `plan_index` is given and its `## Requirements` section holds an
+`### Acceptance Criteria` heading followed by a table with the header
+`| ID | Pattern | Criterion | Phases | Journeys |`.
+- **Fences.** Read the index and the plans outside fenced code blocks only (a fence closes on
+  the same character, at least as long as the one that opened it). An index or plan may quote
+  the table or a journey bullet as an example (this feature's own index does); a quoted one is
+  never a real criterion or journey.
+- **Rows.** One row per criterion id `R{n}.{m}`. Read the table yourself; it is the source.
+  If `~/.claude/skills/swarm/ears_trace.py` exists, you may run
+  `python3 ~/.claude/skills/swarm/ears_trace.py <plan_index> --json` as a cross-check. When the
+  script is missing, exits 1, or lists ids the table does not, the table wins.
+- **Filter.** Keep the rows whose **Phases** cell names at least one phase you were handed. A
+  criterion that is also owned by a phase you were not handed is judged on the handed-in phases'
+  journeys only, and its entry carries `partial: true`.
+- **Traces.** In each handed-in phase plan, under `## Verification`, every journey bullet has
+  the form `  - **J{k}** · traces R1.1, R1.2 — <commands> → passes when <end state>` (middle dot
+  U+00B7, em dash U+2014, arrow U+2192; ids joined by `, `). Only the ids straight after
+  `traces` count; the neighbor-check bullet traces nothing. Its global id
+  is `P{phase}.J{k}`. Map each criterion to every journey that traces it. The plans are the
+  source; the index's **Journeys** column is a copy. When the two disagree, use the plans and
+  add one line to `trace_drift`. Also add a line there when a plan's `**Criteria:**` line and
+  the index's **Phases** cell disagree about who owns a criterion.
+- **Verdict per criterion.** Every kept criterion gets exactly one verdict:
+  - `failed`: at least one journey tracing it ran, and its observed end state is not the
+    "passes when" state. Carry `observed`, `repro` and `evidence` from that journey.
+  - `verified`: at least one journey traces it, and **every** journey tracing it ran and passed
+    with an evidence file.
+  - `inconclusive`: anything else. No journey traces it (`reason: "no journey"`), or a tracing
+    journey could not run (budget, stub mode, a failed repo credential, a script the harness
+    forbids) and none failed. An untraced criterion is never `verified`, however good the
+    phase's exit criteria look.
+  - Exit criteria, the neighbor check and prose claims never move a criterion's verdict. They
+    count toward the phase verdict only.
+
+**Legacy mode.** `plan_index` is absent, or the index has no `### Acceptance Criteria`
+heading. Verify per phase from each plan's Proof and Exit criteria exactly as the steps below
+describe, skip every criterion-specific part, and return `criteria: legacy`. A legacy index is
+not an error. Do not invent criteria from the Requirements table or the Proof prose.
+
+## Steps
+
+1. `cd` into `worktree`. Read `git diff --stat {base}..HEAD` and, for each phase, its
+   `**Criteria:**` line, its **Proof** and its **Exit criteria**. Do not read the implementer's
+   completion report or session log.
+2. Build the checklist (see **The checklist**): criteria mode or legacy mode. In criteria mode,
+   write the criterion → journeys map into the evidence dir as `checklist.md` before the first
+   drive, so the verdicts can be checked against it.
+3. Find the harness: `ls .claude/skills/verify-*/SKILL.md`. Read that SKILL.md in full and the
+   feature-map entries each Proof section names. With no harness, verify from the Proof
+   section's own commands, run against the real thing (the CLI, the built artifact, the DB),
+   and note `no harness` in the report.
+4. Launch once for all phases, following the skill's Launch section, with whatever flags the
+   diff needs (for example a web rebuild when `web/` changed). Run Doctor before the first drive
+   and again after any drive that surprised you.
+5. For each phase, run every journey in its Proof and record each result against its journey
+   id (`P{phase}.J{k}`; in legacy mode, the journey's own words). Then add one journey the plan
+   did not list: the most likely way this diff breaks a neighboring feature, picked from the
+   feature map. Report it under `neighbor`, never as a journey of any criterion. A plan
+   that proves only its own happy path is the case this step exists for. Stop there: when drives
+   cost money (the skill has a budget), the Proof plus one neighbor is the whole job, not the
+   full map. If the budget runs out first, the remaining journeys are `inconclusive`, not skipped.
+   A run in a stub mode (`--offline` or similar) never verifies behaviour of the stubbed
+   dependency; say so rather than citing it.
+   A phase that changes no behaviour (a doc sweep) still gets the app: run its exit criteria
+   literally (greps, diff stats), then check the concrete claims the new docs make about the
+   shipped feature against the running app. A doc that the app contradicts is a `failed`.
+   Run only what the skill allows. A plan's "every check script passes" never licenses a script
+   the skill's Gotchas name as harmful (one that reads production env or messages a person): run
+   the safe ones and list the rest as `inconclusive`. A check that fails identically on `base` is
+   pre-existing: report it apart, never as the phase's failure.
+6. Hold the standards: the real user path, never a test-only shortcut; the action AND the
+   resulting state; side effects read back. Never weaken a journey to make it pass. A journey
+   you could not run is `inconclusive`, with the reason. It is never a pass.
+   Every credential (LLM API keys included) comes from the local repo's `.env` or `.env.local`,
+   passed to the process explicitly, never inherited from the shell: a key exported there is
+   usually the user's personal one. If the repo's key fails, the journey is `inconclusive`.
+7. Judge. In criteria mode, give every criterion on the checklist exactly one verdict by the
+   rule in **The checklist**. Then give each phase the worst of: its journeys, its exit
+   criteria, its neighbor check, and every criterion it owns. A phase that owns an
+   `inconclusive` criterion is at least `inconclusive`. In legacy mode, judge per phase only,
+   as before.
+8. Clean up with the skill's Cleanup section, even after failures. Confirm the evidence still
+   exists afterwards.
+9. If a phase changed a user-facing feature and its feature-map entry is now wrong, say so in
+   the report. Do not edit the map yourself; the coordinator decides.
+
+## Return value
+
+```yaml
+verdict: verified | failed | inconclusive      # the worst phase verdict
+evidence_dir: "{path}"
+criteria:                                      # criteria mode; in legacy mode the scalar `criteria: legacy`
+  - id: "R1.1"
+    phases: [1]
+    verdict: verified
+    journeys: ["P1.J1", "P1.J2"]               # every journey tracing it, in the handed-in phases
+    evidence: ["{evidence file}"]
+  - id: "R1.2"
+    phases: [2]
+    verdict: failed
+    journeys: ["P2.J1"]
+    observed: "{what the failing journey actually showed, quoted}"
+    repro: "{the exact commands}"
+    evidence: ["{file}"]
+  - id: "R2.1"
+    phases: [2, 3]
+    partial: true                              # only when an owning phase was not handed in
+    verdict: inconclusive
+    journeys: []
+    reason: "no journey"                       # or why a tracing journey could not run
+trace_drift: ["{index Journeys says P2.J3 traces R2.1; phase-2.md says it traces R2.2}"]
+neighbor:
+  - phase: N
+    claim: "{the neighboring feature, in user terms}"
+    verdict: verified | failed | inconclusive
+    evidence: "{file}"                         # failed adds observed + repro; inconclusive gives reason
+phases:
+  - number: N
+    verdict: verified | failed | inconclusive  # worst of journeys, exit criteria, neighbor, owned criteria
+    proved:
+      - claim: "{exit criterion or journey, in user terms}"
+        journey: "P{N}.J{k}"                   # omit for an exit criterion or in legacy mode
+        evidence: "{evidence file}"
+    failed:
+      - claim: "{...}"
+        journey: "P{N}.J{k}"
+        observed: "{what actually happened, quoted}"
+        evidence: "{file}"
+        repro: "{the exact commands}"
+    inconclusive:
+      - claim: "{...}"
+        journey: "P{N}.J{k}"
+        reason: "{why it could not be driven}"
+    map_drift: ["{features/x.md: what is now wrong}"]
+```
+
+`criteria` is a list with one entry per checklist id in criteria mode, and the word `legacy`
+in legacy mode. A missing criteria table is always `legacy`, never `[]`. The list is empty only
+when a criteria-mode index's filter keeps nothing for the handed-in phases, and then a
+`trace_drift` line says so.
+
+Keep the YAML factual. No praise and no summaries of the code; the evidence files carry the
+detail.
+````
+**Impact:** Additive for every reader: `verdict`, `evidence_dir`, `phases[]`, `repro` and
+`map_drift` keep their shape and meaning. The neighbor result moves from the per-phase claim
+lists to `neighbor:`, and the per-phase verdict still counts it, so a dispatcher that acts on
+`phases[].verdict` sees no change. A dispatcher that passes no `plan_index` (`/do`, any old
+caller) gets `criteria: legacy` and today's behavior.
+
+### Step 2: Wave verifier dispatch passes the index and records criterion ids
+**File:** `commands/analyze-orchestrator.md:633-645`
+**Change:** Replace step 6b's first paragraph and its verdict bullets (lines 633–645, from
+`6b. **Verify the wave independently.**` through `Skip it for a wave that changed no runnable
+behavior, and say so in the round's notes.`). Leave the small-set rule and quota economy text
+that follows unchanged.
+**Code:**
+```markdown
+6b. **Verify the wave independently.** Once the wave's work is on the branch the next wave
+   will be cut from (the integration branch after step 6, or the shared worktree's branch),
+   dispatch one **`verifier`** agent (`subagent_type: "verifier"`) for the whole wave: that
+   checkout, the commit before the wave, the plan index you were handed with `-f` (as
+   `plan_index`), and the wave's phase plans. It never wrote any of it, so its verdict is what
+   counts. Each phase's own Proof run is the weaker witness.
+   One verifier per wave, not per phase, keeps this to one launch and one drive session.
+   Beside the per-phase verdicts it returns one verdict per acceptance criterion (`criteria:`),
+   or `criteria: legacy` for an index with no Acceptance Criteria table. Act per phase, as
+   below, and name criterion ids in what you record:
+   - `verified` → go on.
+   - `failed` phase → mark it `failed` in the ledger with the verifier's `repro` lines and
+     evidence dir, and put the ids of its `failed` criteria first in the `--note`
+     (`verifier failed R2.1, R2.3: <first repro line>`; `verifier failed neighbor: …` when only
+     its neighbor check failed). `stalled` then holds its dependents back on its own. Keep driving
+     everything else that is runnable, as with any failed phase.
+   - `inconclusive` → go on, and carry the claims and reasons into the final report, listing
+     every `inconclusive` criterion id with its reason (`no journey` included).
+   - `map_drift` → the coordinator fixes those `features/*.md` entries in its ledger commit.
+   Skip it for a wave that changed no runnable behavior, and say so in the round's notes.
+```
+**Impact:** Text only. The ledger note format is free text (`swarm.py report --note`), so no
+script changes. A legacy set behaves as before: no criterion ids exist, so the note carries the
+`repro` line alone.
+
+### Step 3: Solo verifier dispatch passes the index and carries criterion ids
+**File:** `commands/implement.md:494-505`
+**Change:** Replace exactly lines 494–505, from `**Independent verification first**` through
+the `map_drift` bullet ending `before landing.`. Line 506 (blank) and line 507 onward (`Also
+skip the verifier…`) stay. Touch nothing else in this file: `:196` belongs to Phase 5.
+**Code:**
+```markdown
+**Independent verification first** (unless the small-set rule applies). Dispatch the **`verifier`** agent (`subagent_type:
+"verifier"`) with this worktree, the base the set branched from, the plan index you were handed
+with `-f` (as `plan_index`), and every phase plan of the set. It drives the plans' Proof sections
+with fresh context and returns one verdict per acceptance criterion (`criteria:`) beside the
+per-phase verdicts, or `criteria: legacy` for an index with no Acceptance Criteria table; you
+wrote the code, so your own Proof run does not count as this check. Then:
+- `verified` → land.
+- `failed` → do not land. Fix what it showed (its `repro` lines are the reproduction; its
+  `failed` criterion ids say which requirement broke), re-run the failing journeys yourself,
+  then dispatch the verifier once more. A second `failed` stops without landing: report both
+  verdicts, the failed criterion ids and the evidence dir.
+- `inconclusive` → land, and carry every inconclusive claim and criterion id, with its reason
+  (`no journey` included), into the Termination block, so the gap is visible, not buried.
+- `map_drift` entries → fix those `features/*.md` entries (they are docs, and yours to fix)
+  before landing.
+```
+**Impact:** Text only. `/implement` already holds the `-f` path from Step 1, so no new state is
+needed.
+
+## Principles applied
+
+- Laziness protocol: no new parser or script for the verifier. It reads the criteria table and the journey bullets directly, and `ears_trace.py` (Phase 3) is an optional cross-check, never a dependency, so this phase builds and works whether or not Phase 3 has landed.
+- Make illegal states unrepresentable: `criteria` is either a list or the literal `legacy`, never an ambiguous empty list. Each verdict carries a fixed field set (verified → evidence, failed → observed+repro+evidence, inconclusive → reason), and an untraced criterion has one fixed verdict (`inconclusive`, `no journey`), so "verified with no journey" cannot be reported.
+- Subtract before you add: the neighbor journey leaves the per-phase claim lists and gets its own `neighbor:` block, so it is reported once and can never be mistaken for evidence of a criterion.
+- Prove it works: the Proof greps the three edited files themselves and extracts the Return value block to check every field the contract names. A live verifier dispatch is a paid drive against a fixture this phase does not own, so it is left to the wave verifier (see Handoffs).
+
+## Verification
+
+**Build:** `cd /home/miftah/.worktrees/claude-commands/ears-acceptance-criteria && python3 skills/swarm/swarm.py selftest`
+**Tests:** `cd /home/miftah/.worktrees/claude-commands/ears-acceptance-criteria && python3 skills/swarm/tests/test_plan_graph.py`
+**Proof:** the edited spec files are the artifact. Every journey is a shell command run from the
+worktree root; each must print what "passes when" says.
+- Harness: `no harness` (no `.claude/skills/verify-*` in this repo). Commands run against the edited markdown files.
+- Feature-map entries: none (the repo has no `features/` directory)
+- Journeys:
+  - **J1** · traces R4.1 — `grep -c 'plan_index' agents/verifier.md; grep -n '### Acceptance Criteria' agents/verifier.md; grep -n 'P{phase}.J{k}' agents/verifier.md; grep -n 'reason: "no journey"' agents/verifier.md; grep -n 'is never `verified`' agents/verifier.md` → passes when the first count is ≥ 2 and each of the other four greps prints at least one line.
+  - **J2** · traces R4.1 — `rv=$(awk '/^## Return value/{f=1} f' agents/verifier.md); for k in '^criteria:' 'id: "R' 'phases: \[' 'verdict:' 'journeys: \[' 'evidence: \[' 'observed:' 'repro:' 'reason:' '^neighbor:' '^trace_drift:' '^phases:' 'journey: "P'; do printf '%s\n' "$rv" | grep -q -- "$k" && echo "ok $k" || echo "MISSING $k"; done` → passes when every line starts with `ok` and none with `MISSING`.
+  - **J3** · traces R4.2 — `grep -n 'criteria: legacy' agents/verifier.md; grep -n '\*\*Legacy mode.\*\*' agents/verifier.md; grep -n 'no `### Acceptance Criteria`' agents/verifier.md` → passes when `criteria: legacy` appears at least twice (the legacy section and the Return value comment) and the other two greps each print one line.
+  - **J4** · traces R4.1, R4.2 — `grep -n 'plan_index' commands/analyze-orchestrator.md commands/implement.md; grep -n 'verifier failed R' commands/analyze-orchestrator.md; grep -n 'criteria: legacy' commands/analyze-orchestrator.md commands/implement.md; grep -n 'failed criterion ids' commands/implement.md` → passes when `plan_index` prints one line in each file, `verifier failed R` prints one line, `criteria: legacy` prints one line in each file, and `failed criterion ids` prints one line.
+- Neighbor check: `/implement`'s other sections, which Phase 5 edits next (`:196`), must be untouched, and the agent frontmatter must still load. Run `git diff -U0 "$(git merge-base HEAD origin/main)" -- commands/implement.md | grep '^@@'; head -5 agents/verifier.md` → passes when every hunk header's new-file range starts between 494 and 505 (with Phase 5 not yet landed), and the head shows `name: verifier`, `model: sonnet`, `color: green` and a `---` fence at lines 1 and 6 of the file. If Phase 5 has already landed on the branch, diff against this phase's parent commit instead (`git diff -U0 <phase-4 commit>^ <phase-4 commit> -- commands/implement.md`).
+- Cost: none (no paid drives).
+**Exit criteria:** `agents/verifier.md` takes `plan_index`, builds its checklist from the
+`### Acceptance Criteria` table and the `**J{k}** · traces` bullets, and returns `criteria:` with one
+verdict per id (fields `id, phases, verdict, journeys, evidence | observed+repro | reason`) or
+`criteria: legacy`. Both dispatch sites pass `plan_index`. `swarm.py selftest` and
+`test_plan_graph.py` pass. J1–J4 and the neighbor check pass.
+
+## Handoffs
+
+- **Phase 5 (R5), docs:** `README.md:330` (agents table row for `verifier`) and `README.md:486-489`
+  (the verification paragraph) should say the verifier reports one verdict per acceptance
+  criterion when the index has the table, and per phase otherwise. Same for the verifier mention
+  in `docs/architecture-notes.md` and `skills/swarm/SKILL.md:384-385` (step 6b summary). Not done
+  here: those files are Phase 5's, and the reconciler added the SKILL.md step 6b sentence to
+  Phase 5's plan (its Step 4).
+- **Phase 5 (R5), `commands/implement.md:196`:** untouched by this phase. The only edits to
+  that file are lines 494–505.
+- **Phase 3 (R3), `ears_trace.py --json`:** the verifier treats the script as optional and the
+  table as the source. Reconciler decision: it relies on no JSON field; Phase 3's `criteria[].id`
+  list is the only thing the cross-check compares.
+- **`/do` (out of scope per the index):** `commands/do.md` dispatches no verifier with a plan
+  index, so it keeps getting `criteria: legacy`. No change planned.
+- **Live verifier drive:** the independent wave verifier for this set is the first real run of
+  the new return shape, because it gets this set's own index, which has the criteria table. Its
+  `criteria:` list is the end-to-end proof of R4.1. Nothing for this phase to do; noted so the
+  coordinator reads that field.
+
+## Rollback
+
+`git revert <phase-4 commit>`. It touches only `agents/verifier.md`,
+`commands/analyze-orchestrator.md:633-645` and `commands/implement.md:494-505`. If Phase 5 has
+since edited `commands/implement.md:196`, the revert still applies cleanly because the hunks are
+far apart. Revert Phase 5 first only if it rewrote the verifier paragraph too. Nothing is
+deployed until Phase 5's `./sync.sh`, so a revert before then needs no redeploy.

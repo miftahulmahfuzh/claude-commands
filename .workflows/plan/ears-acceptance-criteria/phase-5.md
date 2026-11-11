@@ -1,0 +1,611 @@
+# Phase 5: Consumers, docs and deploy
+
+**Plan set:** `EARS_ACCEPTANCE_CRITERIA_PLAN.md`
+**Analysis:** `.workflows/analyze/20261111-080843-E4RS_code_analyzer.md`
+**Satisfies:** R5 — consumers keep working (swarm.py parse_index, create-task, skills/task), old plan sets without EARS still execute, `./sync.sh` is run
+**Criteria:** R5.1, R5.2, R5.3, R5.4
+**Depends on:** Phase 1, 2, 3, 4
+**Difficulty:** NORMAL
+**Package:** `skills`
+
+---
+
+## Goal
+
+`swarm.py` keeps a Satisfies cell R-level and deduplicated even when an EARS criterion id strays
+into it, and its selftest proves that an index carrying the new `### Acceptance Criteria` table,
+and a legacy index carrying none, parse to exactly the phases they always did. create-task shapes
+cards from the R table and lists each R's criteria in the parent body; the board skills, the
+`/implement` todos line, README, CLAUDE.md and the two docs describe the EARS trace and
+`ears_trace.py`. The whole set is deployed with `./sync.sh` and the repo↔`~/.claude` drift check
+is clean, with every swarm test passing from the deployed copy as well.
+
+## Interface Contract
+
+**Deletes:** none
+**Renames:** none
+**Creates:** module constants `swarm.REQUIREMENTS`, `swarm.INDEX_EARS`, `swarm.INDEX_LEGACY` (`skills/swarm/swarm.py`, selftest fixtures beside `INDEX`); doc section `## ears_trace.py — the criteria trace check` in `skills/swarm/SKILL.md`
+**Signature changes:** none. `swarm._ids(value)` keeps its signature; its return changes from every `R\d+` match (duplicates allowed) to R-level ids deduplicated in first-seen order. Only caller: `parse_index` (`swarm.py:226`), so `phase["satisfies"]` is now duplicate-free.
+**Requires (from earlier phases):**
+- Phase 1: plan index template's `## Requirements` = R table `| ID | What the user asked for (verbatim) | Phases |` + `### Acceptance Criteria` table `| ID | Pattern | Criterion | Phases | Journeys |` (Invariant 1). This phase's fixtures copy that shape.
+- Phase 2: phase plans carry `**Criteria:**` and journeys `**J{k}** · traces R…` (this plan uses that format).
+- Phase 3: `skills/swarm/ears_trace.py` exists with CLI `python3 ears_trace.py <PLAN.md> [--json] [--fill]`, exit 0 clean **or legacy**, 1 unreadable, 2 gaps, gap kinds `unowned|untraced|unknown_id|misassigned|unclaimed`; `skills/swarm/tests/test_ears_trace.py` exists and passes. `commands/analyze.md` Step 9 runs it for N = 1. Plan-reconciler rules 6–7 and `/analyze` Step 8 state the trace rule. This phase only documents and deploys them, and runs them in Proof.
+- Phase 4: `agents/verifier.md` returns `criteria: [{id, verdict, journeys, evidence}]` and falls back to per-phase with a `legacy` mark; the two dispatch sites pass `plan_index`. README's verifier row describes that.
+**Leaves alone (owned by others):** `commands/analyze.md` (Phases 1, 3), `agents/phase-planner.md` (Phase 2), `agents/plan-reconciler.md`, `skills/swarm/ears_trace.py`, `skills/swarm/tests/test_ears_trace.py` (Phase 3), `agents/verifier.md`, `commands/analyze-orchestrator.md`, `commands/implement.md` Step 5a verifier paragraph (~:494-507) (Phase 4). `parse_index` itself is not changed.
+
+## Files
+
+| File | Action | What changes |
+|---|---|---|
+| `skills/swarm/swarm.py` | modify | `_ids` (`:258-259`) dedupes, R-level; new fixtures `REQUIREMENTS`/`INDEX_EARS`/`INDEX_LEGACY` after `INDEX` (`:1928`); new assertions in `selftest` after `:1952` |
+| `skills/swarm/SKILL.md` | modify | new section documenting `ears_trace.py`, inserted at `:189` (after the `plan_graph.py` section, before `## Nobody in a swarm waits for a human`); step 6b of "The orchestrator loop" (`:383-388`) names per-criterion verdicts |
+| `skills/create-task/SKILL.md` | modify | `:82-84` Requirements = R table + criteria table, shape from R table, legacy clause; `:96-97` multi-R parent bullets carry criteria; `:112` parent body lists each R's verbatim ask and its criteria |
+| `skills/task/SKILL.md` | modify | new paragraph after `:71` — the parent body's criteria are what "verified" means for a phase |
+| `skills/task/DESIGN.md` | modify | new paragraph after `:288` — criteria sit beside R, cards still shaped from R |
+| `commands/implement.md` | modify | `:196` only — todos `**Satisfies**:` line gains the phase's criteria ids when present |
+| `README.md` | modify | `:136-138` (+EARS paragraph), `:148-149` (Open Questions residue), `:330` (verifier row), `:431` (+ears_trace line), `:485-489` (Proof paragraph), `:697` (tree) |
+| `CLAUDE.md` | modify | `:57` Swarm planning paragraph: trace rule, rules 6–7 / Step 8 in step, `ears_trace.py` |
+| `docs/architecture-notes.md` | modify | "Swarm planning pattern": `:131` Open Questions residue and `:135-136` "rule 6" → "rules 6–7", then a new paragraph after `:136` |
+| `docs/session-swarm.md` | modify | `:334-344` item 1 moves into "Already borrowed"; items 2–8 (`:345-373`) renumber to 1–7 |
+
+## Implementation Steps
+
+Line numbers are as of `7ab5aca`; phases 1–4 do not touch any file in this table except
+`commands/implement.md`, where Phase 4 edits ~:494-507 only, so `:196` is unaffected.
+
+### Step 1: `_ids` returns R-level ids, deduplicated, in order
+**File:** `skills/swarm/swarm.py:258`
+**Change:** replace the two-line `_ids` with the version below. `parse_index` is untouched (it
+already ignores tables whose header does not start `#` + `title` + `plan`).
+**Code:**
+```python
+def _ids(value):
+    """The requirement ids in a Satisfies cell: R-level, deduplicated, first-seen order.
+
+    The cell is R-level by contract (`R1, R2`), but EARS criterion ids (`R2.1`) live one
+    table up in the same index, and one that strays into the cell must not mint a
+    duplicate: `R2.1, R2.2` is still just R2. Unchecked, it was `["R2", "R2"]`.
+    """
+    return list(dict.fromkeys(re.findall(r"R\d+", value or "")))
+```
+**Impact:** `phase["satisfies"]` in the ledger can no longer hold duplicates. `R12.1` → `R12`
+(the regex is greedy on digits). No other caller.
+
+### Step 2: selftest fixtures — an EARS index and a legacy index
+**File:** `skills/swarm/swarm.py:1928` — insert directly after the closing `"""` of `INDEX`
+(the line after `## Rollback`) and before the two blank lines preceding `def selftest():`.
+**Change:** add three module constants derived from `INDEX`, so they cannot drift from it.
+**Code:**
+```python
+# The same index as /analyze writes it since EARS criteria (2026-11-11): an R table and,
+# beneath it, an Acceptance Criteria table under ## Requirements, both ahead of the phase
+# table. Neither may be read as phases -- the R table's header does not start with `#`,
+# the criteria rows start `R1.1`, not a number -- and Satisfies stays R-level.
+REQUIREMENTS = """## Requirements
+
+| ID | What the user asked for (verbatim) | Phases |
+|---|---|---|
+| R1 | sort the branch list by last commit | 1, 2, 4 |
+| R2 | an e2e harness that proves it | 3, 4 |
+
+### Acceptance Criteria
+
+| ID | Pattern | Criterion | Phases | Journeys |
+|---|---|---|---|---|
+| R1.1 | event | WHEN the branch list loads THE SYSTEM SHALL order it by last commit, newest first | 1, 4 | P1.J1, P4.J1 |
+| R1.2 | ubiquitous | THE SYSTEM SHALL document the order in the README | 2 | P2.J1 |
+| R2.1 | unwanted | IF a branch has no commits THEN THE SYSTEM SHALL list it last | 3, 4 | P3.J1, P4.J2 |
+
+"""
+
+INDEX_EARS = INDEX.replace("## Phases\n", REQUIREMENTS + "## Phases\n", 1)
+
+# An index planned before EARS criteria: the R table alone, under its old header, and no
+# Acceptance Criteria table. It must parse exactly as it always did.
+INDEX_LEGACY = INDEX.replace("## Phases\n", """## Requirements
+
+| ID | What the user asked for | Phases |
+|---|---|---|
+| R1 | sort the branch list by last commit | 1, 2, 4 |
+| R2 | an e2e harness that proves it | 3, 4 |
+
+## Phases
+""", 1)
+```
+**Impact:** none at runtime; constants only. The selftest's final line still prints
+`len(INDEX.splitlines())` (18) — leave it.
+
+### Step 3: selftest assertions
+**File:** `skills/swarm/swarm.py:1952` — insert directly after
+`    eq("difficulty", phases[3]["difficulty"], "HARD")` and before the blank line and the
+`# A column added in the middle must not shift the parse` comment. It must sit **before**
+`phases[0]["status"] = "done"` further down; every comparison here parses fresh.
+**Code:**
+```python
+
+    # --- EARS acceptance criteria are invisible to the phase parse (R5.1, R5.3) ------
+    # Each fixture is first checked to really carry what it claims, so a template edit
+    # that makes a .replace() above match nothing fails here instead of passing vacuously.
+    eq("the EARS fixture carries a criteria table",
+       "### Acceptance Criteria" in INDEX_EARS and "| R1.1 | event |" in INDEX_EARS, True)
+    eq("an Acceptance Criteria table changes no phase", parse_index(INDEX_EARS),
+       parse_index(INDEX))
+    eq("the legacy fixture carries an R table and no criteria table",
+       "| R1 | sort" in INDEX_LEGACY and "### Acceptance Criteria" not in INDEX_LEGACY, True)
+    eq("a legacy index parses as before", parse_index(INDEX_LEGACY), parse_index(INDEX))
+    strayed = INDEX_EARS.replace("| Wire up | R1, R2 |", "| Wire up | R1.1, R1.2, R2.1 |")
+    eq("the stray-criteria fixture differs", strayed != INDEX_EARS, True)
+    eq("criterion ids in Satisfies stay R-level and deduplicated",
+       parse_index(strayed)[1][3]["satisfies"], ["R1", "R2"])
+    eq("_ids: a criterion id is its R", _ids("R2.1"), ["R2"])
+    eq("_ids: two criteria of one R are one R", _ids("R2.1, R2.2"), ["R2"])
+    eq("_ids: first-seen order is kept", _ids("R3, R1.2, R3.1, R1"), ["R3", "R1"])
+    eq("_ids: R12.1 is R12, not R1", _ids("R12.1"), ["R12"])
+    eq("_ids: an em dash is no requirement", _ids("—"), [])
+```
+**Impact:** selftest grows by 12 assertions. Verified during planning on a scratch copy: passes
+with Step 1; with the old `_ids` it fails three of them (`got ['R1', 'R1', 'R2']`, `['R2', 'R2']`,
+`['R3', 'R1', 'R3', 'R1']`).
+
+**Check (Steps 1–3):** `python3 skills/swarm/swarm.py selftest 2>&1 | tail -1` prints
+`selftest: all assertions passed (18 line fixture)`, and
+`python3 skills/swarm/tests/test_plan_graph.py` still passes (it imports `parse_index`).
+
+### Step 4: document `ears_trace.py` in the swarm skill
+**File:** `skills/swarm/SKILL.md:189` — insert after the paragraph ending
+`...The example above carries both.` (line 188) and before `## Nobody in a swarm waits for a human` (line 190).
+**Change:** new section. If Phase 3's landed CLI differs in a flag name, describe what landed
+(small drift — follow the code).
+**Code:**
+````markdown
+
+## `ears_trace.py` — the criteria trace check
+
+A plan index written since 2026-11-11 carries, under `## Requirements`, an `### Acceptance
+Criteria` table: one EARS row per criterion `R{n}.{m}` with its owning phases. Each phase plan
+names the criteria it owns on a `**Criteria:**` line and labels every Proof journey
+`**J{k}** · traces R…`. This script reads both and reports every criterion with **no owning
+phase** or **no tracing journey**:
+
+```bash
+python3 ~/.claude/skills/swarm/ears_trace.py <PLAN.md>          # --json for the machine form
+python3 ~/.claude/skills/swarm/ears_trace.py <PLAN.md> --fill   # the Journeys column values
+```
+
+Exit codes mirror `plan_graph.py`: **0** every criterion owned and traced — or a **legacy** index
+with no `### Acceptance Criteria` heading, which has nothing to check; **2** at least one gap;
+**1** the index or a phase plan could not be read. Read-only, stdlib only, and it imports nothing
+the executors need: `/implement`, `/do` and `swarm.py` never read criteria, so a legacy set runs
+exactly as before.
+
+It names five gap kinds: `unowned` (no phase owns the criterion), `untraced` (owned, but no
+journey traces it), `unknown_id` (a journey or `**Criteria:**` line names an id the table lacks),
+`misassigned` (a plan claims a criterion the index gives to another phase) and `unclaimed` (the
+index gives a phase a criterion its `**Criteria:**` line omits). Every reader skips fenced code
+blocks, so an index or plan that quotes the format in an example is not read as using it.
+
+`plan-reconciler` runs it and acts on the gaps by the trace rule (its rules 6–7, `/analyze`
+Step 8): an owned but untraced criterion is fixed by editing that phase's plan to add a journey;
+an unowned one is assigned to a phase; only a criterion no phase can own lands in Open Questions.
+`/analyze` Step 9 runs it too, so a one-phase set gets the same check. `--fill` gives the
+`P{phase}.J{k}` lists the reconciler (or `/analyze` Step 9 for a one-phase set) writes into the
+index's Journeys column. The verifier then reports one verdict per criterion.
+
+`swarm.py` stays criteria-blind on purpose: `parse_index` reads only the `#`-headed phase table,
+and a Satisfies cell is R-level — `_ids` folds a stray `R2.1` into `R2` and drops duplicates.
+`swarm.py selftest` asserts both against an index carrying the criteria table and a legacy one.
+````
+**Second edit in the same file** — `skills/swarm/SKILL.md:383-388`, step 6b of "The orchestrator
+loop" (added by the reconciler from Phase 4's handoff). Replace
+```markdown
+   commits landed, not that the feature works. Dispatch one `verifier` agent per wave
+   (`agents/verifier.md`; the details are in step 6b of `analyze-orchestrator.md`). A `failed`
+   verdict marks that phase failed in the ledger, with the repro, and its dependents stall.
+```
+with
+```markdown
+   commits landed, not that the feature works. Dispatch one `verifier` agent per wave with the
+   plan index (`agents/verifier.md`; the details are in step 6b of `analyze-orchestrator.md`). It
+   returns one verdict per acceptance criterion (`criteria:`), or `criteria: legacy` for an index
+   with no criteria table, beside the per-phase verdicts. A `failed` verdict marks that phase
+   failed in the ledger, with the repro and its failed criterion ids, and its dependents stall.
+```
+**Impact:** doc only.
+
+### Step 5: create-task — Requirements is two tables; shape from the R table
+**File:** `skills/create-task/SKILL.md:82-84`
+**Change:** replace these three lines:
+```markdown
+So neither count is overridden. `/analyze` now numbers the user's asks `R1…Rn` and every phase
+declares which `R` it serves, in the plan index's **Requirements** table. That table is the whole
+input to the decision below — read it, do not re-derive it from the prose or from the code.
+```
+with:
+```markdown
+So neither count is overridden. `/analyze` now numbers the user's asks `R1…Rn` and every phase
+declares which `R` it serves, in the plan index's **Requirements** section. That section holds two
+tables: the **R table** (`| ID | What the user asked for (verbatim) | Phases |`, one row per `R`)
+and, beneath it under `### Acceptance Criteria`, one EARS row per criterion `R{n}.{m}`
+(`| ID | Pattern | Criterion | Phases | Journeys |`). The R table's ID → Phases mapping is the
+whole input to the shape decision below — read it, do not re-derive it from the prose, the code,
+or the criteria table. The criteria only fill the parent body. A **legacy index** (planned before
+2026-11-11) has the R table alone, under the header `What the user asked for`, and no
+`### Acceptance Criteria`: shape it exactly the same way and leave the criteria out of the body.
+```
+
+**File:** `skills/create-task/SKILL.md:96-97`
+**Change:** replace
+```markdown
+- **Some phase serves two or more `R`s** → **one parent card** for the whole plan set, with every
+  phase beneath it, and the user's asks listed as bullets in its body. A phase spanning two `R`s
+```
+with
+```markdown
+- **Some phase serves two or more `R`s** → **one parent card** for the whole plan set, with every
+  phase beneath it, and the user's asks listed as bullets in its body, each with its criteria
+  beneath it. A phase spanning two `R`s
+```
+
+**File:** `skills/create-task/SKILL.md:112`
+**Change:** replace the single bullet
+```markdown
+- the `R` (or Rs) it covers, in the user's own words
+```
+with
+```markdown
+- the `R` (or Rs) it covers, in the user's own words (the R table's verbatim cell), and under each
+  `R` its acceptance criteria as a checklist copied verbatim from the criteria table — every row
+  whose ID starts with that `R`, as `- [ ] **R1.1** WHEN … THE SYSTEM SHALL …`. A legacy index
+  has no criteria table: list the asks alone.
+```
+**Impact:** doc only. Card shape rules (`:93-100`) are unchanged — still keyed on the R table.
+
+### Step 6: skills/task — what "verified" means for a phase card
+**File:** `skills/task/SKILL.md:71` — insert after the paragraph ending
+`cross-parent prerequisite the same way as a sibling one.` (line 71) and before
+`**An earlier phase that is not done is not a stop.**`.
+**Code:**
+```markdown
+
+**The parent's criteria are the phase's acceptance test.** The parent body lists each `R` with
+its EARS acceptance criteria (`R1.1`, `R1.2`, …), and each phase plan names the ones it owns on
+its `**Criteria:**` line and traces every Proof journey to them. A phase is verified when those
+journeys pass, criterion by criterion — not when the card's title sounds done. A legacy plan set
+has no criteria; verify it from the phase plan's Proof as before.
+```
+**Impact:** doc only.
+
+### Step 7: skills/task design note
+**File:** `skills/task/DESIGN.md:288` — insert after the line
+`it does not have to re-derive everything.` (end of the paragraph starting
+`**The fix is ordering and data flow, not new prose.**`).
+**Code:**
+```markdown
+
+Since 2026-11-11 each `R` also carries EARS acceptance criteria `R{n}.{m}`, in a separate
+`### Acceptance Criteria` table beneath the R table. The two tables are kept apart so the card
+shape still comes from the R rows alone; the criteria only fill the parent body, as a checklist
+under each `R`. An index without the criteria table is legacy and is carded exactly as before.
+```
+**Impact:** doc only.
+
+### Step 8: `/implement` todos Satisfies line
+**File:** `commands/implement.md:196` (inside Step 3's task-entry template; Phase 4 edits only
+Step 5a ~:494-507)
+**Change:** replace
+```markdown
+    - **Satisfies**: {R id(s)} — {that requirement's one-line text from the index}
+```
+with
+```markdown
+    - **Satisfies**: {R id(s)} — {that requirement's text from the index's R table}{ · criteria: the phase plan's **Criteria:** ids, e.g. `R2.1, R2.2` — leave this part out when the plan has no **Criteria:** line, as in a set planned before EARS criteria}
+```
+**Impact:** todos entries for new sets name their criteria; legacy sets produce the same line as
+today. `/do` has no plan-index path and needs no parallel change (checked per CLAUDE.md "Edit one
+of `/do` or `/implement`").
+
+### Step 9: README
+**File:** `README.md:136-138` — after the paragraph ending
+`2 cards" with a 4-phase plan set — see \`create-task\`.` insert a new paragraph (blank line
+before it):
+```markdown
+
+Beneath the `R` table, each ask is broken into **acceptance criteria in EARS form**, borrowed
+from [Kiro specs](https://kiro.dev/docs/specs/concepts): `R2.1` reads "WHEN <trigger> THE SYSTEM
+SHALL <behavior>", or one of the other patterns (ubiquitous "THE SYSTEM SHALL", `WHILE <state>`,
+`IF <unwanted condition> THEN`, `WHERE <feature>`). The verbatim ask stays beside them, because
+the rationale is the spec. Every Proof journey in a phase plan names the criteria it traces;
+`plan-reconciler` checks that every criterion has an owning phase and a journey, mechanically,
+with `skills/swarm/ears_trace.py`; and the verifier returns a verdict per criterion. A plan set
+written before criteria existed has none and runs exactly as before.
+```
+
+**File:** `README.md:148-149` — replace
+```markdown
+**Open Questions** is left for the residue: an unowned requirement id, or a fork where every
+branch is irreversible.
+```
+with
+```markdown
+**Open Questions** is left for the residue: a requirement or acceptance criterion no phase can
+own, or a fork where every branch is irreversible. A criterion that has an owner but no Proof
+journey is fixed by editing that phase's plan, never parked.
+```
+
+**File:** `README.md:330` — replace
+```markdown
+| `verifier` | sonnet | prove landed phases work by driving the real app through the repo's `verify-*` skill; never edits code |
+```
+with
+```markdown
+| `verifier` | sonnet | prove landed phases work by driving the real app through the repo's `verify-*` skill, one verdict per acceptance criterion (per phase on a legacy set); never edits code |
+```
+
+**File:** `README.md:431` — after
+```
+python3 ~/.claude/skills/swarm/plan_graph.py <PLAN.md>   # the write-set gate, before spawning
+```
+insert
+```
+python3 ~/.claude/skills/swarm/ears_trace.py <PLAN.md>   # every EARS criterion owned and traced
+```
+
+**File:** `README.md:485-489` — replace the paragraph
+```markdown
+The generated skill is what gives principle 7 (*prove it works*) teeth. A phase plan's **Proof**
+section names its journeys. The implementer runs them. Then the `verifier` agent, which neither
+wrote the code nor read the implementer's reasoning, runs them again and records the verdict:
+once per wave under the orchestrator, or once per set under `/implement` and `/do`. Small sets
+skip the separate verifier and land on the implementers' own evidence.
+```
+with
+```markdown
+The generated skill is what gives principle 7 (*prove it works*) teeth. A phase plan's **Proof**
+section names its journeys, each labelled `J{k}` and tracing the acceptance criteria
+(`R{n}.{m}`) it proves. The implementer runs them. Then the `verifier` agent, which neither
+wrote the code nor read the implementer's reasoning, runs them again and records a verdict per
+criterion: once per wave under the orchestrator, or once per set under `/implement` and `/do`.
+Small sets skip the separate verifier and land on the implementers' own evidence.
+```
+
+**File:** `README.md:697` — replace
+```
+│   ├── swarm/                # + swarm.py, plan_graph.py, tests/ — the orchestrator's mechanics
+```
+with
+```
+│   ├── swarm/                # + swarm.py, plan_graph.py, ears_trace.py, tests/ — the orchestrator's mechanics
+```
+**Impact:** doc only.
+
+### Step 10: CLAUDE.md Swarm planning rule
+**File:** `CLAUDE.md:57`
+**Change:** replace the whole paragraph
+```markdown
+All `phase-planner` agents dispatch in one message; for N>1 a single `plan-reconciler` follows. Each planner declares an **Interface Contract** (deletes / renames / creates / requires) — change its shape in `agents/phase-planner.md` and the ledger in `agents/plan-reconciler.md` together. Reconciliation **decides** forks into `## Decisions` (with the rung); `## Open Questions` is only for an unowned requirement or an all-irreversible fork. `/analyze` Step 8 and `plan-reconciler` rule 6 must stay in step.
+```
+with
+```markdown
+All `phase-planner` agents dispatch in one message; for N>1 a single `plan-reconciler` follows. Each planner declares an **Interface Contract** (deletes / renames / creates / requires) — change its shape in `agents/phase-planner.md` and the ledger in `agents/plan-reconciler.md` together. Reconciliation **decides** forks into `## Decisions` (with the rung); `## Open Questions` is only for an unowned requirement or criterion, or an all-irreversible fork. `/analyze` Step 8 and `plan-reconciler` rules 6–7 must stay in step.
+
+Each `R` carries EARS acceptance criteria `R{n}.{m}` in an `### Acceptance Criteria` table beneath the R table; every Proof journey traces criteria by id. **Trace rule:** every criterion needs an owning phase and a tracing journey — owned but untraced → edit the owning plan; unowned → assign it a phase; only a criterion no phase can own goes to Open Questions. `skills/swarm/ears_trace.py <PLAN.md>` checks it (0 clean or legacy, 1 unreadable, 2 gaps). Change the criteria table or the journey format → update `commands/analyze.md`, `agents/phase-planner.md`, `agents/plan-reconciler.md`, `agents/verifier.md` and `ears_trace.py` together. An index with no criteria table is legacy and runs as before.
+```
+**Impact:** doc only.
+
+### Step 11: architecture-notes — Swarm planning pattern
+**File:** `docs/architecture-notes.md:131-136` — first, two wording edits in the paragraph
+`**Reconciliation decides behavioral forks; it does not park them.**`, so it agrees with rules 6–7:
+replace
+```markdown
+`## Open Questions` is reserved for an unowned requirement id or a fork where *every* branch is
+```
+with
+```markdown
+`## Open Questions` is reserved for an unowned requirement id or criterion, or a fork where *every* branch is
+```
+and replace
+```markdown
+it meets the same fork alone, at 3am. `/analyze` Step 8 and `agents/plan-reconciler.md` rule 6
+must stay in step on this.
+```
+with
+```markdown
+it meets the same fork alone, at 3am. `/analyze` Step 8 and `agents/plan-reconciler.md` rules 6–7
+must stay in step on this.
+```
+**Then** insert after that paragraph (ending
+`` `/analyze` Step 8 and `agents/plan-reconciler.md` rules 6–7 `` / `must stay in step on this.`,
+line 136) and before `Downstream, plans are **adopted, never regenerated**`:
+**Code:**
+```markdown
+
+**Acceptance criteria are EARS rows, traced to journeys** (from
+[Kiro specs](https://kiro.dev/docs/specs/concepts), see `docs/session-swarm.md`). Since 2026-11-11
+the index's `## Requirements` holds two tables: the R table
+(`ID | What the user asked for (verbatim) | Phases`, R-level — the one create-task shapes cards
+from) and beneath it `### Acceptance Criteria` (`ID | Pattern | Criterion | Phases | Journeys`),
+one EARS row per `R{n}.{m}`, pattern one of ubiquitous, event (`WHEN`), state (`WHILE`), unwanted
+(`IF … THEN`), optional (`WHERE`) or complex. Each phase plan names its criteria on a
+`**Criteria:**` line and labels every Proof journey `**J{k}** · traces R…`; the global journey id
+is `P{phase}.J{k}`. The tables are separate on purpose: criteria rows inside the R table would
+break create-task's R → cards mapping, and `parse_index` must never take either table for the
+`#`-headed phase table. `skills/swarm/ears_trace.py` (read-only, stdlib, modelled on
+`plan_graph.py`) reports every criterion with no owning phase or no tracing journey — exit 0
+clean or legacy, 1 unreadable, 2 gaps — and `--fill` prints the Journeys column. The reconciler
+runs it: an owned but untraced criterion is fixed by editing the plan, an unowned one is
+assigned, and only a criterion no phase can own reaches Open Questions — `/analyze` Step 8 and
+reconciler rules 6–7 say this identically. The verifier returns a verdict per criterion.
+**Legacy sets** (no `### Acceptance Criteria` heading) stay valid: the checker exits 0, the
+verifier falls back to per-phase Proof and marks its report `legacy`, and nothing that executes
+plans (`/implement`, `/do`, `swarm.py`) reads criteria at all. `swarm.py _ids` keeps a Satisfies
+cell R-level and deduplicated even if a criterion id strays into it.
+```
+**Impact:** doc only.
+
+### Step 12: session-swarm — EARS moves to "Already borrowed"
+**File:** `docs/session-swarm.md:334-344`
+**Change:** replace these lines (the "Already borrowed" paragraph, the blank line, the
+"Candidates" line, the blank line, and item 1):
+```markdown
+Already borrowed: Cursor's [pstack](../README.md#borrowed-from-pstack), which supplied
+`engineering-principles` (read once, by the planners) and `create-verification-skill` (the
+`verify-*` skills the verifier drives). Also from Cognition's follow-up, already true here: the
+reviewer gets a clean context, never the implementer's transcript.
+
+Candidates, ordered by how much they would sharpen analyze → orch → implement:
+
+1. **Acceptance criteria in EARS form** ([Kiro specs](https://kiro.dev/docs/specs/concepts)).
+   Write each `R1…Rn` row as "WHEN <trigger> THE SYSTEM SHALL <behavior>", and trace every
+   phase's Proof journey to one. The verifier then checks a list of claims instead of reading
+   prose, and a requirement with no journey is a gap the reconciler can catch.
+```
+with
+```markdown
+Already borrowed: Cursor's [pstack](../README.md#borrowed-from-pstack), which supplied
+`engineering-principles` (read once, by the planners) and `create-verification-skill` (the
+`verify-*` skills the verifier drives). Also from Cognition's follow-up, already true here: the
+reviewer gets a clean context, never the implementer's transcript. And from
+[Kiro specs](https://kiro.dev/docs/specs/concepts), **acceptance criteria in EARS form**: each
+`R` in the plan index carries criteria `R{n}.{m}` ("WHEN <trigger> THE SYSTEM SHALL <behavior>"
+and the other EARS patterns) beside the user's verbatim ask, every Proof journey traces to
+criteria by id, `plan-reconciler` catches a criterion with no owner or no journey (checked by
+`skills/swarm/ears_trace.py`), and the verifier returns a verdict per criterion instead of
+reading prose.
+
+Candidates, ordered by how much they would sharpen analyze → orch → implement:
+```
+Then renumber the remaining items (each is the first line of its item; only the leading digit
+changes):
+- `2. **Two-stage review: spec first, then quality**` → `1. **Two-stage review: spec first, then quality**`
+- `3. **Kent Beck's three warning signs, checked mechanically**` → `2. **Kent Beck's three warning signs, checked mechanically**`
+- `4. **A constitution the plans are checked against**` → `3. **A constitution the plans are checked against**`
+- `5. **Architect / editor split as the default**` → `4. **Architect / editor split as the default**`
+- `6. **Scope the reviewer, and enforce read-only with tools, not prose**` → `5. **Scope the reviewer, and enforce read-only with tools, not prose**`
+- `7. **A Ralph loop for stalled phases**` → `6. **A Ralph loop for stalled phases**`
+- `8. **Keep review load in mind**` → `7. **Keep review load in mind**`
+
+Do not touch the numbered list at `:60-67` (a different list).
+**Impact:** doc only. The TOC anchor `#borrowed-and-worth-borrowing-next` (`:23`) is unchanged.
+
+### Step 13: deploy and drift check
+**File:** none (deploy). Run from the worktree root, after Steps 1–12 and after phases 1–4 have
+landed on the branch.
+**Code:**
+```bash
+cd /home/miftah/.worktrees/claude-commands/ears-acceptance-criteria
+./sync.sh
+for d in skills agents commands; do diff -rq --exclude=__pycache__ --exclude='.*' "$d" ~/.claude/"$d"; done
+python3 ~/.claude/skills/swarm/swarm.py selftest 2>&1 | tail -1
+python3 ~/.claude/skills/swarm/tests/test_plan_graph.py 2>&1 | tail -1
+python3 ~/.claude/skills/swarm/tests/test_ears_trace.py 2>&1 | tail -1
+```
+**Impact:** `~/.claude/` now holds the whole set. The drift check prints only
+`Only in /home/miftah/.claude/skills: …` lines for the deploy-only skills that pre-date this set
+(`check-seer-adversarial-nightly`, `j`, `migrate`, `n`, `redo`, `synced`, `v` at planning time);
+those are not drift from this repo. Any `differ` line or `Only in skills…`/`Only in agents…`/
+`Only in commands…` (repo side) line is a failure. This deploys the feature branch before the
+merge — the plan index's Decision row ("once, at the end of phase 5") chose that.
+
+## Principles applied
+
+- Laziness protocol: `parse_index` is not touched and swarm.py gains no criteria parser — executors never need criteria, and `ears_trace.py` (Phase 3) owns reading them. The only code change is `_ids` (one line + docstring).
+- Test behavior, not implementation: the new assertions compare `parse_index` output for the EARS / legacy fixtures against the plain fixture, rather than checking how tables are skipped; Proof J2 reverts `_ids` in a scratch copy and requires the selftest to fail, so the assertions are shown to bite.
+- Encode lessons in structure: every derived fixture is asserted to actually contain what it claims (`"### Acceptance Criteria" in INDEX_EARS`, `strayed != INDEX_EARS`), so a future template change that makes a `.replace()` a no-op fails loudly instead of passing vacuously.
+- Prove it works: Proof runs on the real artifacts — this set's own EARS index, a real pre-EARS index on disk, and the deployed `~/.claude` copies — not only the in-file selftest.
+
+## Verification
+
+**Build:** `python3 -m py_compile skills/swarm/swarm.py`
+**Tests:** `python3 skills/swarm/swarm.py selftest && python3 skills/swarm/tests/test_plan_graph.py && python3 skills/swarm/tests/test_ears_trace.py`
+**Proof:**
+- Harness: `no harness` (this repo has no `.claude/skills/verify-*`; it ships prompts and stdlib scripts). Journeys drive the real scripts against real plan indexes and the deployed tree.
+- Feature-map entries: none (no `features/` map in this repo)
+- Journeys (all run from `/home/miftah/.worktrees/claude-commands/ears-acceptance-criteria`, in bash or zsh; the code blocks are indented 4 spaces only for the list — strip that indent before running, since each heredoc's closing `EOF` must start its line):
+  - **J1** · traces R5.1 — selftest, then `parse_index` on this set's own EARS index with and without its `## Requirements` section → passes when selftest prints `selftest: all assertions passed` and the script prints `R5.1 ok: 5 phases …` with every Satisfies list R-level and duplicate-free.
+    ```bash
+    python3 skills/swarm/swarm.py selftest 2>&1 | tail -1
+    python3 - .workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md <<'EOF'
+    import re, sys
+    sys.path.insert(0, "skills/swarm")
+    from swarm import parse_index
+    HEAD = re.compile(r"^### Acceptance Criteria\s*$", re.M)
+    text = open(sys.argv[1]).read()
+    assert HEAD.search(text), "index has no criteria table"
+    bare = re.sub(r"^## Requirements\n.*?(?=^## )", "", text, count=1, flags=re.S | re.M)
+    assert not HEAD.search(bare) and re.search(r"^## Phases", bare, re.M)
+    with_c, without_c = parse_index(text), parse_index(bare)
+    assert with_c == without_c, (with_c, without_c)
+    sats = [p["satisfies"] for p in with_c[1]]
+    assert len(with_c[1]) == 5, sats
+    assert all(s and all(re.fullmatch(r"R\d+", r) for r in s) and len(s) == len(set(s)) for s in sats), sats
+    print("R5.1 ok:", len(with_c[1]), "phases", sats)
+    EOF
+    ```
+  - **J2** · traces R5.1 — revert `_ids` to the pre-phase body in a scratch copy and run its selftest → passes when it exits `rc=1` and stderr has a `FAIL criterion ids in Satisfies stay R-level and deduplicated` line (the new assertions catch the duplicate bug).
+    ```bash
+    T=$(mktemp -d); cp skills/swarm/swarm.py "$T/swarm.py"
+    python3 - "$T/swarm.py" <<'EOF'
+    import sys
+    p = sys.argv[1]; s = open(p).read()
+    new = 'return list(dict.fromkeys(re.findall(r"R\\d+", value or "")))'
+    assert new in s, "fixed _ids not found"
+    open(p, "w").write(s.replace(new, 'return re.findall(r"R\\d+", value or "")', 1))
+    EOF
+    python3 "$T/swarm.py" selftest >/dev/null 2>"$T/err"; echo "rc=$?"
+    grep '^FAIL' "$T/err"; rm -rf "$T"
+    ```
+  - **J3** · traces R5.2 — grep create-task's spec for the shape-from-R-table rule, the criteria checklist in the parent body, and the legacy clause → passes when each of the four `grep -cF` prints a count ≥ 1.
+    ```bash
+    F=skills/create-task/SKILL.md
+    grep -cF "The R table's ID → Phases mapping is the" $F
+    grep -cF '### Acceptance Criteria' $F
+    grep -cF -- '- [ ] **R1.1** WHEN … THE SYSTEM SHALL …' $F
+    grep -cF 'A legacy index' $F
+    ```
+  - **J4** · traces R5.3 — a legacy plan set (R table, no criteria table, untraced journeys) is still parsed by `swarm.py` and passed by `ears_trace.py`, both on a fixture and on a real pre-EARS index; the `/implement` todos line keeps its legacy form → passes when `parse_index` prints `legacy ok: 4 …`, `trace_rc=0` and `trace_json_rc=0`, `real_legacy_rc=0` (or `real legacy index absent` when that file is gone), and the implement grep prints 1.
+    ```bash
+    T=$(mktemp -d); git -C "$T" init -q; mkdir -p "$T/.workflows/plan/x"
+    python3 -c 'import sys; sys.path.insert(0, "skills/swarm"); import swarm; sys.stdout.write(swarm.INDEX_LEGACY)' > "$T/.workflows/plan/LEGACY_PLAN.md"
+    for n in 1 2 3 4; do printf '# Phase %s: legacy\n\n**Satisfies:** R1\n\n## Verification\n\n**Proof:**\n- Journeys: run the thing; it works\n' "$n" > "$T/.workflows/plan/x/phase-$n.md"; done
+    python3 - "$T/.workflows/plan/LEGACY_PLAN.md" <<'EOF'
+    import re, sys
+    sys.path.insert(0, "skills/swarm")
+    from swarm import parse_index
+    meta, phases = parse_index(open(sys.argv[1]).read())
+    assert len(phases) == 4 and all(all(re.fullmatch(r"R\d+", r) for r in p["satisfies"]) for p in phases), phases
+    print("legacy ok:", len(phases), [p["satisfies"] for p in phases])
+    EOF
+    python3 skills/swarm/ears_trace.py "$T/.workflows/plan/LEGACY_PLAN.md"; echo "trace_rc=$?"
+    python3 skills/swarm/ears_trace.py "$T/.workflows/plan/LEGACY_PLAN.md" --json >/dev/null; echo "trace_json_rc=$?"
+    L=/home/miftah/claude-commands/.workflows/plan/SWARM_WRITE_SET_GATE_PLAN.md
+    if [ -f "$L" ]; then python3 skills/swarm/ears_trace.py "$L" >/dev/null; echo "real_legacy_rc=$?"; else echo "real legacy index absent"; fi
+    grep -cF 'leave this part out when the plan has no **Criteria:** line' commands/implement.md
+    rm -rf "$T"
+    ```
+  - **J5** · traces R5.4 — deploy, drift check, and every swarm test from the deployed copy → passes when the filtered drift output is empty (`drift=0`), the three tests print their pass lines (`selftest: all assertions passed …`, `test_plan_graph: all assertions passed …`, and test_ears_trace's pass line with exit 0), and the deployed swarm.py carries the new fixture (`grep -c` ≥ 1).
+    ```bash
+    ./sync.sh >/dev/null
+    D=$(for d in skills agents commands; do diff -rq --exclude=__pycache__ --exclude='.*' "$d" ~/.claude/"$d"; done | grep -v "^Only in $HOME/.claude/")
+    printf '%s\n' "$D"; echo "drift=$(printf '%s' "$D" | grep -c .)"
+    python3 ~/.claude/skills/swarm/swarm.py selftest 2>&1 | tail -1
+    python3 ~/.claude/skills/swarm/tests/test_plan_graph.py 2>&1 | tail -1
+    python3 ~/.claude/skills/swarm/tests/test_ears_trace.py >/tmp/ears_test.out 2>&1; echo "ears_test_rc=$?"; tail -1 /tmp/ears_test.out
+    grep -c INDEX_EARS ~/.claude/skills/swarm/swarm.py
+    ```
+- Neighbor check: `plan_graph.py` imports `parse_index`, so the write-set gate is the feature most likely to break — `python3 skills/swarm/tests/test_plan_graph.py 2>&1 | tail -1` prints `test_plan_graph: all assertions passed (27 cases) …`.
+- Cost: none (no LLM turns; stdlib scripts and grep only).
+**Exit criteria:** `swarm.py selftest` passes including the EARS, legacy and `_ids` assertions, and fails when `_ids` is reverted; `test_plan_graph.py` and `test_ears_trace.py` pass from the repo and from `~/.claude`; the drift check prints no line other than pre-existing deploy-only `Only in /home/miftah/.claude/skills: …` entries; create-task, skills/task, implement.md:196, README, CLAUDE.md, architecture-notes and session-swarm carry the text above.
+
+## Handoffs
+
+- Phase 3: J4 and J5 depend on `ears_trace.py` returning exit 0 for an index with no `### Acceptance Criteria` heading even when the phase plans have no `**Criteria:**` line, and on `test_ears_trace.py` existing at `skills/swarm/tests/`. If Phase 3 landed a different flag spelling, Step 4's SKILL.md text and Step 9's README line follow what landed.
+- Phase 4: README's verifier row (Step 9) and architecture-notes (Step 11) describe `criteria:` verdicts and the `legacy` mark; if Phase 4's return shape differs, adjust those two sentences to it.
+- Phase 1 / Phase 3: the CLAUDE.md "Change the criteria table or the journey format → update … together" rule names their files; it adds no work for them.
+- Not done here (out of scope, no phase): GitLab's single-card path in create-task (`:127-131`) could also carry criteria in its body; `/do` has no plan-index path and needs nothing. `CHANGELOG.md` is left to `/up-version`.
+
+## Rollback
+
+`git revert <phase-5 commit>` restores swarm.py and all docs; then run `./sync.sh` from a checkout
+of the previous tree (e.g. `main` at `7ab5aca`) to redeploy it, and re-run the drift check from
+that checkout. Phases 1–4 are unaffected: nothing they own is edited here, and the old `_ids`
+works with their output (it only produced duplicates for a stray criterion id).
