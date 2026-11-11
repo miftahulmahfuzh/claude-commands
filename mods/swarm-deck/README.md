@@ -170,6 +170,18 @@ The coordinator's deck raises a native notification (`$.ui.notify`) when its set
 re-announces. It is raised by the mod, not asked of the model, because the command's own
 `PushNotification` step is a prompt and the night it matters is the night a prompt gets skipped.
 
+**Shared resources, queued.** *Two phases on one test database turned a 5 minute suite into
+30.* MEASURED 2026-11-11 on mcp-notes: phases 2 and 5 ran `test:int` on one Postgres at once, the
+coordinator added a third run, and the phases' own `until ! pgrep -f vitest` loops waited on each
+other, then hung outright, because `pgrep -f` matches the command line of its own shell. In any
+session in a repo whose `.workflows/swarm.json` declares `resources`, the Bash guard rewrites a
+command that uses one needing a lease into `swarm.py lease <name> -- ...` (a FIFO queue whose
+flock dies with the command, `skills/swarm/lease.py`), and runs it in the background when the
+queue is busy so the wait cannot hit the foreground timeout. Loops that poll the process table
+for a test runner, and any `pgrep -f` wait loop, are refused with the lease named. The deck lists
+each resource's holder and queue under "Shared resources". Anything that breaks here fails open:
+the command runs as written.
+
 **Permission dialogs.** *A dialog at 3am is a stopped phase, and the owner answers Yes anyway.*
 Claude Code's own safety checks ask even under `bypassPermissions` — measured on the same night:
 phase 4's pusher stopped twice on "Dangerous rm operation on possibly-empty variable path" for

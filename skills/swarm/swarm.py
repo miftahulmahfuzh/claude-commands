@@ -58,6 +58,8 @@ exits 0 rather than raising. Only a malformed invocation is an error.
     swarm.py find   --plan PATH | --task TASKID
     swarm.py track  [--dry-run]
     swarm.py launch --name NAME --prompt TEXT [--cwd DIR] [--permission-mode MODE]
+    swarm.py lease  RESOURCE [--wait-max SECONDS] -- CMD...   (lease.py)
+    swarm.py lease  --status [RESOURCE] | --front TICKET RESOURCE
     swarm.py selftest
 """
 
@@ -74,6 +76,9 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lease  # noqa: E402  (beside this file, in the repo copy and the installed one alike)
 
 MAX_NAME = 60                      # session.py's cap; a tab title renders this
 ORCH_DIR = ".workflows/orchestration"
@@ -1261,6 +1266,83 @@ def process_table():
     return table
 
 
+def process_cpu():
+    """pid -> cumulative CPU seconds, from one `ps`. Separate from process_table so the
+    shapes every caller unpacks stay as they were."""
+    out = subprocess.run(["ps", "-eo", "pid=,times="], capture_output=True, text=True).stdout
+    cpu = {}
+    for line in out.splitlines():
+        cells = line.split()
+        if len(cells) == 2 and cells[0].isdigit() and cells[1].isdigit():
+            cpu[int(cells[0])] = int(cells[1])
+    return cpu
+
+
+def descendants(pid, table):
+    """Every pid below pid in the process table, pid excluded."""
+    kids = {}
+    for p, (ppid, _, _) in table.items():
+        kids.setdefault(ppid, []).append(p)
+    found, todo = [], list(kids.get(pid, []))
+    while todo:
+        p = todo.pop()
+        found.append(p)
+        todo.extend(kids.get(p, []))
+    return found
+
+
+# A polling loop forks one of these every few seconds. They are the loop waiting, not work:
+# counting them as new processes would label a shell that can never finish "progressing".
+POLLERS = re.compile(r"^(?:\S*/)?(?:sleep|pgrep|pidof|grep|ps|test|\[)(?:\s|$)")
+# CPU seconds a shell's tree must gain to count as progress. A zsh loop running pgrep every
+# few seconds gains a fraction of a second over minutes; a test runner gains that per file.
+CPU_PROGRESS = 2
+
+
+def tree_sample(pid, table, cpu):
+    """(cpu seconds of the shell's whole tree, its descendant pids that are not pollers)."""
+    tree = [pid] + descendants(pid, table)
+    work = [p for p in tree[1:] if not POLLERS.match(table[p][2])]
+    return sum(cpu.get(p, 0) for p in tree), sorted(work)
+
+
+def carry_progress(prev, cur, now):
+    """Stamp each shell with when it last showed progress. Pure.
+
+    Progress is CPU spent anywhere in the shell's tree, or a process in it that was not
+    there last time (a test runner forking a worker per file). A shell with neither for
+    long enough is the one worth reading; one with either is slow, not stuck. MEASURED
+    2026-11-11 on session-fork-awareness: two phases' test:int ran 15m+ while every line
+    the watch printed said only "running 10m", and the owner had to ask whether it was a
+    deadlock. It was disk contention -- the truncates sat in DataFileImmediateSync.
+
+    The other way round is measured too: phase 2 hung on `until [ -z "$(pgrep -f vitest)" ]`,
+    which matches its own shell and never ends, while forking a new `sleep` every ten seconds.
+    So pollers are not new processes (tree_sample), and CPU counts only past CPU_PROGRESS
+    seconds gained since the last progress.
+    """
+    for n, now_x in cur.items():
+        before = {s["pid"]: s for s in ((prev or {}).get(n) or {}).get("shells") or []}
+        for shell in now_x["shells"]:
+            old = before.get(shell["pid"])
+            base = (old or {}).get("cpu_at_progress", shell.get("cpu", 0))
+            moved = old is None or shell.get("cpu", 0) - base >= CPU_PROGRESS or \
+                bool(set(shell.get("kids") or []) - set(old.get("kids") or []))
+            shell["progress_at"] = now if moved else old.get("progress_at", now)
+            shell["cpu_at_progress"] = shell.get("cpu", 0) if moved else base
+    return cur
+
+
+def shell_label(shell, now, idle_after, probe=None):
+    """`progressing`, `waiting on DB: ...` or `idle-hung ...` for one long shell."""
+    if probe:
+        return f"waiting on DB: {probe}"
+    quiet = now - shell.get("progress_at", now)
+    if quiet >= idle_after:
+        return f"idle-hung (no CPU or new processes for {int(quiet // 60)}m{int(quiet % 60):02d}s)"
+    return "progressing"
+
+
 def pane_shells(pane_pid, table):
     """Every Bash tool call running under one tmux pane, oldest first.
 
@@ -1291,7 +1373,7 @@ def live_windows(runtime):
     return live
 
 
-def watch_state(repo, ledger, runtime, table=None):
+def watch_state(repo, ledger, runtime, table=None, cpu=None):
     """One reading of the set: ledger word, git's word, window, running shells."""
     verify(repo, ledger)
     live = live_windows(runtime)
@@ -1304,16 +1386,19 @@ def watch_state(repo, ledger, runtime, table=None):
             pid = tmux("display-message", "-p", "-t", facts["pane"], "#{pane_pid}")
             if pid and pid.strip().isdigit():
                 shells = pane_shells(int(pid.strip()), table)
+                for shell in shells:
+                    shell["cpu"], shell["kids"] = tree_sample(shell["pid"], table, cpu or {})
         state[n] = {"status": phase["status"], "derived": phase.get("derived"),
                     "commit": (phase.get("commit") or "")[:8] or None,
                     "window": facts["window"] if facts else None, "shells": shells}
     return state
 
 
-def watch_events(prev, cur, max_shell):
+def watch_events(prev, cur, max_shell, label=None):
     """What changed between two readings that the coordinator has to act on. Pure.
 
     The first reading only seeds: a watch armed mid-run must not page for history.
+    `label(n, shell)` names the state of a long shell (shell_label); None prints none.
     """
     if prev is None:
         return []
@@ -1335,8 +1420,9 @@ def watch_events(prev, cur, max_shell):
             step = int(shell["seconds"] // max_shell)
             old = before.get(shell["pid"])
             if step >= 1 and step > int((old or {"seconds": 0})["seconds"] // max_shell):
+                state = f" [{label(n, shell)}]" if label else ""
                 events.append(f"SHELL phase {n}: running {shell['seconds'] // 60}m"
-                              f"{shell['seconds'] % 60:02d}s (pid {shell['pid']}): "
+                              f"{shell['seconds'] % 60:02d}s (pid {shell['pid']}){state}: "
                               f"{' '.join(shell['command'].split())[:160]}")
         gone = {s["pid"] for s in now["shells"]}
         for pid, shell in before.items():
@@ -1348,6 +1434,75 @@ def watch_events(prev, cur, max_shell):
                         for x in prev.values()):
         events.append("ACT every phase is terminal: land the set (Step 5)")
     return events
+
+
+def checkout_of(pid):
+    """The git top-level a process runs in, by walking up from its cwd; None if unknown."""
+    try:
+        d = Path(os.readlink(f"/proc/{pid}/cwd"))
+    except OSError:
+        return None
+    for p in (d, *d.parents):
+        if (p / ".git").exists():
+            return str(p)
+    return None
+
+
+def resource_users(table, decl, where=checkout_of):
+    """{resource: [{pid, checkout, leased, command}]}: one entry per OUTERMOST process
+    whose command line uses a declared resource (the Bash wrapper, not each npm child)."""
+    users = {}
+    for pid, (ppid, _, args) in table.items():
+        if "swarm.py lease --status" in args:
+            continue
+        name, spec = lease.resource_for(decl, args)
+        if name is None:
+            continue
+        parent, outer = ppid, True
+        leased = "swarm.py lease" in args
+        while parent in table:
+            pargs = table[parent][2]
+            if lease.matches(spec, pargs):
+                outer = False
+                break
+            leased = leased or "swarm.py lease" in pargs
+            parent = table[parent][0]
+        if outer:
+            users.setdefault(name, []).append({"pid": pid, "checkout": where(pid),
+                                               "leased": leased, "command": shell_command(args)})
+    return users
+
+
+def contention(users, decl, phase_of_checkout=None):
+    """{key: line} for every resource used by two or more callers at once where at least one
+    holds no lease. An isolated (per-checkout) resource only contends inside one checkout."""
+    name_of = phase_of_checkout or (lambda c: c)
+    found = {}
+    for name, us in users.items():
+        spec = decl.get(name) or {"isolate": "none"}
+        groups = {}
+        for u in us:
+            key = u["checkout"] if spec["isolate"] == "per-checkout" else "*"
+            groups.setdefault(key, []).append(u)
+        for key, group in groups.items():
+            if len(group) >= 2 and not all(u["leased"] for u in group):
+                who = ", ".join(sorted({str(name_of(u["checkout"])) for u in group}))
+                unleased = sum(1 for u in group if not u["leased"])
+                found[f"{name}@{key}"] = (f"CONTENTION {name}: {who} ({unleased} of "
+                                          f"{len(group)} unleased) -- isolate it, or run each "
+                                          f"through `swarm.py lease {name} -- ...`")
+    return found
+
+
+def queue_lines(leases):
+    """{resource: line} for every lease queue with someone waiting."""
+    lines = {}
+    for name, q in leases.items():
+        if q["waiting"]:
+            held = ", ".join(f"{h['who']} holding {h['for']}" for h in q["holding"]) or "free"
+            wait = ", ".join(f"{w['who']} waiting #{i + 1}" for i, w in enumerate(q["waiting"]))
+            lines[name] = f"QUEUE {name} (capacity {q['capacity']}): {held} · {wait}"
+    return lines
 
 
 def cmd_watch(args):
@@ -1368,20 +1523,78 @@ def cmd_watch(args):
         return soft(f"no ledger for {slug}", repo=repo)
     limit = parse_duration(args.max_shell or os.environ.get("MAX_SHELL_SCRIPT_DURATION")
                            or DEFAULT_MAX_SHELL) or parse_duration(DEFAULT_MAX_SHELL)
-    prev = None
+    idle_after = parse_duration(os.environ.get("SWARM_IDLE_AFTER") or "3m") or 180
+    prev, seen = None, {}
     while True:
-        cur = watch_state(repo, load(path), load(runtime_path(repo, slug)), process_table())
+        table, cpu, at = process_table(), process_cpu(), time.time()
+        ledger = load(path)
+        cur = carry_progress(prev, watch_state(repo, ledger, load(runtime_path(repo, slug)),
+                                               table, cpu), at)
+        decl = dict(lease.resources(repo))
+        if ledger.get("worktree") and os.path.isdir(ledger["worktree"]):
+            decl.update(lease.resources(ledger["worktree"]))
+        runtime = load(runtime_path(repo, slug))
+        by_cwd = {os.path.realpath(real_path(e.get("cwd") or "")): f"p{n}"
+                  for n, e in (runtime.get("sessions") or {}).items() if e.get("cwd")}
+
+        def label(n, shell):
+            name, spec = lease.resource_for(decl, shell["command"])
+            probe = None
+            if spec and spec.get("probe"):
+                try:
+                    r = subprocess.run(spec["probe"], shell=True, capture_output=True,
+                                       text=True, timeout=15)
+                    probe = (r.stdout.strip().splitlines() or [None])[0]
+                except (OSError, subprocess.TimeoutExpired):
+                    probe = None
+            return shell_label(shell, at, idle_after, probe)
+
+        lines = {}
+        if decl:
+            lines.update(contention(resource_users(table, decl), decl,
+                                    lambda c: by_cwd.get(os.path.realpath(c or "/"), c or "?")))
+            lines.update(queue_lines(lease.status(repo)))
         if prev is None:
             print(f"watching {slug} (shells flagged past {int(limit)}s): " + ", ".join(
                 f"p{n} {x['status']}/{x['derived']}" + (" live" if x["window"] else "")
                 for n, x in cur.items()), flush=True)
-        for line in watch_events(prev, cur, limit):
+        for line in watch_events(prev, cur, limit, label):
             print(line, flush=True)
+        for key, line in lines.items():
+            if seen.get(key) != line:
+                print(line, flush=True)
+        seen = lines
         if args.once or all(x["status"] in TERMINAL or x["derived"] in TERMINAL
                             for x in cur.values()):
             return 0
         prev = cur
         time.sleep(args.interval)
+
+
+# ------------------------------------------------------------------------- lease
+
+def cmd_lease(args):
+    """Run a command holding a FIFO lease on a shared resource (lease.py), or show the queue."""
+    start = args.repo or os.getcwd()
+    if args.status:
+        print(json.dumps({"swarm": True, "leases": lease.status(start, args.resource)}, indent=2))
+        return 0
+    if args.front is not None:
+        if not args.resource:
+            print("lease --front needs the resource name", file=sys.stderr)
+            return 2
+        moved = lease.front(start, args.resource, args.front)
+        print(json.dumps({"swarm": True, "moved": moved, "ticket": args.front,
+                          "resource": args.resource}))
+        return 0 if moved else 1
+    cmd = list(args.command or [])
+    if cmd and cmd[0] == "--":
+        cmd = cmd[1:]
+    if not args.resource or not cmd:
+        print("usage: swarm.py lease RESOURCE [--wait-max S] -- CMD...", file=sys.stderr)
+        return 2
+    return lease.run(args.resource, cmd, start=start, wait_max=args.wait_max,
+                     cap=args.capacity)
 
 
 # ------------------------------------------------------------------------- doctor
@@ -1476,6 +1689,64 @@ def shell_probe(shell, timeout=20):
         os.unlink(snap)
 
 
+# A test script that names a fixed service: a container, a port, a connection string.
+SHARED_SERVICE = re.compile(r"docker (?:run|exec|compose)|(?:127\.0\.0\.1|localhost):\d{4,5}"
+                            r"|postgres(?:ql)?://|mysql://|redis://|TEST_DATABASE_URL")
+
+
+def shared_service_hints(repo):
+    """Files that look like they point a test run at a fixed service. Best effort."""
+    hits = []
+    candidates = [Path(repo) / "package.json", Path(repo) / "Makefile",
+                  Path(repo) / "docker-compose.yml", Path(repo) / "compose.yaml"]
+    for d in ("scripts", "bin", "tests"):
+        p = Path(repo) / d
+        if p.is_dir():
+            candidates += [f for f in p.iterdir() if f.is_file() and f.suffix in
+                           (".sh", ".bash", ".mjs", ".js", ".ts", ".py", "")]
+    for f in candidates:
+        try:
+            if f.stat().st_size < 200_000 and SHARED_SERVICE.search(f.read_text(errors="ignore")):
+                hits.append(str(f.relative_to(repo)))
+        except OSError:
+            continue
+    return hits
+
+
+def resource_problems(repo):
+    """Doctor lines for shared resources: an undeclared one, or one declared as shared."""
+    problems, ok = [], []
+    decl = lease.resources(repo)
+    for name, spec in decl.items():
+        if spec["isolate"] == "none":
+            problems.append({"check": "resource",
+                             "detail": f"resource `{name}` is shared by every checkout "
+                                       f"(isolate: none); phases using it run one at a time",
+                             "why": "every phase that needs it queues behind the others",
+                             "fix": "make the repo key it per checkout (a database per worktree) "
+                                    "and declare isolate: per-checkout"})
+        elif not spec["match"]:
+            problems.append({"check": "resource", "detail": f"resource `{name}` has no `match`",
+                             "why": "no command is recognised as using it, so nothing leases it",
+                             "fix": f"add the commands that use it to resources.{name}.match"})
+    if decl and not problems:
+        ok.append(f"{len(decl)} shared resource(s) declared: " + ", ".join(
+            f"{n} ({s['isolate']}" + (f", max {s['max_concurrent']}" if s["max_concurrent"]
+                                       else "") + ")" for n, s in decl.items()))
+    if not decl:
+        hints = shared_service_hints(repo)
+        if hints:
+            problems.append({"check": "resource",
+                             "detail": "test code points at a fixed service but .workflows/"
+                                       "swarm.json declares no resources: " + ", ".join(hints[:5]),
+                             "why": "two phases running that suite share it: truncates and "
+                                    "rebuilds collide, and a ~5 minute suite took ~30 "
+                                    "(MEASURED 2026-11-11, mcp-notes)",
+                             "fix": "declare it under `resources` in .workflows/swarm.json "
+                                    "(skills/swarm/SKILL.md, \"Shared test services\")"})
+    return problems, ok
+
+
 def cmd_doctor(args):
     """Check the machine before a swarm runs on it, and say what to fix.
 
@@ -1515,6 +1786,10 @@ def cmd_doctor(args):
                              "fix": f"remove the mcp__notes__* entries from permissions.deny in {path}"})
     if not any(p["check"] == "deny" for p in problems):
         ok.append("no deny list hides a tool the swarm uses")
+
+    more, fine = resource_problems(repo)
+    problems += more
+    ok += fine
 
     shell = os.environ.get("SHELL") or "/bin/sh"
     try:
@@ -2708,6 +2983,72 @@ def selftest():
     eq("a window closing on unfinished work is an ACT line",
        any("window closed but it is not done" in e for e in watch_events(seed, gone, 300)), True)
 
+    # watch: is a long shell moving? (carry_progress, shell_label)
+    a = {"4": {"status": "spawned", "derived": "pending", "commit": None, "window": "@1",
+               "shells": [{"pid": 12, "seconds": 400, "command": "npm run test:int",
+                           "cpu": 10, "kids": [13]}]}}
+    a = carry_progress(None, a, 1000.0)
+    b = {"4": dict(a["4"], shells=[dict(a["4"]["shells"][0], cpu=10, kids=[13])])}
+    b = carry_progress(a, b, 1300.0)
+    eq("no CPU, no new process: progress time kept", b["4"]["shells"][0]["progress_at"], 1000.0)
+    eq("five quiet minutes is idle-hung", shell_label(b["4"]["shells"][0], 1300.0, 180)[:9],
+       "idle-hung")
+    c = {"4": dict(a["4"], shells=[dict(a["4"]["shells"][0], cpu=10, kids=[13, 99])])}
+    c = carry_progress(b, c, 1310.0)
+    # The self-matching pgrep loop: a fresh `sleep` and `pgrep` every tick, a sliver of CPU.
+    loop = "/usr/bin/zsh -c until [ -z \"$(pgrep -f vitest)\" ]; do sleep 10; done"
+    tick = {70: (1, 600, loop), 71: (70, 3, "sleep 10"), 72: (70, 0, "pgrep -f vitest")}
+    cpu0, kids0 = tree_sample(70, tick, {70: 1})
+    eq("pollers are not work", kids0, [])
+    s0 = {"2": {"status": "spawned", "derived": "pending", "commit": None, "window": "@2",
+                "shells": [{"pid": 70, "seconds": 600, "command": loop, "cpu": cpu0,
+                            "kids": kids0}]}}
+    s0 = carry_progress(None, s0, 0.0)
+    tick2 = {70: (1, 900, loop), 73: (70, 1, "sleep 10")}
+    cpu1, kids1 = tree_sample(70, tick2, {70: 2})
+    s1 = {"2": dict(s0["2"], shells=[dict(s0["2"]["shells"][0], seconds=900, cpu=cpu1,
+                                          kids=kids1)])}
+    s1 = carry_progress(s0, s1, 300.0)
+    eq("a self-matching pgrep loop reads idle-hung, not progressing",
+       shell_label(s1["2"]["shells"][0], 300.0, 180)[:9], "idle-hung")
+    eq("a new worker is progress", shell_label(c["4"]["shells"][0], 1310.0, 180), "progressing")
+    eq("a DB probe answer wins", shell_label(c["4"]["shells"][0], 1310.0, 180, "pid 9 blocked"),
+       "waiting on DB: pid 9 blocked")
+    ev = watch_events(a, {"4": dict(b["4"], shells=[dict(b["4"]["shells"][0], seconds=605)])},
+                      300, lambda n, sh: "progressing")
+    eq("the SHELL line carries the label", any("[progressing]" in e for e in ev), True)
+
+    # watch: two sessions on one resource (resource_users, contention, queue_lines)
+    decl = {"pg": {"match": ["test:int"], "isolate": "none", "max_concurrent": None,
+                   "probe": None, "notes": ""},
+            "iso": {"match": ["test-iso"], "isolate": "per-checkout", "max_concurrent": None,
+                    "probe": None, "notes": ""}}
+    ptab = {1: (0, 9, "init"),
+            20: (1, 300, wrapped.replace("pytest -q tests/", "npm run test:int")),
+            21: (20, 299, "npm run test:int"), 22: (21, 298, "node vitest run"),
+            30: (1, 200, wrapped.replace("pytest -q tests/", "npm run test:int")),
+            40: (1, 100, "python3 swarm.py lease pg -- npm run test:int"),
+            41: (40, 99, "npm run test:int"),
+            50: (1, 50, "bash test-iso"), 60: (1, 50, "bash test-iso")}
+    where = {20: "/wt/p2", 30: "/wt/p5", 40: "/wt/p6", 50: "/wt/p2", 60: "/wt/p5"}
+    users = resource_users(ptab, decl, where=lambda pid: where.get(pid))
+    eq("outermost callers only", sorted(u["pid"] for u in users["pg"]), [20, 30, 40])
+    eq("a leased caller is known", [u["leased"] for u in users["pg"] if u["pid"] == 40], [True])
+    found = contention(users, decl, lambda c: {"/wt/p2": "p2", "/wt/p5": "p5",
+                                               "/wt/p6": "p6"}.get(c, c))
+    eq("one contention line for the shared resource", list(found), ["pg@*"])
+    eq("it names the sessions and the unleased count",
+       found["pg@*"].startswith("CONTENTION pg: p2, p5, p6 (2 of 3 unleased)"), True)
+    eq("per-checkout isolation is not contention across checkouts", "iso@/wt/p2" in found, False)
+    eq("an all-leased resource is not contention",
+       contention({"pg": [{"pid": 1, "checkout": "a", "leased": True, "command": ""},
+                          {"pid": 2, "checkout": "b", "leased": True, "command": ""}]}, decl), {})
+    q = queue_lines({"pg": {"capacity": 1, "holding": [{"who": "p5", "for": "4m"}],
+                            "waiting": [{"who": "p2", "for": "1m"}]},
+                     "idle": {"capacity": 1, "holding": [], "waiting": []}})
+    eq("a queue with a waiter is said", q, {"pg": "QUEUE pg (capacity 1): p5 holding 4m · "
+                                                  "p2 waiting #1"})
+
     # doctor: deny lists, the mod path, shell noise -- the three things that broke 2026-11-11.
     with tempfile.TemporaryDirectory() as tmp:
         repo_dir, home_dir = Path(tmp) / "repo", Path(tmp) / "home"
@@ -2846,6 +3187,18 @@ def main(argv=None):
                         "(default: refuse -- a second session on one plan burns a whole "
                         "model budget for nothing)")
 
+    p = sub.add_parser("lease", help="run a command holding a FIFO lease on a shared resource")
+    p.add_argument("--status", action="store_true", help="list holders and the queue")
+    p.add_argument("--front", type=int, metavar="TICKET",
+                   help="move this waiting ticket ahead of every other")
+    p.add_argument("--repo", help="any directory inside the repo (default: cwd)")
+    p.add_argument("--wait-max", type=float, metavar="SECONDS",
+                   help=f"give up after waiting this long (exit {lease.WAIT_EXIT}, nothing run)")
+    p.add_argument("--capacity", type=int,
+                   help="holders at once (default: the resource's max_concurrent, else 1)")
+    p.add_argument("resource", nargs="?")
+    p.add_argument("command", nargs=argparse.REMAINDER)
+
     p = sub.add_parser("track", help="make .workflows/orchestration/ survive .gitignore")
     p.add_argument("--dry-run", action="store_true")
 
@@ -2855,7 +3208,7 @@ def main(argv=None):
     return {"init": cmd_init, "waves": cmd_waves, "spawn": cmd_spawn,
             "reap": cmd_reap, "report": cmd_report, "land": cmd_land,
             "verify": cmd_verify, "status": cmd_status, "watch": cmd_watch, "doctor": cmd_doctor,
-            "find": cmd_find, "track": cmd_track, "launch": cmd_launch,
+            "find": cmd_find, "track": cmd_track, "launch": cmd_launch, "lease": cmd_lease,
             "selftest": lambda _: selftest()}[args.cmd](args)
 
 

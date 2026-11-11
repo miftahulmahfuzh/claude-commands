@@ -105,9 +105,11 @@ often, and say in the report which of them you did:
 - **A shared test service.** An integration suite on a fixed database is shared with every
   phase still running it, and a concurrent run truncates your tables mid-suite. If the repo's
   test script keys the database on the checkout (`skills/swarm/SKILL.md`, "Shared test
-  services"), the throwaway worktree gets its own database for free. If it does not, a red
-  integration step while a peer's test runner is alive is not a verdict: re-run that step once
-  the peer's run has ended, and say in the report that you did.
+  services"), the throwaway worktree gets its own database for free. Either way, run every
+  suite step that matches a resource in `.workflows/swarm.json` through `python3
+  ~/.claude/skills/swarm/swarm.py lease <resource> -- <step>` (the mod does this for you in a
+  session that loads it). Never poll for a peer's run with `pgrep -f`, which matches your own
+  shell and never returns.
 
 Everything runs from the merged tree:
 

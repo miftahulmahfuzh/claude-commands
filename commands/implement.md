@@ -354,10 +354,11 @@ report is on the branch before anyone reads it.
    alone, in this session, before believing it or acting on it — a peer's concurrent run can
    redden tests that read exactly like your own regression, and a report written mid-wave
    describes a tree that no longer exists. Reproduce first, then fix. Never fix from someone
-   else's transcript. The same holds for your own red integration run when the repo's suite
-   shares one test database across checkouts. Look for a peer's test runner first (`pgrep -af
-   vitest`, `pytest`, …). If one ran beside yours, the red is unproven until a run alone
-   reproduces it.
+   else's transcript. A test suite that shares a service with peers is queued for you: the
+   swarm-deck mod runs a command that matches a resource in `.workflows/swarm.json` under
+   `swarm.py lease`, and the wait is a line in its output saying who holds it. **Never write
+   your own wait for a peer's run** (`until ! pgrep -f vitest ...`). `pgrep -f` matches the
+   command line of your own shell, so the loop never ends, and the mod refuses it.
 
 ```yaml
 completion_report:

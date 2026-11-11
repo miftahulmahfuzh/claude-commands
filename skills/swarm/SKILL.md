@@ -214,11 +214,74 @@ Keying on the checkout also covers the integrator, `/task` and a person's termin
 - the suffix is exported (`TEST_DB_SUFFIX`) so every helper that names a database appends it,
   and an explicit `TEST_DB_SUFFIX` overrides the derivation
 
-**A repo that does not do this yet** gets two things from the coordinator: a line in
-`suite.notes` saying the suite shares a database, and, for every wave of two or more phases
-that run it, the instruction to re-run a red integration suite alone (`pgrep` the peers' test
-runners first) before treating it as a regression. Fix the script when the repo next has a
-quiet moment. The instruction is a workaround that costs a re-run per collision.
+Isolation removes the collision, not the load. Three suites on one disk still took ~30
+minutes where one takes ~5, because every truncate waits on a disk sync. Test containers run
+with durability off (`fsync=off`, `synchronous_commit=off`, `full_page_writes=off`): they hold
+nothing worth a sync, and the same suite runs several times faster.
+
+#### Declaring them: `resources` in `.workflows/swarm.json`
+
+```json
+{
+  "resources": {
+    "pg-test": {
+      "match": ["npm run test:int", "scripts/test-int\\.sh"],
+      "isolate": "per-checkout",
+      "max_concurrent": 2,
+      "probe": "docker exec mcp-notes-pg-test psql -U postgres -tAc \"select ...\"",
+      "notes": "one database per worktree; capped at 2 to bound disk load"
+    }
+  }
+}
+```
+
+- **`match`**: regexes (a pattern that does not compile is taken literally) for the command
+  lines that use it.
+- **`isolate`**: `per-checkout` when the repo gives each checkout its own copy, as above.
+  `none` (the default) when it is genuinely one thing.
+- **`max_concurrent`**: how many may hold it at once. A shared resource defaults to 1. An
+  isolated one with no cap needs no lease at all; give it a cap only to bound the load.
+- **`probe`**: optional. A command whose first output line, when there is one, is what a long
+  shell using the resource is waiting on. `watch` prints it as `waiting on DB: ...`.
+
+`swarm.py doctor` reports a resource declared `isolate: none` (every phase that needs it queues
+behind the others) and a repo whose test scripts point at a fixed service but declare nothing.
+
+#### Where isolation is impossible: the lease, enforced by the mod
+
+```bash
+python3 ~/.claude/skills/swarm/swarm.py lease pg-test -- npm run test:int   # wait, then run
+python3 ~/.claude/skills/swarm/swarm.py lease --status                      # holders and queue
+python3 ~/.claude/skills/swarm/swarm.py lease --front 12 pg-test            # coordinator: 12 next
+```
+
+A FIFO queue per repo and resource, under the repo's common git dir so every worktree shares
+it (`lease.py`). A holder holds a `flock` that its command inherits, so the lease lasts exactly
+as long as the work and is released by the kernel however it ends, crash included. A waiter
+whose process died is dropped. A waiter prints who holds the resource and its place once, and
+again only when either changes. The command's exit status comes back unchanged; waiting past
+`--wait-max` exits 75 without running it.
+
+**Nobody is asked to use it.** The swarm-deck mod's Bash guard rewrites any command that
+matches a resource needing a lease into `swarm.py lease <name> -- ...`, in every session in
+the repo: phases, the coordinator, the integrator, a `/task` session, a person's own terminal
+session. When the queue is busy it also moves the call to the background, so a wait can never
+run into the Bash tool's foreground timeout. The guard fails open: if it breaks, the command
+runs as written.
+
+**Home-made waits are refused.** A loop that polls the process table for another session's run
+(`until ! pgrep -f vitest; do sleep 5; done`) names no holder, keeps no order, and starts every
+waiter at the same instant when it clears. Worse, `pgrep -f` matches the command line of the
+loop's own shell, which carries the pattern, so the loop never ends. MEASURED 2026-11-11:
+phase 2 hung on exactly that. The guard denies both forms and points at the lease.
+
+**Watching it.** `swarm.py watch` prints `CONTENTION <resource>: p2, p5 (2 of 2 unleased)` when
+two or more sessions use one resource and any of them bypassed the lease, and
+`QUEUE <resource>` when someone is waiting. Every `SHELL` line carries a label:
+`progressing` (the shell's process tree gained CPU or started a real process),
+`waiting on DB: ...` (from the resource's `probe`), or `idle-hung` (neither, for
+`SWARM_IDLE_AFTER`, default 3m). `sleep`, `pgrep` and `grep` children are not counted as
+progress, so a polling loop reads as hung, which is what it is.
 
 ## `ears_trace.py` — the criteria trace check
 

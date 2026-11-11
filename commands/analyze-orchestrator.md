@@ -481,8 +481,11 @@ Loop until `runnable_now` is empty:
    that talks to a **shared test database** is a fourth: worktrees do not isolate it, and two
    phases running the integration suite at once truncate each other's tables. Check the repo's
    test script keys its database on the checkout (`skills/swarm/SKILL.md`, "Shared test
-   services"). Where it does not, tell every phase in a wave of two or more to re-run a red
-   integration suite alone before believing it. Where the
+   services") and declares it under `resources` in `.workflows/swarm.json`. The swarm-deck mod
+   then queues every use of a resource that needs it through `swarm.py lease`, in every
+   session, yours included. Never tell a phase to wait for a peer's test run by polling for its
+   process: `pgrep -f` matches its own shell, and the loop never ends. A `CONTENTION` line from
+   the watch means a resource is undeclared or the mod is not loaded. Where the
    repo declares `.workflows/swarm.json`, its `suite.setup` is that list in the repo's own words;
    `agents/integrator.md` step 4 carries the same ladder for the integration worktree, and is the
    one place this knowledge is maintained.

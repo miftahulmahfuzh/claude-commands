@@ -329,11 +329,10 @@ function interactiveReason(command) {
   return null
 }
 
-/** Refuse a command that would wait on a terminal nobody is watching. */
+/** Refuse a command that would wait on a terminal nobody is watching; lease a shared one. */
 async function shellGuard($, e, next) {
-  if (swarm === null) return next(e)
-  const why = interactiveReason(e.command || '')
-  if (why === null) return next(e)
+  const why = swarm === null ? null : interactiveReason(e.command || '')
+  if (why === null) return leaseGuard($, e, next)
   return {
     deny: 'Refused: ' + why + ', and this is phase ' + swarm.phase + ' of an unattended ' +
       'swarm set. It would hold the Bash tool open with nothing on screen, which looks ' +
@@ -343,6 +342,189 @@ async function shellGuard($, e, next) {
       'tools for an edit. If no non-interactive form exists, treat it as out of scope ' +
       'for this phase and say so in your report.',
   }
+}
+
+// ------------------------------------------------------ guard 4: shared resources
+
+/**
+ * Run a command that uses a contended resource under `swarm.py lease`, in ANY session in a
+ * repo that declares its resources -- a swarm phase, the coordinator, the integrator, a
+ * parallel /task session or a person's own terminal session all queue for the same thing.
+ *
+ * MEASURED 2026-11-11 on mcp-notes `session-fork-awareness`: phases 2 and 5 ran test:int on
+ * one Postgres at once and the coordinator added a third run. A ~5 minute suite took ~30,
+ * and the phases' own `until ! pgrep -f vitest` loops matched each other and the
+ * coordinator's run -- a wait that names no holder and keeps no order. Told by message,
+ * the fix was advice; rewritten here, it is the only way the command can run.
+ *
+ * Declared in `<repo>/.workflows/swarm.json` under `resources` (lease.py is the reader of
+ * record; this mirrors its rules). A resource needs a lease when it is shared
+ * (`isolate: none`) or bounds its concurrency (`max_concurrent`).
+ *
+ * Fails OPEN: anything that goes wrong deciding leaves the command exactly as written. A
+ * scheduler that breaks must cost at worst the contention it was built to stop, never a
+ * command that cannot run.
+ */
+const RESOURCE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
+const RESOURCE_TTL_MS = 20000
+let resourceCache = null
+
+// A home-made wait on another session's test run. The lease is that wait, with an order.
+const WAIT_LOOP = new RegExp(
+  '\\b(?:until|while)\\b[\\s\\S]*?\\b(?:pgrep|ps\\b[^\\n]*?\\bgrep)\\b[\\s\\S]*?' +
+  '(?:vitest|pytest|jest|mocha|playwright|test:int|test-int|cargo test|go test)')
+// Any loop on `pgrep -f`, whatever it waits for. The Bash call's own `zsh -c` wrapper has the
+// pattern in its command line, so pgrep -f always finds at least that shell and the loop never
+// ends. MEASURED 2026-11-11: phase 2 of session-fork-awareness hung on
+// `until [ -z "$(pgrep -f '...vitest')" ]` with nothing else running.
+const SELF_MATCH_LOOP = /\b(?:until|while)\b[\s\S]*?\bpgrep\b[^;&|\n]*?\s-[a-zA-Z]*f/
+
+function parseResources(text) {
+  let raw = null
+  try {
+    raw = JSON.parse(text)
+  } catch (err) {
+    return {}
+  }
+  const decl = raw && typeof raw === 'object' ? raw.resources : null
+  if (!decl || typeof decl !== 'object' || Array.isArray(decl)) return {}
+  const out = {}
+  for (const [name, spec] of Object.entries(decl)) {
+    if (!RESOURCE_NAME.test(name) || !spec || typeof spec !== 'object') continue
+    const match = Array.isArray(spec.match) ? spec.match.filter(m => typeof m === 'string' && m.trim()) : []
+    const isolate = spec.isolate === 'per-checkout' ? 'per-checkout' : 'none'
+    const cap = Number.isInteger(spec.max_concurrent) && spec.max_concurrent >= 1 ? spec.max_concurrent : null
+    out[name] = { match, isolate, max_concurrent: cap }
+  }
+  return out
+}
+
+function usesResource(spec, command) {
+  for (const pattern of spec.match) {
+    try {
+      if (new RegExp(pattern).test(command)) return true
+    } catch (err) {
+      if (command.includes(pattern)) return true
+    }
+  }
+  return false
+}
+
+function needsLease(spec) {
+  return spec.isolate === 'none' || spec.max_concurrent !== null
+}
+
+/** POSIX single-quoting. */
+function shq(text) {
+  return "'" + String(text).replace(/'/g, "'\\''") + "'"
+}
+
+/** { root, decl } for this session's repo, cached briefly; null outside a repo. */
+async function declaredResources($) {
+  const repo = await $.session.repo()
+  const root = repo && repo.root
+  if (!root) return null
+  const now = await $.clock.now()
+  if (resourceCache && resourceCache.root === root && now - resourceCache.at < RESOURCE_TTL_MS) {
+    return resourceCache
+  }
+  let decl = {}
+  try {
+    decl = parseResources(await $.fs.read(root + '/.workflows/swarm.json'))
+  } catch (err) {
+    decl = {}
+  }
+  resourceCache = { root, decl, at: now }
+  return resourceCache
+}
+
+/** The queue as swarm.py sees it: { capacity, holding, waiting }, or null. */
+async function leaseStatus($, home, root, name) {
+  const run = await $.process.run(['python3', home + '/.claude/skills/swarm/swarm.py', 'lease',
+    '--status', '--repo', root, name], { timeoutMs: 5000 })
+  const parsed = JSON.parse(run.stdout)
+  return (parsed && parsed.leases && parsed.leases[name]) || null
+}
+
+/** What to do with one Bash call: null (run it as written), { deny }, or { input }. */
+async function leasePlan($, e) {
+  const command = String(e.command || '')
+  if (/swarm\.py['"]?\s+lease\b/.test(command)) return null
+  const found = await declaredResources($)
+  const names = found ? Object.keys(found.decl) : []
+  const selfMatch = SELF_MATCH_LOOP.test(command)
+  if ((names.length > 0 || swarm !== null) && (selfMatch || WAIT_LOOP.test(command))) {
+    return { deny: 'Refused: this loop waits by polling the process table. ' + (selfMatch
+        ? '`pgrep -f` matches the command line of its own shell -- this Bash call carries the ' +
+          'pattern -- so it always finds at least itself and the loop never ends. '
+        : '') +
+      'It cannot tell whose process it sees, keeps no order, and starts every waiter ' +
+      'at the same instant when it clears. ' + (names.length > 0
+        ? 'This repo declares its shared resources (' + names.join(', ') + ') in ' +
+          '.workflows/swarm.json, and a command that uses one is queued for you: just run the ' +
+          'command itself.'
+        : 'Run the command itself under a lease instead: python3 ~/.claude/skills/swarm/' +
+          'swarm.py lease <resource> -- <command>.') }
+  }
+  if (!found) return null
+  let name = null
+  for (const n of names) {
+    if (usesResource(found.decl[n], command)) {
+      name = n
+      break
+    }
+  }
+  if (name === null || !needsLease(found.decl[name])) return null
+  const home = await $.env.get('HOME')
+  if (!home) return null
+  let busy = false
+  try {
+    const q = await leaseStatus($, home, found.root, name)
+    busy = q !== null && (q.waiting.length > 0 || q.holding.length >= q.capacity)
+  } catch (err) {
+    busy = false
+  }
+  const leased = 'python3 ' + shq(home + '/.claude/skills/swarm/swarm.py') + ' lease ' + name +
+    ' --repo ' + shq(found.root) + ' -- "${SHELL:-/bin/bash}" -c ' + shq(command)
+  const input = Object.assign({}, e, { command: leased })
+  // A queued wait counts against the Bash call's own foreground timeout. Behind someone,
+  // run it in the background: the session is told when it finishes instead of timing out.
+  if (busy && !e.run_in_background) input.run_in_background = true
+  return { input }
+}
+
+/** One line per leased resource someone holds or waits for, for the deck. Never throws. */
+let leaseLines = []
+async function readLeases($) {
+  try {
+    const found = await declaredResources($)
+    const home = await $.env.get('HOME')
+    if (!found || !home) return []
+    const lines = []
+    for (const [name, spec] of Object.entries(found.decl)) {
+      if (!needsLease(spec)) continue
+      const q = await leaseStatus($, home, found.root, name)
+      if (!q || (q.holding.length === 0 && q.waiting.length === 0)) continue
+      const held = q.holding.map(h => h.who + ' ' + h.for).join(', ') || 'free'
+      const wait = q.waiting.map((w, i) => w.who + ' #' + (i + 1)).join(', ')
+      lines.push(name + ' (' + q.capacity + '): ' + held + (wait ? ' · waiting ' + wait : ''))
+    }
+    return lines
+  } catch (err) {
+    return []
+  }
+}
+
+async function leaseGuard($, e, next) {
+  let plan = null
+  try {
+    plan = await leasePlan($, e)
+  } catch (err) {
+    plan = null
+  }
+  if (plan === null) return next(e)
+  if (plan.deny) return { deny: plan.deny }
+  return next(plan.input)
 }
 
 /** Fail CLOSED, for the same reason the AskUserQuestion guard does. */
@@ -671,6 +853,7 @@ async function refresh($) {
   latest.sort((a, b) => Number(a.phase) - Number(b.phase))
   fleet = rows
   reports = latest
+  leaseLines = await readLeases($)
   $.ui.invalidate('ui.render')
   // A phase is never woken by its own deck: only the set's live coordinator acts on it.
   if (swarm !== null) return
@@ -901,6 +1084,12 @@ async function draw($, e) {
         children: ['     sh ' + ago(now, s.startedAt).padEnd(5) + ' ' + oneLine(s.command, width)],
       }))
     }
+  }
+
+  if (leaseLines.length > 0) {
+    children.push(Text({ children: [' '] }))
+    children.push(Text({ children: ['Shared resources'] }))
+    for (const line of leaseLines) children.push(Text({ dimColor: true, children: [line] }))
   }
 
   const decided = fleet.reduce((n, row) => n + (row.decided || 0), 0)
