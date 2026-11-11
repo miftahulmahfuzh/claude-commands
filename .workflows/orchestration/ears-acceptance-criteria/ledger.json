@@ -3,6 +3,12 @@
   "coordinator": "orch-ears-acceptance-criteria",
   "coordinator_session_id": "662d31f3-8b12-4345-b9d6-f6fd48caa493",
   "created": "2026-11-11T08:30:14+07:00",
+  "landed": {
+    "at": "2026-11-11T09:21:14+07:00",
+    "base": "main",
+    "commit": "74e78853717ea52af0f2cbb67fbfabe93d013ee2",
+    "machine": "pc"
+  },
   "phases": [
     {
       "card": null,
@@ -80,7 +86,7 @@
     },
     {
       "card": null,
-      "commit": null,
+      "commit": "4eb57a7",
       "depends_on": [
         1,
         2,
@@ -89,22 +95,22 @@
       ],
       "difficulty": "NORMAL",
       "n": 5,
-      "note": null,
+      "note": "_ids dedupes R-level + EARS/legacy selftest fixtures; create-task/task/README/CLAUDE/docs describe EARS trace; ./sync.sh run once, drift clean, deployed tests green; proof: verified-first-pass (no evidence dir, stdlib journeys J1-J5)",
       "package": "skills",
       "plan": ".workflows/plan/ears-acceptance-criteria/phase-5.md",
-      "reported_at": null,
+      "reported_at": "2026-11-11T09:20:30+07:00",
       "satisfies": [
         "R5"
       ],
-      "status": "spawned",
-      "task_id": null,
+      "status": "done",
+      "task_id": "P1-CL-A028",
       "title": "Consumers, docs and deploy"
     }
   ],
   "plan": "/home/miftah/.worktrees/claude-commands/ears-acceptance-criteria/.workflows/orchestration/ears-acceptance-criteria/PLAN.md",
   "repo": "/home/miftah/claude-commands",
   "slug": "ears-acceptance-criteria",
-  "updated": "2026-11-11T09:18:05+07:00",
+  "updated": "2026-11-11T09:21:14+07:00",
   "verified_at": "2026-11-11T08:57:59+07:00",
   "worktree": "/home/miftah/.worktrees/claude-commands/ears-acceptance-criteria"
 }
