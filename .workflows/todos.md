@@ -6,38 +6,28 @@
 
 **Last Updated**: 2026-11-11
 
-**Total Active Tasks**: 4
+**Total Active Tasks**: 3
 
 ## Quick Stats
 - P0 Critical: 0
-- P1 High: 4
+- P1 High: 3
 - P2 Medium: 0
 - P3 Low: 0
 - P4 Backlog: 0
-- Blocked: 3
-- Completed Today: 18
-- Completed This Week: 18
-- Completed This Month: 19
+- Blocked: 1
+- Completed Today: 19
+- Completed This Week: 19
+- Completed This Month: 20
 
 ---
 
 ## Active Tasks
 
-- [ ] **P1-CL-A025** Phase 2: Phase plans trace journeys to criteria
-  - **Difficulty**: NORMAL
-  - **Type**: Feature
-  - **Context**: `agents/phase-planner.md` input `criteria`, step 6, hard requirements, output format and return value. Exit: output format shows `**Criteria:**` and `**J{k}** · traces R…` journeys; untraced journeys and owned criteria without a journey are forbidden.
-  - **Status**: in_progress
-  - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 2 of 5)
-  - **Satisfies**: R2 — Every phase plan Proof journey traces to one or more EARS criteria by id.
-  - **Depends on**: none
-  - **Plan**: `.workflows/plan/P1-CL-A025.md`
-
 - [ ] **P1-CL-A026** Phase 3: Reconciler enforces the trace (+ ears_trace.py)
   - **Difficulty**: HARD
   - **Type**: Feature
   - **Context**: New `skills/swarm/ears_trace.py` + test, `agents/plan-reconciler.md` rules 6-7, `commands/analyze.md` Step 8/9/11. Exit: `test_ears_trace.py` passes; `--fill` over this index prints 14 lines; rule 7 and Step 8 carry the identical trace-rule paragraph.
-  - **Status**: blocked
+  - **Status**: open
   - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 3 of 5)
   - **Satisfies**: R3 — plan-reconciler checks the trace: every criterion has an owning phase and a Proof journey.
   - **Depends on**: **P1-CL-A024**, **P1-CL-A025**
@@ -47,7 +37,7 @@
   - **Difficulty**: NORMAL
   - **Type**: Feature
   - **Context**: `agents/verifier.md` and the verifier dispatch paragraphs in `analyze-orchestrator.md` and `implement.md`. Exit: verifier returns `criteria: [{id, verdict, journeys, evidence}]`; both dispatch sites pass `plan_index`; legacy path documented.
-  - **Status**: blocked
+  - **Status**: open
   - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 4 of 5)
   - **Satisfies**: R4 — The verifier checks the list of criteria, reporting a verdict per criterion id.
   - **Depends on**: **P1-CL-A024**, **P1-CL-A025**
@@ -69,6 +59,23 @@
 ## Completed Tasks
 
 ### Recently Completed
+- [x] **P1-CL-A025** Phase 2: Phase plans trace journeys to criteria
+  - **Difficulty**: NORMAL
+  - **Type**: Feature
+  - **Context**: `agents/phase-planner.md` input `criteria`, step 6, hard requirements, output format and return value. Exit: output format shows `**Criteria:**` and `**J{k}** · traces R…` journeys; untraced journeys and owned criteria without a journey are forbidden.
+  - **Status**: completed 2026-11-11
+  - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 2 of 5)
+  - **Satisfies**: R2 — Every phase plan Proof journey traces to one or more EARS criteria by id.
+  - **Depends on**: none
+  - **Plan**: `.workflows/plan/P1-CL-A025.md`
+  - **Completed**: 2026-11-11 08:33
+  - **Method**: /do (swarm phase 2 of 5, branch `feature/ears-acceptance-criteria`, shared worktree)
+  - **Files**: agents/phase-planner.md, .workflows/plan/P1-CL-A025.md
+  - **Verification**: swarm.py selftest + test_plan_graph.py pass; Proof J1-J5 + neighbor check verified first pass
+  - **Decided**:
+    - Step 3 task creation raced with phase 1 → phase 1's session had already minted all five tasks (P1-CL-A024..A028) and the adopted copies; adopted them unchanged instead of re-creating (rung 6: avoid duplicate TaskIDs)
+    - readme-updater skipped → no package_readme.md, README.md is phase 5's (Owns boundary)
+
 - [x] **P1-CL-A024** Phase 1: /analyze writes EARS criteria
   - **Difficulty**: NORMAL
   - **Type**: Feature

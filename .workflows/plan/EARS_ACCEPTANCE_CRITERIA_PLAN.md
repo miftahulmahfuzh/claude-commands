@@ -128,6 +128,7 @@ plan index there); candidates 2–7 of the Borrowed list; `CHANGELOG.md` (left t
 **Owns:** `agents/phase-planner.md`: input `criteria`, step 6 (one journey per criterion, traced; index fallback skips fenced examples), hard requirement on traced journeys, output format (`**Criteria:**` header, journey bullet form), return value (`criteria`, `trace`, `untraced`).
 **Does not touch:** `commands/analyze.md`, reconciler, verifier.
 **Exit criteria:** the planner spec's output format shows `**Criteria:**` and `**J{k}** · traces R…` journeys; the hard requirements forbid an untraced journey (other than the neighbor check) and an owned criterion with no journey.
+**Done:** ✅ phase 2/5 complete (`P1-CL-A025`, 2026-11-11) — Proof J1–J5 + neighbor check pass; `swarm.py selftest` and `test_plan_graph.py` green. `**Status:**` above is left to the coordinator (swarm-tracked set); the authoritative phase status is the swarm ledger.
 
 ### Phase 3 — Reconciler enforces the trace (+ ears_trace.py)
 **Satisfies:** R3

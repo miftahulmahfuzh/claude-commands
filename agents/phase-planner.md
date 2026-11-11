@@ -21,6 +21,7 @@ phase_number: N
 phase_title: "{title}"
 phase_scope: "{what this phase owns, and what it must NOT touch}"
 satisfies: [{requirement ids this phase serves, e.g. R1 — from the index's Requirements table}]
+criteria: [{id: "R1.1", text: "WHEN <trigger> THE SYSTEM SHALL <behavior>"}]  # the EARS criteria this phase owns, from the index's Acceptance Criteria table; absent on a legacy set
 depends_on: [{earlier phase numbers}]
 other_phases: [{number, title, owns}]
 output_file: "{absolute path to write}"
@@ -49,6 +50,20 @@ output_file: "{absolute path to write}"
    If one exists, read its SKILL.md and the `features/` entries your phase touches, and write the
    **Proof** section with its real commands. If none exists, write Proof from the real artifact
    anyway (run the CLI, read the row back, hit the endpoint) and say `no harness`.
+   Then trace the journeys to `criteria`. If `criteria` is absent, take the rows of the index's
+   `### Acceptance Criteria` table whose Phases cell names your phase number, ignoring any copy
+   of the table inside a fenced code block (an index may quote the format as an example); if the
+   index has no such table outside a fence, the set is **legacy** (see the end of this step).
+   - Give every criterion at least one journey whose end state would be false if the criterion
+     were not met. Label each journey `J{k}` (k counts from 1, in order, unique in this plan) and
+     name the criterion ids it traces. One journey may trace several criteria.
+   - Trace only ids you own. A journey that would prove another phase's criterion goes in
+     **Handoffs**, naming that criterion, like a step that serves another phase's requirement.
+   - If a criterion you own cannot be observed through anything this phase builds (it is only
+     visible once a later phase lands), do not invent a journey for it. List it in `untraced` in
+     your return value and say in **Handoffs** which phase can prove it.
+   - Legacy set: label journeys `J{k}` but write them without `· traces …`, leave the
+     `**Criteria:**` header line out, and return `criteria: []`, `trace: {}`, `untraced: []`.
 7. Write `output_file`. Create parent directories if needed.
 
 ## Hard requirements for the plan
@@ -63,6 +78,12 @@ output_file: "{absolute path to write}"
   journey is a command or a scripted drive, plus the observable end state that passes it. A
   separate verifier agent runs your Proof section without your context, so write it for a
   stranger. For a bug fix, the first journey reproduces the bug and must fail before the fix.
+- **Every journey traces, every criterion is traced.** Each journey except the neighbor check
+  traces at least one criterion you own, by id, in the journey bullet form of the output format.
+  Every criterion you own is traced by at least one journey, or is listed in `untraced` with its
+  reason in **Handoffs**. The plan-reconciler and the verifier read that bullet form
+  mechanically, so do not reword it. A legacy set (no criteria) is the only exception: its
+  journeys are labelled but trace nothing.
 - **A user-facing change updates the feature map.** If the phase adds or changes what a user
   can do, one step edits the matching `features/*.md` entry, or adds one.
 
@@ -74,6 +95,7 @@ output_file: "{absolute path to write}"
 **Plan set:** `{SLUG}_PLAN.md`
 **Analysis:** `{analysis file}`
 **Satisfies:** {requirement ids, e.g. R1} — the user-facing thing this phase serves
+**Criteria:** {criterion ids this phase owns, e.g. R1.1, R1.2 — leave this line out on a legacy set}
 **Depends on:** Phase {list} — or "none"
 **Difficulty:** EASY | NORMAL | HARD
 **Package:** {primary package path}
@@ -127,9 +149,13 @@ The reconciler reads this section to detect cross-phase conflicts. Be exact and 
 **Proof:** {how the real artifact shows this phase works}
 - Harness: `{.claude/skills/verify-<app>}` — or `no harness`, and what is run instead
 - Feature-map entries: `{features/x.md}`, ... — or `none`
-- Journeys: one per claim, each with the exact commands or steps file, and the end state that
-  passes it ("`GET /api/notes/<id>` returns tags `["beta"]`", not "it works")
-- Neighbor check: the existing feature most likely to break, and its journey
+- Journeys: one per claim and at least one per criterion in **Criteria**, one bullet per journey,
+  written in exactly this form (the reconciler and the verifier parse it):
+  `  - **J{k}** · traces R1.1, R1.2 — <commands or steps> → passes when <observable end state>`
+  - **J1** · traces R1.1 — `curl -s localhost:3000/api/notes/42 | jq -c .tags` → passes when it prints `["beta"]` (an observable end state, not "it works")
+  - **J2** · traces R1.1, R1.2 — `{exact commands or steps file}` → passes when {the observable end state}
+- Neighbor check: the existing feature most likely to break, and its journey. A separate bullet,
+  never labelled `J{k}`; it traces nothing
 - Cost: paid drives the journeys need (LLM turns etc.), when the harness budgets them
 **Exit criteria:** {the observable statement that this phase is done}
 
@@ -160,5 +186,11 @@ contract:
 handoffs: ["..."]
 principles: ["{principle}: {decision}"]
 proof: "{harness name or 'no harness'}; {number of journeys}"
+criteria: ["R1.1", "R1.2"]                    # the criterion ids you own; [] on a legacy set
+trace: {"R1.1": ["J1"], "R1.2": ["J1", "J2"]}  # each traced criterion -> the journeys that trace it
+untraced: []                                  # owned criteria with no journey; each has its reason in Handoffs
 risks: ["..."]
 ```
+
+`trace` keys and `untraced` together are exactly `criteria`. `untraced` is empty unless step 6
+sent a criterion to a later phase; the reconciler treats every id in it as a gap to close.
