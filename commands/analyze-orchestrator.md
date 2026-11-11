@@ -472,12 +472,17 @@ Loop until `runnable_now` is empty:
    The phase's session then never sees a peer's uncommitted state, and its commits land on its
    own branch.
 
-   **The provisioning is yours too, and three things must be right or the isolation is worse than
+   **The provisioning is yours too, and four things must be right or the isolation is worse than
    sharing**: the worktree needs its **own `engine/.venv`** (Seer's CLAUDE.md),
    `web/node_modules` must be **hardlinked and not symlinked** (a symlink passes vitest and tsc,
    then fails `next build` with a misleading "filesystem root" error), and `pytest` needs
    `PYTHONPATH=engine/src` or it silently tests the main checkout instead of the branch. The
-   research store is not copied into worktrees — point `--store` at the main checkout. Where the
+   research store is not copied into worktrees — point `--store` at the main checkout. A suite
+   that talks to a **shared test database** is a fourth: worktrees do not isolate it, and two
+   phases running the integration suite at once truncate each other's tables. Check the repo's
+   test script keys its database on the checkout (`skills/swarm/SKILL.md`, "Shared test
+   services"). Where it does not, tell every phase in a wave of two or more to re-run a red
+   integration suite alone before believing it. Where the
    repo declares `.workflows/swarm.json`, its `suite.setup` is that list in the repo's own words;
    `agents/integrator.md` step 4 carries the same ladder for the integration worktree, and is the
    one place this knowledge is maintained.

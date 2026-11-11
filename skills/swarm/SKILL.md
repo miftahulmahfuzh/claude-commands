@@ -187,6 +187,39 @@ the worst possible green. The two that bite most often are per-checkout build ar
 worktree lacks (hardlink them; a symlinked `node_modules` passes vitest and tsc and then fails
 the build) and a runner that resolves imports outside this tree. The example above carries both.
 
+#### Shared test services: one database per checkout
+
+Separate worktrees isolate files, not the services a suite talks to. A repo whose integration
+suite runs against one fixed database (a Docker Postgres on a fixed port and name) still shares
+it between every checkout that runs the suite at once: the phases of a wave, the integrator's
+throwaway worktree, parallel `/task` sessions, the main checkout. Suites truncate tables and
+rebuild databases between files, so a concurrent run fails tests that read exactly like the
+phase's own regression. A phase that adds a migration also changes the schema under its siblings.
+
+MEASURED 2026-11-11 on mcp-notes `session-fork-awareness`: phases 2 and 5 ran `npm run test:int`
+in the same minute against `mcp_notes_test`. Every integration file truncates every table, and
+the connector setup runs `DROP DATABASE … WITH (FORCE)`, which kills the other run's connections.
+
+**The rule: the repo's test script keys its databases on the checkout, not on the swarm.**
+Keying on the checkout also covers the integrator, `/task` and a person's terminal, which a
+`SWARM_PHASE` key would miss. The reference is mcp-notes `scripts/test-int.sh`:
+
+- the main checkout keeps the plain database names, so nothing changes outside worktrees
+- a linked worktree uses `<db>_wt_<first 10 hex of sha1(worktree path)>`, created on first run
+  and migrated by the suite's own setup. One container serves them all, so nothing is added
+  for memory or ports
+- the worktree's path is stored as the database comment, and each run drops any `_wt_` database
+  whose path no longer exists. Worktrees deleted by `land --step cleanup` clean up after
+  themselves on the next run anywhere
+- the suffix is exported (`TEST_DB_SUFFIX`) so every helper that names a database appends it,
+  and an explicit `TEST_DB_SUFFIX` overrides the derivation
+
+**A repo that does not do this yet** gets two things from the coordinator: a line in
+`suite.notes` saying the suite shares a database, and, for every wave of two or more phases
+that run it, the instruction to re-run a red integration suite alone (`pgrep` the peers' test
+runners first) before treating it as a regression. Fix the script when the repo next has a
+quiet moment. The instruction is a workaround that costs a re-run per collision.
+
 ## `ears_trace.py` — the criteria trace check
 
 A plan index written since 2026-11-11 carries, under `## Requirements`, an `### Acceptance

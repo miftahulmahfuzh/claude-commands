@@ -102,6 +102,12 @@ often, and say in the report which of them you did:
   or an ambient source root will happily test the MAIN checkout from inside the worktree — green,
   and about the wrong code. Pin it to this tree (`PYTHONPATH`, `uv run`, `--project`, a
   `-C`/`--dir` flag, whatever that runner uses) before you believe a pass.
+- **A shared test service.** An integration suite on a fixed database is shared with every
+  phase still running it, and a concurrent run truncates your tables mid-suite. If the repo's
+  test script keys the database on the checkout (`skills/swarm/SKILL.md`, "Shared test
+  services"), the throwaway worktree gets its own database for free. If it does not, a red
+  integration step while a peer's test runner is alive is not a verdict: re-run that step once
+  the peer's run has ended, and say in the report that you did.
 
 Everything runs from the merged tree:
 
