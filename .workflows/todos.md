@@ -6,32 +6,22 @@
 
 **Last Updated**: 2026-11-11
 
-**Total Active Tasks**: 3
+**Total Active Tasks**: 2
 
 ## Quick Stats
 - P0 Critical: 0
-- P1 High: 3
+- P1 High: 2
 - P2 Medium: 0
 - P3 Low: 0
 - P4 Backlog: 0
-- Blocked: 1
-- Completed Today: 19
-- Completed This Week: 19
-- Completed This Month: 20
+- Blocked: 0
+- Completed Today: 20
+- Completed This Week: 20
+- Completed This Month: 21
 
 ---
 
 ## Active Tasks
-
-- [ ] **P1-CL-A026** Phase 3: Reconciler enforces the trace (+ ears_trace.py)
-  - **Difficulty**: HARD
-  - **Type**: Feature
-  - **Context**: New `skills/swarm/ears_trace.py` + test, `agents/plan-reconciler.md` rules 6-7, `commands/analyze.md` Step 8/9/11. Exit: `test_ears_trace.py` passes; `--fill` over this index prints 14 lines; rule 7 and Step 8 carry the identical trace-rule paragraph.
-  - **Status**: open
-  - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 3 of 5)
-  - **Satisfies**: R3 — plan-reconciler checks the trace: every criterion has an owning phase and a Proof journey.
-  - **Depends on**: **P1-CL-A024**, **P1-CL-A025**
-  - **Plan**: `.workflows/plan/P1-CL-A026.md`
 
 - [ ] **P1-CL-A027** Phase 4: Verifier reports per criterion
   - **Difficulty**: NORMAL
@@ -47,7 +37,7 @@
   - **Difficulty**: NORMAL
   - **Type**: Feature
   - **Context**: `swarm.py` `_ids` dedupe + fixtures, swarm/create-task/task SKILL.md, implement.md:196, README, CLAUDE.md, architecture-notes, session-swarm, then `./sync.sh`. Exit: selftest and both tests pass from repo and `~/.claude`; drift check clean.
-  - **Status**: blocked
+  - **Status**: open
   - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 5 of 5)
   - **Satisfies**: R5 — Keep consumers working (swarm.py, create-task, skills/task); old non-EARS plan sets still execute; run ./sync.sh.
   - **Depends on**: **P1-CL-A024**, **P1-CL-A025**, **P1-CL-A026**, **P1-CL-A027**
@@ -59,6 +49,20 @@
 ## Completed Tasks
 
 ### Recently Completed
+- [x] **P1-CL-A026** Phase 3: Reconciler enforces the trace (+ ears_trace.py)
+  - **Difficulty**: HARD
+  - **Type**: Feature
+  - **Context**: New `skills/swarm/ears_trace.py` + test, `agents/plan-reconciler.md` rules 6-7, `commands/analyze.md` Step 8/9/11. Exit: `test_ears_trace.py` passes; `--fill` over this index prints 14 lines; rule 7 and Step 8 carry the identical trace-rule paragraph.
+  - **Status**: completed 2026-11-11
+  - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 3 of 5)
+  - **Satisfies**: R3 — plan-reconciler checks the trace: every criterion has an owning phase and a Proof journey.
+  - **Depends on**: **P1-CL-A024**, **P1-CL-A025**
+  - **Plan**: `.workflows/plan/P1-CL-A026.md`
+  - **Completed**: 2026-11-11 08:56
+  - **Method**: /do (swarm phase 3 of 5, branch `feature/ears-acceptance-criteria`, shared worktree)
+  - **Files**: skills/swarm/ears_trace.py, skills/swarm/tests/test_ears_trace.py, agents/plan-reconciler.md, commands/analyze.md
+  - **Verification**: py_compile passed; test_ears_trace.py (9 cases), test_plan_graph.py, swarm.py selftest pass; Proof J1-J5 + neighbor check verified first pass (`--fill` over this index prints 14 lines)
+
 - [x] **P1-CL-A025** Phase 2: Phase plans trace journeys to criteria
   - **Difficulty**: NORMAL
   - **Type**: Feature

@@ -158,9 +158,10 @@ So the contract with everything downstream:
 - **Resolve contradictions at Step 8, into a `## Decisions` section** — the choice and the rung
   that decided it. `/implement`, `/do` and `/analyze-orchestrator` all carry the same precedence
   ladder now; leaving them a fork is asking N sessions to re-derive what one session already knew.
-- **`## Open Questions` is reserved for one thing:** a fork where *every* branch is irreversible.
-  That is the only item a plan set may legitimately stop on, and it is why Step 11 still refuses
-  to launch over a non-empty section.
+- **`## Open Questions` is reserved for two things:** a fork where *every* branch is
+  irreversible, and a requirement or acceptance criterion no phase can own (the trace rule,
+  Step 8). Those are the only items a plan set may legitimately stop on, and they are why Step 11
+  still refuses to launch over a non-empty section.
 - **An empty Open Questions is the normal outcome**, not a lucky one.
 
 **Stopping is allowed; blocking is not.** This command's stop is Step 11's refusal: the plan is
@@ -437,8 +438,28 @@ It checks, and **edits the plan files in place** to fix:
   phase must quote the file as it will look *after* the earlier one
 - **Gap** — an impact point in the analysis that no phase owns
 - **Broken-build phase** — a phase that leaves the tree uncompilable
+- **Unowned / untraced criterion** — an acceptance criterion `R{n}.{m}` no phase owns, or one no
+  Proof journey traces; `skills/swarm/ears_trace.py` finds both mechanically
 
-Then it rewrites `<SLUG>_PLAN.md` from draft to final and appends a **Reconciliation Log**.
+Then it rewrites `<SLUG>_PLAN.md` from draft to final — including the Acceptance Criteria table's
+Phases and Journeys cells — and appends a **Reconciliation Log**.
+
+**The trace rule.** Every acceptance criterion `R{n}.{m}` in the index's `### Acceptance Criteria`
+table has at least one owning phase and at least one Proof journey that traces it, and
+`python3 ~/.claude/skills/swarm/ears_trace.py <plan index>` exits 0 over the set. A criterion that
+is owned but untraced is fixed by editing its owning phase plan: add a journey
+`**J{k}** · traces R{n}.{m} — <commands> → passes when <end state>` under that plan's
+`- Journeys:`. If the owning phase cannot observe it — its planner returned it in `untraced` and
+named in Handoffs the later phase that can — move it to that phase instead (its `**Criteria:**`
+line and the table's Phases cell) and add the journey there. A criterion that is unowned is assigned to the phase that satisfies its `R` (the
+one whose steps the behavior lands in; the earliest of them when that does not settle it): add it
+to that plan's `**Criteria:**` line and to the criteria table's Phases cell, and give it a
+journey. A `misassigned`, `unclaimed` or `unknown_id` gap is fixed by making the plan's
+`**Criteria:**` line, the table's Phases cell and the journey ids agree, on whichever side the
+plan's steps support. Only a criterion whose `R` no phase satisfies, and that no phase can take
+on, lands in `## Open Questions` — never an untraced one, which a written journey always fixes.
+An index with no `### Acceptance Criteria` heading is a legacy set: there is nothing to trace, and
+the script exits 0 with a `legacy` line.
 
 If its edits changed any interface contract, run it **once** more to verify. Cap at 2 rounds.
 
@@ -452,8 +473,9 @@ Requirements table → the user's raw input from Step 0 → surrounding conventi
    still contains both halves is a phase session that meets the fork again at 3am.
 2. **Record it under `## Decisions`** in the index: the fork, the choice, and the rung. One line.
 3. **Leave `## Open Questions` for the residue only** — a fork where every branch is irreversible
-   (destroying data, rewriting published history, an unrepeatable migration). Nothing else
-   qualifies, and an item parked there costs the whole set its unattended launch at Step 11.
+   (destroying data, rewriting published history, an unrepeatable migration), or a requirement or
+   criterion no phase can own (the trace rule above). Nothing else qualifies, and an item parked
+   there costs the whole set its unattended launch at Step 11.
 
 This is not inventing an answer. Inventing is choosing with no stated reason; this is choosing on
 the highest rung that speaks and writing down which one it was, so a human can overturn it in the
@@ -479,9 +501,17 @@ Before terminating, verify: every phase has a plan file, every plan file's code 
 complete, every impact point in the analysis is owned by some phase, and **every requirement ID
 from Step 0 is satisfied by at least one phase**. Nothing downstream will fill a gap you leave.
 
+**And verify the trace — N = 1 too.** Run `python3 ~/.claude/skills/swarm/ears_trace.py
+<plan index>`. It must exit 0: every criterion owned and traced, or `legacy` for an index with no
+`### Acceptance Criteria` table. Exit 2 lists each gap: fix it by the trace rule in Step 8 (for
+N = 1 there is no reconciler, so you edit the one phase plan yourself), refill the Journeys column
+(`--fill` prints the values), and run it again. Exit 1 means a phase plan the index names is
+missing. The only exit 2 that may survive this step is a criterion parked in `## Open Questions`
+under that rule, and it holds the launch at Step 11 like any other item there.
+
 **And verify the two decision sections.** `## Open Questions` must be empty, or every item in it
-must be a fork where *every* branch is irreversible — anything else belongs in `## Decisions` with
-its rung, resolved per Step 8. This is the check that decides whether the night runs: a single
+must be a fork where *every* branch is irreversible, or a requirement or criterion no phase can
+own — anything else belongs in `## Decisions` with its rung, resolved per Step 8. This is the check that decides whether the night runs: a single
 parked item that could have been decided here refuses the launch at Step 11 and takes the whole
 set down with it.
 
@@ -533,9 +563,11 @@ python3 ~/.claude/skills/swarm/swarm.py launch \
 holds.** Both are cases where an unattended run would spend the night doing nothing useful, or
 something wrong:
 
-- **Open Questions is non-empty** — which after Step 8 means one thing: a fork where every branch
-  is irreversible. Launching over it would spend the night doing the wrong work N times in
-  parallel, since the contradiction is exactly what N sessions would each resolve differently.
+- **Open Questions is non-empty** — which after Step 8 means a fork where every branch is
+  irreversible, or a requirement or criterion no phase can own. Launching over the first would
+  spend the night doing the wrong work N times in parallel, since the contradiction is exactly
+  what N sessions would each resolve differently; launching over the second would land a set that
+  leaves part of the ask unbuilt and unproved.
   Everything decidable was already decided and recorded under `## Decisions`, so this refusal is
   now rare by construction rather than the routine exit it used to be. **Do not ask whether to
   launch anyway** — print the refusal, name the fork, and end the session.
@@ -787,7 +819,8 @@ Step 8 was skipped rather than that nothing conflicted.>
 ## Open Questions
 
 <Reserved for forks where EVERY branch is irreversible — destroying data, rewriting
-published history, an unrepeatable migration. Everything else was decided at Step 8 and
+published history, an unrepeatable migration — and for a requirement or acceptance criterion
+no phase can own (the trace rule, Step 8). Everything else was decided at Step 8 and
 belongs under Decisions. Empty is the normal outcome; a non-empty section refuses the
 orchestrator launch at Step 11 and is the one thing that costs this plan its night.>
 
@@ -886,7 +919,7 @@ Decided without asking:
   <fork>  ->  <choice>   rung <n>: <what decided it>
 
 <If Open Questions is non-empty, list them too. After Step 8 that means an irreversible
-fork, so say so plainly and say that the launch was refused because of it — nothing
+fork or a requirement or criterion no phase can own, so say so plainly and say that the launch was refused because of it — nothing
 downstream will ask about these, and nothing downstream will run.>
 
 Next — phase 1 of <N>, in a new session:
