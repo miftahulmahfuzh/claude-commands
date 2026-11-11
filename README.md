@@ -4,8 +4,16 @@ Slash commands, subagents, skills, and a mod for [Claude Code](https://claude.ai
 every file is a prompt, not a program — there is nothing to build or run. The one exception is
 [`mods/swarm-deck`](mods/swarm-deck), which is JavaScript that runs inside Claude Code itself.
 
+**The idea underneath most of it: [Sessions, not subagents](docs/session-swarm.md).** A Claude
+Code session here starts other *full* Claude Code sessions, each in its own tmux window and git
+worktree. They message each other by name, coordinate through a committed ledger, and keep going
+after the session that started them closes. `/analyze` → orchestrator → one session per phase has
+run 100 plan sets and 451 landed phases unattended. The doc covers why, what it costs, what had to
+be built before it held, and how it compares with agent teams, Gas Town, claude-squad and others.
+
 ## Contents
 
+- [Sessions, not subagents →](docs/session-swarm.md) — the tmux swarm: design, trade-offs, track record, prior art
 - [Install](#install)
 - [Commands](#commands)
   - [Session names](#session-names)
@@ -691,7 +699,7 @@ claude-commands/
 │   ├── create-verification-skill/  # from pstack — + references/
 │   └── …                     # the standalone skills — see docs/other-tools.md
 ├── mods/swarm-deck/          # the /fleet deck mod — loaded from the repo, not synced
-├── docs/                     # other-tools.md, architecture-notes.md, design notes
+├── docs/                     # session-swarm.md, other-tools.md, architecture-notes.md, design notes
 ├── cmd/dlv/                  # Delve helpers for /dbg — copy into your Go project
 ├── sync.sh
 ├── remove_non_commands.sh
