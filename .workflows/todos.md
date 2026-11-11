@@ -6,39 +6,46 @@
 
 **Last Updated**: 2026-11-11
 
-**Total Active Tasks**: 1
+**Total Active Tasks**: 0
 
 ## Quick Stats
 - P0 Critical: 0
-- P1 High: 1
+- P1 High: 0
 - P2 Medium: 0
 - P3 Low: 0
 - P4 Backlog: 0
 - Blocked: 0
-- Completed Today: 21
-- Completed This Week: 21
-- Completed This Month: 22
+- Completed Today: 22
+- Completed This Week: 22
+- Completed This Month: 23
 
 ---
 
 ## Active Tasks
-
-- [ ] **P1-CL-A028** Phase 5: Consumers, docs and deploy
-  - **Difficulty**: NORMAL
-  - **Type**: Feature
-  - **Context**: `swarm.py` `_ids` dedupe + fixtures, swarm/create-task/task SKILL.md, implement.md:196, README, CLAUDE.md, architecture-notes, session-swarm, then `./sync.sh`. Exit: selftest and both tests pass from repo and `~/.claude`; drift check clean.
-  - **Status**: open
-  - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 5 of 5)
-  - **Satisfies**: R5 — Keep consumers working (swarm.py, create-task, skills/task); old non-EARS plan sets still execute; run ./sync.sh.
-  - **Depends on**: **P1-CL-A024**, **P1-CL-A025**, **P1-CL-A026**, **P1-CL-A027**
-  - **Plan**: `.workflows/plan/P1-CL-A028.md`
-
 
 ---
 
 ## Completed Tasks
 
 ### Recently Completed
+- [x] **P1-CL-A028** Phase 5: Consumers, docs and deploy
+  - **Difficulty**: NORMAL
+  - **Type**: Feature
+  - **Context**: `swarm.py` `_ids` dedupe + fixtures, swarm/create-task/task SKILL.md, implement.md:196, README, CLAUDE.md, architecture-notes, session-swarm, then `./sync.sh`. Exit: selftest and both tests pass from repo and `~/.claude`; drift check clean.
+  - **Status**: completed 2026-11-11
+  - **Plan Set**: `.workflows/plan/EARS_ACCEPTANCE_CRITERIA_PLAN.md` (phase 5 of 5)
+  - **Satisfies**: R5 — Keep consumers working (swarm.py, create-task, skills/task); old non-EARS plan sets still execute; run ./sync.sh.
+  - **Depends on**: **P1-CL-A024**, **P1-CL-A025**, **P1-CL-A026**, **P1-CL-A027**
+  - **Plan**: `.workflows/plan/P1-CL-A028.md`
+  - **Completed**: 2026-11-11 09:19
+  - **Method**: /do (swarm phase 5 of 5, branch `feature/ears-acceptance-criteria`, shared worktree)
+  - **Files**: skills/swarm/swarm.py, skills/swarm/SKILL.md, skills/create-task/SKILL.md, skills/task/SKILL.md, skills/task/DESIGN.md, commands/implement.md, README.md, CLAUDE.md, docs/architecture-notes.md, docs/session-swarm.md
+  - **Verification**: py_compile swarm.py ok; swarm.py selftest, test_plan_graph.py (27), test_ears_trace.py (9) green from repo and from ~/.claude; Proof J1-J5 verified first pass; ears_trace.py over EARS_ACCEPTANCE_CRITERIA_PLAN.md exits 0; ./sync.sh deployed, drift check clean (only pre-existing deploy-only skills)
+  - **Drift**:
+    - J5 wrote its test log to the session scratchpad instead of /tmp/ears_test.out (sandbox convention); same check.
+  - **Decided**:
+    - readme-updater skipped → no `.workflows/package_readme.md` exists and creating one adds a file outside phase 5's Owns; README.md is already this phase's own deliverable (invariant: commit no wider than Owns; matches phases 1–2 convention)
+
 - [x] **P1-CL-A026** Phase 3: Reconciler enforces the trace (+ ears_trace.py)
   - **Difficulty**: HARD
   - **Type**: Feature

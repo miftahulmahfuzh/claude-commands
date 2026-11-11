@@ -193,7 +193,7 @@ Dispatch one subagent to create every phase's task. For each phase:
     - **Context**: {phase Owns + Exit criteria}
     - **Status**: {in_progress for the first phase, blocked for the rest}
     - **Plan Set**: `{the -f path}` (phase {N} of {total})
-    - **Satisfies**: {R id(s)} — {that requirement's one-line text from the index}
+    - **Satisfies**: {R id(s)} — {that requirement's text from the index's R table}{ · criteria: the phase plan's **Criteria:** ids, e.g. `R2.1, R2.2` — leave this part out when the plan has no **Criteria:** line, as in a set planned before EARS criteria}
     - **Depends on**: {TaskIDs of the phases this one requires}
     - **Plan**: `.workflows/plan/{TaskID}.md`
     - **Card**: {the index's Card column, e.g. `owner/repo#13`} — omit the line if it is `—`

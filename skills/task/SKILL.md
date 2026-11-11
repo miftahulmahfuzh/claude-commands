@@ -70,6 +70,12 @@ what happens when a plan set is split across two parent cards, one per `R`. The 
 **Depends on** column is the authority for order across parents; read it, and treat a
 cross-parent prerequisite the same way as a sibling one.
 
+**The parent's criteria are the phase's acceptance test.** The parent body lists each `R` with
+its EARS acceptance criteria (`R1.1`, `R1.2`, …), and each phase plan names the ones it owns on
+its `**Criteria:**` line and traces every Proof journey to them. A phase is verified when those
+journeys pass, criterion by criterion — not when the card's title sounds done. A legacy plan set
+has no criteria; verify it from the phase plan's Proof as before.
+
 **An earlier phase that is not done is not a stop.** `blockedBy` names it; work those phases
 first, in order, then the one that was asked for. That is not scope creep — the phases share one
 branch and one gate, and the requested phase cannot even be verified until its prerequisites are

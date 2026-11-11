@@ -150,6 +150,8 @@ plan index there); candidates 2–7 of the Borrowed list; `CHANGELOG.md` (left t
 **Does not touch:** anything phases 1–4 own.
 **Exit criteria:** selftest passes including the new fixtures (and fails with the old `_ids`); `test_plan_graph.py` and `test_ears_trace.py` pass from the repo and from `~/.claude`; drift check prints nothing beyond pre-existing deploy-only `Only in ~/.claude/skills` lines.
 
+**Done:** ✅ phase 5/5 complete (`P1-CL-A028`, 2026-11-11) — Proof J1–J5 pass; `swarm.py selftest`, `test_plan_graph.py` (27) and `test_ears_trace.py` (9) green from repo and `~/.claude`; `./sync.sh` deployed, drift clean. `**Status:**` above is left to the coordinator (swarm-tracked set); the authoritative phase status is the swarm ledger.
+
 ## Reconciliation Log
 
 Round 1. Ledger: no symbol is deleted or renamed across phases (the only rename is phase 1's R
