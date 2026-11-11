@@ -19,7 +19,7 @@ be built before it held, and how it compares with agent teams, Gas Town, claude-
   - [Session names](#session-names)
   - [`/analyze`](#analyze)
   - [`/implement`](#implement)
-  - [Unattended: `/analyze` orchestrates by default](#unattended-analyze-orchestrates-by-default)
+  - [Unattended: `/analyze` starts the work by default](#unattended-analyze-starts-the-work-by-default)
   - [`/analyze-orchestrator`](#analyze-orchestrator)
   - [`/do`](#do)
 - [Agents](#agents)
@@ -118,9 +118,10 @@ command that plans; `/implement` and `/do` execute what it wrote. It never edits
 ```
 
 Everything is optional; `/analyze` followed by prose works, and the target and type are inferred.
-**It orchestrates by default** — when the plan is done it launches the orchestrator itself, so the
-work starts without anyone pasting a command. `--no-orchestrate` stops after planning; see
-[Unattended](#unattended-analyze-orchestrates-by-default).
+**It starts the work by default.** When the plan is done it launches `/implement` (one phase) or
+the orchestrator (several) itself, so the work starts without anyone pasting a command.
+`--no-orchestrate` stops after planning; see
+[Unattended](#unattended-analyze-starts-the-work-by-default).
 
 Every run produces the same three things, in a worktree it cuts off `origin/main`:
 
@@ -194,42 +195,45 @@ phase plan to `{pkg}/.workflows/plan/{TaskID}.md` **unchanged**, applies one pha
 plan's verification commands, and hands off to `completion-handler`.
 
 It stops after one phase by default so the next starts in a fresh context; `--all` continues in
-one session. Phases stay blocked until their dependencies complete.
+one session. Phases stay blocked until their dependencies complete. When the phase it finishes is
+the set's last and no orchestrator owns the set, it lands the branch itself: merge into `main`,
+push, delete the worktree and branch.
 
 **It writes no plans.** Handed a `*_code_analyzer.md` it refuses and names `/analyze` — an
 analysis describes the code, and filling the gap here is what this command deliberately doesn't
 do. Same rule when the code has drifted from what a plan quotes: small drift is followed and
 noted, large drift stops with `Re-run /analyze`.
 
-### Unattended: `/analyze` orchestrates by default
+### Unattended: `/analyze` starts the work by default
 
 ```bash
 /analyze
 <what you want changed, and why>
 ```
 
-That is the whole unattended workflow. The plan lands at 22:30 and the orchestrator starts at
-22:30, in its own tmux window, with nothing pasted. `/analyze` launches it as its last act and
-does not wait for it. The long form means the same thing:
+That is the whole unattended workflow. When the plan is written, `/analyze` launches the work in
+its own tmux window and ends without waiting for it:
+
+- a **one-phase** plan goes straight to `/implement -f <PLAN> --phase 1`;
+- a **multi-phase** plan goes to `/analyze-orchestrator`, which runs a session per phase.
+
+The plan is done at 22:30 and the work starts at 22:30, with nothing pasted. The long form means
+the same thing:
 
 ```bash
 /analyze --orchestrate --permission-mode bypassPermissions   # the default, spelled out
 /analyze --no-orchestrate                                     # plan only, print the command
-/analyze --permission-mode acceptEdits                        # narrow what the children may do
+/analyze --permission-mode acceptEdits                        # narrow what the launched sessions may do
 ```
 
-It refuses to launch — and says so instead — when **Open Questions is non-empty** (an unattended
-swarm is the worst place for an unresolved contradiction, since N sessions would each answer it
-differently) or when a **phase plan file is missing**. Since reconciliation now decides ordinary
-forks rather than parking them, the first refusal is rare by construction: what survives to Open
-Questions is a fork where every branch is irreversible, which is worth a night of nothing.
+The default mode is `bypassPermissions`, which gives the launched sessions a mode the `/analyze`
+session may not itself hold. That is a deliberate standing decision rather than an inference, and
+what makes it reasonable is the isolation: `/analyze` cuts a worktree and a branch, so an
+unattended run's blast radius is a feature branch, not your working tree.
 
-The default mode is `bypassPermissions`, which gives the orchestrator and its phase sessions a
-mode the `/analyze` session may not itself hold. That is a deliberate standing decision rather
-than an inference, and what makes it reasonable is the isolation: `/analyze` cuts a worktree and
-a branch, so an unattended run's blast radius is a feature branch, not your working tree.
+#### Nothing asks you; a few things stop
 
-**No session in that chain asks you anything.** `/analyze`, `/analyze-orchestrator`, `/implement`
+**No session in the chain asks you anything.** `/analyze`, `/analyze-orchestrator`, `/implement`
 and `/do` each carry the same precedence ladder — **stated invariant → exit criteria → the plan's
 code blocks → the index's Why and Requirements → the task text or your raw input → surrounding
 convention** — and decide on the first rung that speaks, then write down which rung it was. The
@@ -238,12 +242,34 @@ empty room costs every hour until you wake up. MEASURED: one phase session held 
 `AskUserQuestion` for eight hours over a contradiction its plan's own invariant settled, and the
 two phases depending on it built nothing all night.
 
-Every decision surfaces in a `Decided without asking` block in the terminal, in `todos.md`, and in
-the commit body — so the morning's job is reviewing calls that were made, not answering questions
-that blocked. Stopping is allowed; blocking is not.
+Not asking is not the same as never stopping. **Stopping is allowed; blocking is not.** A stop
+writes down why, reports it (terminal, plan index or ledger, and a push notification where one is
+available), and ends the session. Nothing sits on a prompt waiting for you. There are three stops:
 
-An unattended run stops at the merge. Every phase landing on the branch overnight is the value;
-merging the set is a thirty-second decision in the morning and not worth doing unsupervised.
+- **`/analyze` refuses to launch** when **Open Questions** is non-empty or a phase plan file is
+  missing. Reconciliation decides ordinary forks into **Decisions**, so Open Questions only ever
+  holds a fork where every branch is irreversible (destroying data, rewriting published history,
+  an unrepeatable migration), or a requirement or acceptance criterion no phase can own. The plan
+  is still written and committed; the termination block names the item. You settle it in the
+  morning and launch the printed command. Launching anyway would have N sessions each answering
+  it differently.
+- **A phase stops** on the same kind of irreversible fork. It reports to the ledger; the phases
+  that depend on it wait, and the independent ones keep going.
+- **Landing stops** when a migration will not apply or a merge conflict cannot be resolved
+  safely. `main` is untouched and the branch stays where it is.
+
+Every decision that was made instead surfaces in a `Decided without asking` block in the
+terminal, in `todos.md`, and in the commit body. The morning's job is reviewing calls that were
+made, not answering questions that blocked.
+
+#### The run lands itself
+
+Nothing waits for you at the merge either. The orchestrator lands a multi-phase set with
+`swarm.py land`: merge into `main` in a throwaway worktree, apply and verify migrations, push,
+then delete the set's worktree and branch. A one-phase plan, or a set walked by hand, is landed
+the same way by whichever `/implement` or `/do` finishes the last phase. You wake up to the work
+on `main`, one notification saying it landed or why it stopped, and a list of decisions to
+review — overturning any one of them costs a commit.
 
 ### `/analyze-orchestrator`
 
@@ -528,10 +554,12 @@ Files:
 @tools/toolcore/caller.go
 # → worktree feature/fix-citation-aggregation, the analysis doc,
 #   .workflows/plan/FIX_CITATION_AGGREGATION_PLAN.md, and one phase plan
+# → then opens session 2 in a new tmux window, on its own
 
-# Session 2 — execute
+# Session 2 — execute (launched by session 1; type it yourself only after --no-orchestrate)
 cd ~/.worktrees/<repo>/fix-citation-aggregation
-/implement -f .workflows/plan/FIX_CITATION_AGGREGATION_PLAN.md
+/implement -f .workflows/plan/FIX_CITATION_AGGREGATION_PLAN.md --phase 1
+# → applies the fix, verifies it, merges to main, pushes, deletes the worktree and branch
 ```
 
 Session 1's exploration tokens are thrown away; session 2 pays only for implementation, since
@@ -545,21 +573,23 @@ you're on.
 /analyze <what you want changed, and why>
 # → 4 phases; the index says 1 and 3 depend on nothing, 2 needs 1, 4 needs 2 and 3
 
-# Same session, or any other — drive the whole set
+# Launched for you; type it yourself only after --no-orchestrate, or to restart it
 /analyze-orchestrator -f <SLUG>_PLAN.md
 # → wave 0: phases 1 and 3 spawn together, each in its own tmux window
 #   wave 1: phase 2, once 1 has landed
 #   wave 2: phase 4
 ```
 
-Or just don't type the second command at all — orchestration is the default:
+On a normal night you type only the first command:
 
 ```bash
 /analyze
 <what you want changed, and why>
-# 22:30  plan lands, orchestrator launches itself in its own window
+# 22:30  plan written, orchestrator launches itself in its own window
 # 22:31  wave 0 spawns
-# 07:00  every phase on the branch, waiting on your merge
+# 04:10  last phase verified; the set is merged to main and pushed,
+#        worktrees and branch deleted, one notification sent
+# 07:00  you review "Decided without asking"
 ```
 
 With the [`swarm-deck`](#modsswarm-deck) mod loaded, the coordinator and every child get their
@@ -587,9 +617,12 @@ trust to its worktree, and refuses rather than inventing trust if the repo itsel
 
 ### Large refactor or purge
 
+The same plan set, walked by hand one phase per session. This is what you do after
+`/analyze --no-orchestrate`, or when you want to watch each phase before the next one starts.
+
 ```bash
 # Session 1 — planning
-/analyze
+/analyze --no-orchestrate
 <what you want changed, and why it's worth doing>
 # → worktree feature/<slug>, an analysis doc, .workflows/plan/PURGE_..._PLAN.md, and
 #   .workflows/plan/<slug>/phase-N.md for each phase, reconciled against each other
@@ -605,13 +638,14 @@ cd ~/.worktrees/<repo>/<slug>
 
 **You don't have to remember any of those commands.** Each session ends by printing the next
 one, ready to paste: `/analyze` hands you the `--phase 1` line, and every `/do` or `/implement`
-that finishes a phase hands you the following phase's `/do`. The last phase hands you the merge
-instead. The command is always alone on its own line so it can be selected and pasted — nothing
-follows it there, because a trailing `#` on a slash-command line is read as arguments.
+that finishes a phase hands you the following phase's `/do`. The last phase doesn't hand you a
+merge: it lands the set itself, merging into `main`, pushing, and deleting the worktree and branch.
+The command is always alone on its own line so it can be selected and pasted — nothing follows it
+there, because a trailing `#` on a slash-command line is read as arguments.
 
 Read the plan index's **Decisions** before starting — those are the forks reconciliation settled
 for you, each with the rung that settled it, and they are the morning's review queue. **Open
-Questions** holds only what could not be decided at all. Merge the branch once as a whole.
+Questions** holds only what could not be decided at all, and is empty in the normal case.
 
 ### Task tracking
 
