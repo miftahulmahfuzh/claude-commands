@@ -1059,3 +1059,11 @@ whole run, so an unattended swarm that decided nothing worth listing is either t
 The resume line sits alone so it can be pasted, and nothing follows it on that line — a trailing
 `#` is read as arguments to a slash command, not as a comment. Same shape as `/analyze`, `/do`
 and `/implement`.
+
+**Then push one notification**, where the `PushNotification` tool exists: the landing line
+(`ears-acceptance-criteria landed: 5/5 phases, main @ 74e7885`) or the stop line
+(`<slug> STOPPED: conflict in <file>, main untouched`), plus how many `Decided without asking`
+items wait for review. One per set, at its end, never per phase. The termination block is written
+for someone who opens the window; the notification is for someone who is asleep and should wake to
+know whether the night produced anything. Send it the same way when the set stops at Step 1, the
+write-set gate or Step 5, because a stop that nobody hears about is a stall with extra steps.
