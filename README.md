@@ -30,6 +30,7 @@ be built before it held, and how it compares with agent teams, Gas Town, claude-
 - [Borrowed from pstack](#borrowed-from-pstack)
   - [`engineering-principles`](#engineering-principles)
   - [`create-verification-skill`](#create-verification-skill)
+- [Borrowed from Kiro: EARS acceptance criteria](#borrowed-from-kiro-ears-acceptance-criteria)
 - [Workflows](#workflows)
   - [Bug → fix](#bug--fix)
   - [A plan set as a swarm](#a-plan-set-as-a-swarm)
@@ -502,6 +503,19 @@ Small sets skip the separate verifier and land on the implementers' own evidence
 
 ---
 
+## Borrowed from Kiro: EARS acceptance criteria
+
+From [Kiro specs](https://kiro.dev/docs/specs/concepts). `/analyze` keeps each ask word for word
+in the `R` table and splits it into numbered **EARS** criteria beneath it (`R2.1`: "WHEN
+<trigger> THE SYSTEM SHALL <behavior>", or one of five other patterns). Every Proof journey in a
+phase plan names the criteria it proves. `plan-reconciler` and `/analyze` Step 9 then check, with
+`skills/swarm/ears_trace.py` rather than by reading prose, that every criterion has an owning
+phase and a journey. The `verifier` returns a verdict per criterion instead of per phase, so a
+failure names the promise that broke. Plan sets written before this have no criteria table and
+run as before. Full details: [EARS acceptance criteria →](docs/ears/README.md)
+
+---
+
 ## Workflows
 
 ### Bug → fix
@@ -711,7 +725,7 @@ claude-commands/
 │   ├── create-verification-skill/  # from pstack — + references/
 │   └── …                     # the standalone skills — see docs/other-tools.md
 ├── mods/swarm-deck/          # the /fleet deck mod — loaded from the repo, not synced
-├── docs/                     # session-swarm.md, other-tools.md, architecture-notes.md, design notes
+├── docs/                     # session-swarm.md, other-tools.md, architecture-notes.md, ears/, design notes
 ├── cmd/dlv/                  # Delve helpers for /dbg — copy into your Go project
 ├── sync.sh
 ├── remove_non_commands.sh

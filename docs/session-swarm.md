@@ -340,7 +340,7 @@ reviewer gets a clean context, never the implementer's transcript. And from
 and the other EARS patterns) beside the user's verbatim ask, every Proof journey traces to
 criteria by id, `plan-reconciler` catches a criterion with no owner or no journey (checked by
 `skills/swarm/ears_trace.py`), and the verifier returns a verdict per criterion instead of
-reading prose.
+reading prose ([details](ears/README.md)).
 
 Candidates, ordered by how much they would sharpen analyze → orch → implement:
 1. **Two-stage review: spec first, then quality**
