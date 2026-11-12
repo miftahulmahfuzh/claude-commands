@@ -27,6 +27,7 @@ be built before it held, and how it compares with agent teams, Gas Town, claude-
   - [`task`](#task)
   - [`swarm`](#swarm)
   - [`create-task`](#create-task)
+  - [`audit-and-resolve-swarm-workflows`](#audit-and-resolve-swarm-workflows)
 - [Borrowed from pstack](#borrowed-from-pstack)
   - [`engineering-principles`](#engineering-principles)
   - [`create-verification-skill`](#create-verification-skill)
@@ -494,6 +495,17 @@ sub-issues below Premium, and there the phases are already flat TaskIDs that `/d
 
 ---
 
+### `audit-and-resolve-swarm-workflows`
+The workflow's own health check, run once in a while and after borrowing a method. Three
+reviewers read the execution, planning and swarm + swarm-deck files in parallel. They look for
+rules that conflict, copies that drifted, stale references and duplicated passages. The session
+then re-checks every bug and conflict itself (running `swarm.py` where the claim is about code),
+reports them to the owner with a recommended winner for each, and fixes them. The fixes follow
+one rule: each rule lives once, in the file that owns it (the map is in `CLAUDE.md`), and every
+other copy becomes a pointer. What an audit keeps on purpose goes into its
+`known-intentional.md`, so the next run does not flag it again. The first run (2026-11-12) found
+a plan set that could be landed twice, the first time without its verifier.
+
 ## Borrowed from pstack
 
 Two pieces of this pipeline are adapted from Lauren Tan's
@@ -758,6 +770,7 @@ claude-commands/
 │   ├── create-task/
 │   ├── task/                 # + DESIGN.md, taskcore/task_gh/task_gl/todos/session.py
 │   ├── swarm/                # + swarm.py, plan_graph.py, ears_trace.py, tests/ — the orchestrator's mechanics
+│   ├── audit-and-resolve-swarm-workflows/  # + reviewer briefs, known-intentional.md
 │   ├── engineering-principles/     # from pstack — read by the planners
 │   ├── create-verification-skill/  # from pstack — + references/
 │   └── …                     # the standalone skills — see docs/other-tools.md
