@@ -27,7 +27,7 @@ A collection of **Claude Code slash commands** (`commands/*.md`), **subagents** 
 ### The `.workflows/` contract
 ```
 <package>/.workflows/
-├── todos.md                 # task list with TaskIDs (P{0-3}-{SCOPE}-{ID})
+├── todos.md                 # task list with TaskIDs (P{0-4}-{SCOPE}-{ID})
 ├── plan/
 │   ├── {TaskID}.md          # the plan a task executes (copied here by /implement)
 │   ├── {SLUG}_PLAN.md       # repo-root .workflows/ only — /analyze plan index
@@ -41,7 +41,7 @@ A collection of **Claude Code slash commands** (`commands/*.md`), **subagents** 
 
 ### Who writes implementation plans — **only `/analyze`**
 - `/analyze` → investigation + a complete plan every run (analyzer doc, `<SLUG>_PLAN.md` index with a Requirements table `R1..Rn`, `phase-{N}.md` for N ∈ 1..20) in a worktree it cuts. N=1 launches `/implement -f <PLAN> --phase 1` directly; N>1 launches `/analyze-orchestrator`.
-- `/implement -f .workflows/plan/<SLUG>_PLAN.md` → executes; one task per phase, plan copied unchanged. Refuses an analysis document. On a set's last phase with no swarm coordinator it lands the branch itself (merge to `main` in a throwaway worktree, push, delete worktree and branch).
+- `/implement -f .workflows/plan/<SLUG>_PLAN.md` → executes; one task per phase, plan copied unchanged. Refuses an analysis document. On a set's last phase with no swarm coordinator, `completion-handler` lands it (verifier gate, merge to `main` in a throwaway worktree, push, delete worktree and branch) — for `/do` too. Neither executor merges.
 - `/do <TaskID>` → executes an existing task: adopts its plan file if one exists; builds a brief for EASY/NORMAL without one; runs `/analyze` itself for HARD with no plan (`--no-escalate` prints and stops).
 - Drift from a plan: small → follow intent and note it; large → stop and re-run `/analyze`. Never improvise a replacement plan.
 - Maintenance: `/update-readme`, `/update-todos`, `/reorganize-todos`, `/postmortem`, `/analyze-package`. `/up-version` → semver bump + CHANGELOG.
@@ -49,12 +49,12 @@ A collection of **Claude Code slash commands** (`commands/*.md`), **subagents** 
 Edit one of `/do` or `/implement` → check whether the other needs the parallel change.
 
 ### Subagent pipeline (`/do`, `/implement`)
-**Main context is code-only.** Pipeline: task-locator → (plan exists? adopt it in main context : context-loader → plan-generator brief) → main context edits code → completion-handler → readme-updater → pusher. Don't add doc-reading or git to the main-context step; don't have subagents implement code. `plan-generator` refuses a task that has a plan — plans are executed, never summarized.
+**Main context is code-only.** Pipeline: task-locator → (plan exists? adopt it in main context : context-loader → plan-generator brief) → main context edits code → completion-handler → readme-updater → pusher. Don't add doc-reading or git to the main-context step; don't have subagents implement code. **One owner per rule:** commit safety lives in `agents/pusher.md`, landing and its verifier gate in `agents/completion-handler.md` step 5a, coordinator rules in `analyze-orchestrator.md`; elsewhere, point to them rather than copying. `plan-generator` refuses a task that has a plan — plans are executed, never summarized.
 
 **Both executors are unattended and never ask.** No `[y/N]`, no `AskUserQuestion`, no interactive shell commands. Decide on the precedence ladder: invariant → exit criteria → code blocks → Why/Requirements → task text/note → surrounding convention. The only stop is a fork where every branch is irreversible, and it exits with a report, not a prompt. Decisions are recorded (`completion_report.decisions` → `todos.md`, commit body, swarm ledger `--note`).
 
 ### Swarm planning (`/analyze`)
-All `phase-planner` agents dispatch in one message; for N>1 a single `plan-reconciler` follows. Each planner declares an **Interface Contract** (deletes / renames / creates / requires) — change its shape in `agents/phase-planner.md` and the ledger in `agents/plan-reconciler.md` together. Reconciliation **decides** forks into `## Decisions` (with the rung); `## Open Questions` is only for an unowned requirement or criterion, or an all-irreversible fork. `/analyze` Step 8 and `plan-reconciler` rules 6–7 must stay in step.
+All `phase-planner` agents dispatch in one message; for N>1 a single `plan-reconciler` follows. Each planner declares an **Interface Contract** (deletes / renames / creates / requires) — change its shape in `agents/phase-planner.md` and the ledger in `agents/plan-reconciler.md` together. Reconciliation **decides** forks into `## Decisions` (with the rung); `## Open Questions` is only for a requirement or criterion no phase can own, or an all-irreversible fork. `/analyze` Step 8 and `plan-reconciler` rules 6–7 must stay in step.
 
 Each `R` carries EARS acceptance criteria `R{n}.{m}` in an `### Acceptance Criteria` table beneath the R table; every Proof journey traces criteria by id. **Trace rule:** every criterion needs an owning phase and a tracing journey — owned but untraced → edit the owning plan; unowned → assign it a phase; only a criterion no phase can own goes to Open Questions. `skills/swarm/ears_trace.py <PLAN.md>` checks it (0 clean or legacy, 1 unreadable, 2 gaps). Change the criteria table or the journey format → update `commands/analyze.md`, `agents/phase-planner.md`, `agents/plan-reconciler.md`, `agents/verifier.md` and `ears_trace.py` together. An index with no criteria table is legacy and runs as before.
 
@@ -76,7 +76,7 @@ Owns all git side effects for command-driven work. A new file-mutating command e
 
 ## Conventions
 
-- **TaskID:** `P{0-3}-{SCOPE}-{ID}` (e.g. `P0-DB-A236`), unique across all `todos.md` in a repo. P0 highest.
+- **TaskID:** `P{0-4}-{SCOPE}-{ID}` (e.g. `P0-DB-A236`), unique across all `todos.md` in a repo. P0 highest.
 - **Difficulty:** EASY / NORMAL / HARD. HARD needs a plan file. A `**Difficulty**:` line mentioning HARD at all is HARD; `task-locator` returns it verbatim as `difficulty_line`.
 - **New command:** `commands/<name>.md`, first line `# <Name> Command`; end with `pusher` if it mutates files; follow the `.workflows/` schema; add to README "Available Commands"; `./sync.sh`.
 - **New agent:** `agents/<name>.md` with frontmatter (`name`, `description`, `model`, `color`).

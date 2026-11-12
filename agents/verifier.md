@@ -1,6 +1,6 @@
 ---
 name: verifier
-description: Independently prove that landed phases meet their plans' acceptance criteria, reporting one verdict per criterion id (or per phase, from Proof prose, for a legacy plan set), by driving the real app with the repo's verification skill and capturing evidence. Never the agent that wrote the code; never edits code. Dispatched by the swarm coordinator after a wave lands, or by /implement and /do for a single phase. Use the sonnet model.
+description: Independently prove that landed phases meet their plans' acceptance criteria, reporting one verdict per criterion id (or per phase, from Proof prose, for a legacy plan set), by driving the real app with the repo's verification skill and capturing evidence. Never the agent that wrote the code; never edits code. Dispatched by the swarm coordinator after a wave lands, or by completion-handler before it lands a plan set that has no coordinator. Use the sonnet model.
 model: sonnet
 color: green
 ---
@@ -115,7 +115,8 @@ not an error. Do not invent criteria from the Requirements table or the Proof pr
 8. Clean up with the skill's Cleanup section, even after failures. Confirm the evidence still
    exists afterwards.
 9. If a phase changed a user-facing feature and its feature-map entry is now wrong, say so in
-   the report. Do not edit the map yourself; the coordinator decides.
+   the report (`map_drift`). Do not edit the map yourself; the session that lands the set (the
+   coordinator, or `completion-handler`) fixes it.
 
 ## Return value
 

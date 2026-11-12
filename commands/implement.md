@@ -255,6 +255,9 @@ executed there has to be read identically in both.
 - Large drift (the function is gone, the signature changed, the file was restructured) →
   **stop**. Report what drifted and say `Re-run /analyze to re-plan against the current tree.`
   Improvising a replacement plan here is exactly the thing this command doesn't do.
+- Genuinely balanced between the two → **treat it as large and stop**. Re-planning costs one
+  `/analyze`; applying a plan to a tree it no longer describes costs a wrong change with the
+  plan's authority behind it.
 
 Run the plan's **Verification** commands before reporting success. A failing build or test is a
 failure, not a caveat.
@@ -268,71 +271,36 @@ with its reason. Never report it as passed. A plan written before Proof existed 
 `Manual check` line instead) gets the same treatment: if the repo has a harness, turn the manual
 check into a journey and run it; if not, report it `inconclusive`.
 
-This is your own check of your own work, and it is the weaker witness. In a swarm, the
-coordinator sends a separate `verifier` agent after the wave. Solo, Step 5a sends one before
-landing. Your evidence makes their pass cheaper. It replaces their pass only under the
-small-set rule in Step 5a, so report honestly whether your Proof passed in one go.
+**Quota economy:** if the swarm-deck context block says `Weekly quota N% used ... ECONOMY MODE`,
+run the Proof once, on the cheapest journeys that cover the exit criteria; record paid or live
+journeys (real model calls, `test:live*`) as `inconclusive (quota economy)`, re-run only a journey
+that failed, and dispatch no extra review or research agents. No block means the normal rules;
+never measure usage yourself.
 
-Then dispatch **`completion-handler`**:
+This is your own check of your own work, and it is the weaker witness. In a swarm, the
+coordinator sends a separate `verifier` agent after the wave. Solo, `completion-handler` sends
+one before it lands the set. Your evidence makes their pass cheaper, and replaces it only under
+the small-set rule, so report honestly whether your Proof passed in one go.
+
+Then dispatch **`completion-handler`**.
 
 **`modified_files` must be complete and must be yours.** It becomes the `paths` allowlist that
-`pusher` stages, so a file missing from it is a file left out of the commit, and a file wrongly
-in it is a peer's work committed under your name. When this phase belongs to a plan set, the
-other phases of that set are running **in this same worktree right now** — `git status` here
-shows their half-written files alongside yours, and the plan index's **File ownership** table is
-what tells the two apart. List what you changed, not what is dirty.
+`pusher` commits, so a file missing from it is left out of the commit, and a file wrongly in it is
+a peer's work committed under your name. When this phase belongs to a plan set, other phases may
+be running **in this same worktree right now** — `git status` shows their half-written files
+alongside yours, and the plan index's **File ownership** table is what tells the two apart. List
+what you changed, not what is dirty. A file you changed that the table gives to another phase
+too goes in `shared_paths` as well, and `pusher` commits it through a private index. If that
+happens twice in one set, say so to the coordinator: the split is wrong.
 
-**The index is shared too, so staging carefully is not enough.** `git add <your paths>` then a
-bare `git commit` commits whatever the *shared index* holds — and a peer stages into it between
-your two commands. The safe form is **`git commit -- <explicit paths>`**, which reads the working
-tree for those paths and ignores the rest of the index. MEASURED 2026-10-08 on
-`gotrade-fee-rebuild`: two phases each staged only their own files, each verified `git diff
---cached`, and each still shipped a commit carrying a peer's whole phase under its own message.
-A pathspec commit only sees **tracked** files, so a file you just created needs
-`git add -- <newfile>` first — then still bound the commit: `git commit -m "<msg>" -- <all paths>`.
-
-**When two phases must genuinely edit one file, the pathspec form is not enough either.**
-`git commit -- <paths>` reads the *working tree* for the paths it names, so a peer's uncommitted
-edit to a file you also name rides along inside your commit. MEASURED 2026-10-23 in a scratch
-repo: with a peer's line sitting uncommitted in a shared file, `git commit -- shared.py mine.py`
-committed the peer's line; the same state committed through a private index did not, and left the
-peer's edit untouched in the tree. Give your commit its own index when a file is shared:
-
-```bash
-IDX=.git/index-p{N}
-GIT_INDEX_FILE=$IDX git read-tree HEAD
-GIT_INDEX_FILE=$IDX git add -- <only your paths>
-GIT_INDEX_FILE=$IDX git commit -m "<msg>"   # no pathspec: the private index IS the bound
-rm -f "$IDX"
-```
-
-The File ownership table exists so this stays rare. If two phases are editing one file often
-enough that you reach for this twice, say so to the coordinator — the split is wrong, and
-serializing the two phases costs less than a race run repeatedly.
-
-If you find your work committed under a peer's message, **it is not lost and you must not
-re-implement it** — check the branch first (`git log --format=%h <branch> | while read c; do git
-show --stat --format="" $c | grep -q <your path> && echo $c; done`). Re-implementing work that
-already landed is how a cosmetic mis-attribution becomes a real conflict. Report it and move on;
-nobody rewrites pushed history over a wrong message.
-
-**Never run a tree-wide git command in that worktree, including to clean up your own mistake.**
-`git reset --hard` is banned outright, and so are `git clean -fd`, `git checkout .`,
-`git restore .`, bare `git stash` and `git checkout <branch>`. None of them names a path, so none
-is covered by "stay inside your allowlist" — and `--hard` reverts every tracked file of every
-peer, leaving no recoverable object for anything that was unstaged.
-
-**To undo a commit you just made, use `git reset --soft HEAD~1`** — it unmakes the commit and
-touches nothing in the working tree. To revert your own edits, name them:
-`git checkout -- <each path you own>`.
-
-MEASURED 2026-10-08 on `gotrade-fee-rebuild`: a phase committed, correctly noticed it had swept in
-a peer's files under its own message, and reached for `git reset --hard origin/<branch>` to undo
-it. The detection was right and nothing bad reached the branch — but the cleanup destroyed a
-third phase's twelve files of finished, verified, uncommitted work, and cost a fourth ~86 lines
-of tests. The instinct was correct; only the tool was tree-wide. If you have already run one,
-**stop and tell the coordinator immediately** — orphaned commits are recoverable from `git reflog`
-only until garbage collection, and the coordinator tags them.
+**This session runs no commit, reset, stash or checkout.** `pusher` makes the commit and holds
+every shared-worktree git rule (`agents/pusher.md`). If you find your work committed under a
+peer's message, **it is not lost and you must not re-implement it** — find it on the branch
+(`git log --format=%h <branch> | while read c; do git show --stat --format="" $c | grep -q <your
+path> && echo $c; done`), report it, and move on; nobody rewrites pushed history over a wrong
+message. If a tree-wide command (`git reset --hard` and its kin) has already been run in a shared
+worktree, **stop and tell the coordinator immediately** — orphaned commits are recoverable from
+`git reflog` only until garbage collection, and the coordinator tags them.
 
 **Three checks before the report, because the wave moved while you worked.** Everything above
 protects peers from this phase; these protect this phase from them. All three run *before* the
@@ -364,8 +332,11 @@ report is on the branch before anyone reads it.
 completion_report:
   task_id: "{TaskID}"
   package_path: "{pkg}"
+  method: "/implement"
   status: "success"
   modified_files: ["{file}"]
+  shared_paths: ["{file}"]          # only files the File ownership table also gives a peer
+  proof: {result: "verified-first-pass | verified-after-fix | inconclusive", journeys: N, evidence: "{dir}"}
   drift_notes: ["{if any}"]
   decisions: ["{question} → {choice} ({the rung that decided it})"]
 plan_set:
@@ -375,14 +346,13 @@ plan_set:
 ```
 
 It flips the task to completed, ticks the phase in the index, unblocks the next phase's task,
-then chains `readme-updater` and `pusher`. The main context performs no documentation updates
-and no git operations.
+chains `readme-updater` and `pusher`, and on the set's last phase lands it (Step 5a). The main
+context performs no documentation updates, and its only git is check 1's catch-up above.
 
 ## Step 4b: Report to the Swarm (only if there is one)
 
-A phase run by an orchestrator has a session waiting on it. Report in **both** halves, in this
-order — the file is the record, the message is the notification, and doing only one leaves either
-a silent coordinator or a set nobody can resume:
+A phase run by an orchestrator has a session waiting on it. The ledger write is the report; a
+message, where one can be sent, only makes it arrive sooner.
 
 ```bash
 python3 ~/.claude/skills/swarm/swarm.py find --plan <the phase plan just implemented> --task <its TaskID>
@@ -405,32 +375,16 @@ python3 ~/.claude/skills/swarm/swarm.py report --slug <slug> --phase <N> \
 
 **If the ladder produced any decision, the `--note` is where it goes** — a later phase planned
 against the sentence you overruled, and the ledger is the only place it will look. One clause is
-enough: `anger ceiling off 0→4 per invariant 2`.
+enough: `anger ceiling off 0→4 per invariant 2`. A phase that failed reports `--status failed`
+with the reason the same way.
 
-Check that name is still in `ListAgents` first. Session names are mutable and reused —
-one listed as `agentic-golang-30` renamed itself to `analyze-carry-similarity-branch` a
-minute later — so a name read earlier can deliver this report to an unrelated session. If
-the coordinator is gone, the ledger write above already recorded the outcome: say so and
-stop.
-
-then, **where this session has a `SendMessage` tool**, message the coordinator — `DONE`, the
-TaskID, the commit, and one line on what actually changed. Report `failed` the same way, with the
-reason: a coordinator that is told a phase failed can strand its dependents deliberately, while
-one left guessing stalls the whole set.
-
-**The ledger write above is the report; the message only makes it arrive sooner.** The
-coordinator detects a finished phase from the ledger, git and `todos.md` (`swarm.py watch`), and
-the `swarm-deck` mod wakes it when this session's row goes `finished`. So with no `SendMessage`
-tool, say in one line that the outcome is in the ledger and stop — **never ask the user to relay
-it**. MEASURED 2026-11-11 on `ears-acceptance-criteria`: no session in the set had the tool; all
-four phases ended by asking the owner to "tell the coordinator", and the coordinator, watching
-nothing that moved, sat idle until the owner did.
-
-**Mesh messages** go to peers directly, and only these: `READY` when an Interface Contract item
-a dependent is waiting on now exists, `NEED` before assuming a dependency landed, `WARN` before
-deleting a worktree or branch a peer is sitting in. A message states a fact and never delegates
-work — "I deleted `SortRows`" is a mesh message; "please delete `SortRows` for me" is not, and
-asking a peer to do what this session could not is permission laundering.
+Then, **only where this session has a `SendMessage` tool and the coordinator's name is still in
+`ListAgents`** (names are reused, so a stale one can reach an unrelated session), message it:
+`DONE` or `FAILED`, the TaskID, the commit, one line on what changed. Otherwise say in one line
+that the outcome is in the ledger and stop — **never ask the user to relay it**. The coordinator
+detects a finished phase from the ledger (`swarm.py watch`) and the `swarm-deck` mod wakes it.
+Peer messages follow the mesh rules in `skills/swarm/SKILL.md`: a message states a fact
+(`READY`, `NEED`, `WARN`) and never delegates work.
 
 This step runs **after** `pusher`, because the commit sha is part of the report and an unpushed
 commit is not something another machine can resume from.
@@ -455,134 +409,27 @@ front, that context grows across phases. When the loop ends, print the **All pha
 A single-phase plan finishes in one run either way, and it is the common case Step 5a exists for:
 `/analyze` Step 11 launches exactly this session for it, and nobody else is coming to merge.
 
-## Step 5a: Land It — Merge to Main, Push, Clean Up (only when there is no next phase)
+## Step 5a: Landing (only when there is no next phase)
 
-Runs when `completion_report.plan_set.next_task_id` came back empty — this was the plan set's
-last phase, whether because it is the only one or `--all` just finished the loop. **Remove human
-in the loop is the point of this step**: a session that stops here and prints a `git merge`
-command for someone to paste is the exact failure being fixed — this command does not get to be
-the one exception to its own Autonomy section.
+When this was the plan set's last phase — the only one, or `--all` just finished the loop —
+`completion-handler` lands it in the same dispatch: it checks for a swarm coordinator, runs the
+set's independent verification (the `verifier`, or a recorded skip under the small-set rule or
+quota economy), merges in a throwaway worktree, pushes and cleans up. **This session never
+merges.** Landing lives in one place so it cannot happen twice. Act on its `landing.status`:
 
-**Check whether a coordinator owns this first**, reusing the `swarm.py find` call from Step 4b
-(run it now if this phase had no swarm report to make):
+- `landed` → print the **landed** block, with its `verification` line and every
+  `inconclusive` item.
+- `swarm` → print the **swarm-tracked** block. The coordinator verifies and lands the set.
+- `nothing` → a `--no-worktree` plan on `main`; print the **landed** block without a merge line.
+- `verifier_failed` → **fix it here.** Its `failed_criteria` say which requirement broke and its
+  `repro` lines reproduce it. Fix the code (never the journey), re-run the failing journeys
+  yourself, then dispatch `completion-handler` again with the fix's `modified_files`, the same
+  `plan_set` and `reverify: true`. It commits the fix and verifies once more.
+- `failed` → print the **Landing failed** block with its `reason` or both verdicts. Nothing
+  destructive has happened: `main` is unmodified and the branch and worktree stand.
 
-```bash
-python3 ~/.claude/skills/swarm/swarm.py find --plan <the phase plan just implemented> --task <its TaskID>
-```
-
-- `{"swarm": true, ...}` → **stop here, land nothing.** This phase belongs to a coordinated set,
-  and per `analyze-orchestrator.md`, *the merge belongs to the set's coordinator* — it lands the
-  whole set with `swarm.py land` in its own Step 5. Landing it here too is exactly the double-merge
-  that rule exists to prevent. Skip straight to the **swarm-tracked** Termination block below; this
-  session already reported `done` in Step 4b.
-- `{"swarm": false, ...}` → no coordinator is coming. This session is the only one that will ever
-  land this branch — continue below.
-
-**The small-set rule.** Skip the separate verifier, and land on the implementers' own evidence,
-only when ALL of these hold:
-- the set has **at most 2 phases**;
-- no phase is Difficulty `HARD`;
-- no phase adds a migration or rewrites stored data (schema change, backfill, data fix), since
-  those are the changes that are costly to undo once they reach production;
-- every phase's own Proof came back `verified`, with evidence, in a single pass: no
-  `inconclusive` claim and no journey that failed and then passed after a fix.
-
-The verifier costs a roughly fixed $2–4 per phase. MEASURED 2026-11-03: small mcp-notes sets ran
-about $5/phase before it existed and about $9/phase with it. On a small, reversible, cleanly
-self-proven change, that is most of the bill for little extra assurance. Record a skip as
-`self-verified (small-set rule)` in the ledger and the report, so it is never mistaken for an
-independent check. If any condition fails, dispatch the verifier as usual.
-
-**Quota economy.** The swarm-deck context block carries a line `Weekly quota N% used (resets ...) --
-ECONOMY MODE` once weekly usage is at or over 85%, and the mod then refuses a `verifier` spawn. That
-line is the only source of the number: if no block is present, do not try to measure usage yourself,
-and use the normal rules. In economy mode:
-- No independent verifier agent. Record `self-verified (quota economy, N%)` in the ledger and the report.
-- Each phase's own Proof runs ONCE, on the cheapest journeys that cover its exit criteria. Skip paid or
-  live journeys (real model calls, `test:live*`) and record them as `inconclusive (quota economy)`. A
-  journey that fails is fixed and only that journey re-runs.
-- The coordinator dispatches no extra review or research agents, and states the quota when it holds a set.
-- The coordinator passes `--model sonnet` to every `swarm.py spawn` and `swarm.py launch`. `swarm.py` reads the mod's quota file and defaults to Sonnet in economy mode on its own, but the explicit flag keeps the choice in the command.
-
-**Independent verification first** (unless the small-set rule applies). Dispatch the **`verifier`** agent (`subagent_type:
-"verifier"`) with this worktree, the base the set branched from, the plan index you were handed
-with `-f` (as `plan_index`), and every phase plan of the set. It drives the plans' Proof sections
-with fresh context and returns one verdict per acceptance criterion (`criteria:`) beside the
-per-phase verdicts, or `criteria: legacy` for an index with no Acceptance Criteria table; you
-wrote the code, so your own Proof run does not count as this check. Then:
-- `verified` → land.
-- `failed` → do not land. Fix what it showed (its `repro` lines are the reproduction; its
-  `failed` criterion ids say which requirement broke), re-run the failing journeys yourself,
-  then dispatch the verifier once more. A second `failed` stops without landing: report both
-  verdicts, the failed criterion ids and the evidence dir.
-- `inconclusive` → land, and carry every inconclusive claim and criterion id, with its reason
-  (`no journey` included), into the Termination block, so the gap is visible, not buried.
-- `map_drift` entries → fix those `features/*.md` entries (they are docs, and yours to fix)
-  before landing.
-
-Also skip the verifier when the set changed no runnable behavior (docs, comments, CI config).
-Either skip is stated in the Termination block, with its reason.
-
-**Nothing to land** if the plan index's worktree is `none` and its branch is already `main` (a
-`--no-worktree` plan planned directly against it) — skip to Termination, nothing merges or deletes.
-
-Otherwise, merge in a throwaway worktree cut from the base, the same mechanical shape
-`swarm.py land` uses for a coordinated set — never checking `main` out in *this* worktree, since
-this session's own branch is what is being merged:
-
-```bash
-git fetch origin main --quiet
-BASE=$(git rev-parse --verify origin/main >/dev/null 2>&1 && echo origin/main || echo main)
-TARGET=$(basename "$BASE")
-REPO="$(git rev-parse --git-common-dir)/.."
-LAND="$(mktemp -d)/land-{slug}"
-git worktree add -B "land-{slug}" "$LAND" "$BASE"
-git -C "$LAND" merge --no-ff {branch} -m "merge({slug}): {title}"
-```
-
-- **Merge conflicts** → decide each one on the precedence ladder in **Deciding Without Asking**
-  below, `git add` the resolution, `git -C "$LAND" commit --no-edit`. If a conflict is genuinely
-  undecidable (every resolution irreversible), `git -C "$LAND" merge --abort` and print the
-  **Undecidable** block — `main` is untouched, the branch and its worktree stand as they were.
-- **A binary conflict has no resolution, only a choice of side** — and in this worktree `--ours`
-  is the *base's* side, not yours. Never pick one blind: a committed database or snapshot loses
-  whichever rows the discarded side held. The rehearsal is already here (`$LAND` is throwaway and
-  `main` is untouched until the push), so use it: take the side that holds more, re-apply what
-  the other side had, and **prove the result against both inputs** — two digests, two row counts —
-  before `commit --no-edit`. If you cannot prove it, abort and print **Undecidable** as above:
-  a destroyed record does not come back from a merge.
-- **Clean merge** → continue.
-
-Push, retrying once against a base that moved (mirrors `swarm.py land --step push`):
-
-```bash
-git -C "$LAND" push origin HEAD:"$TARGET" \
-  || { git -C "$LAND" fetch origin "$TARGET" --quiet \
-       && git -C "$LAND" merge --no-edit "origin/$TARGET" \
-       && git -C "$LAND" push origin HEAD:"$TARGET"; }
-```
-
-A push still failing after that retry is fatal to this step, not the session: print the
-**Landing failed** Termination block below, naming what git said, and stop. Nothing destructive
-has happened — `main` is unmodified and `{branch}` and its worktree are exactly as they were.
-
-Only once the push succeeds, clean up — guarded the same way `swarm.py land --step cleanup` is,
-so any earlier stop above leaves the branch standing by construction rather than by remembering
-to:
-
-```bash
-cd "$REPO"                     # never delete the worktree this session is standing in
-git worktree remove --force "$LAND"
-git branch -D "land-{slug}"
-git merge-base --is-ancestor {branch} "origin/$TARGET" && {
-  git worktree remove --force {worktree}
-  git branch -D {branch}
-  git push origin --delete {branch}
-}
-```
-
-Then print the **landed** Termination block below, with the merged commit — never a command for
-a human to run.
+A merge conflict where every resolution is irreversible comes back as `failed` with the fork
+named; print the **Undecidable** block for it instead.
 
 ---
 
@@ -608,16 +455,17 @@ Next — phase {N+1} of {total}, in a new session:
   /do {TaskID of phase N+1}
 ```
 
-**All phases done — landed (Step 5a landed it):**
+**All phases done — landed (completion-handler landed it):**
 ```
 ✓ Plan complete — {SLUG}_PLAN.md ({total} phase(s))
+  Verification: {verified | inconclusive: {ids and reasons} | self-verified (small-set rule) | self-verified (quota economy, N%) | skipped (nothing observable changed)}
   Merged {branch} into {base} @ {merged commit sha}, pushed.
   Worktree and branch {branch} deleted.
 
 Next — nothing: the plan set is on {base}, merged, and cleaned up.
 ```
 
-**All phases done — swarm-tracked (coordinator lands it, Step 5a skipped landing):**
+**All phases done — swarm-tracked (coordinator lands it):**
 ```
 ✓ Phase {N}/{total} complete: {TaskID} — {title} (last phase of this set)
   Reported done to swarm coordinator {coordinator} in Step 4b.
@@ -627,17 +475,17 @@ Next — nothing: the plan set is on {base}, merged, and cleaned up.
 Next — nothing for this session.
 ```
 
-**Landing failed (push rejected after retry, or an undecidable merge conflict):**
+**Landing failed (verifier failed twice, push rejected after retry):**
 ```
-✗ Phase {N}/{total} implemented, but Step 5a could not land it: {what git said}
+✗ Phase {N}/{total} implemented, but not landed: {verifier failed R2.1, R2.3 twice | what git said}
   main/{base} is unmodified. {branch} and its worktree are intact.
-  Land worktree left at: {land worktree path}
+  Evidence: {dir}   Land worktree left at: {land worktree path}
 
-Next — resolve {the conflict, or the push rejection} and finish landing, in the same or a new
+Next — {fix the failing criteria | resolve the push rejection} and finish landing, in a new
 session:
 
-  cd {land worktree path}
-  {git command that still needs to run}
+  cd {land worktree path, or the set's worktree}
+  {git command that still needs to run, or /do {TaskID of the last phase}}
 ```
 
 **Blocked:**
@@ -780,4 +628,5 @@ completion-handler (opus)
     → todos.md, plan index, next phase unblocked
     → readme-updater (opus) → package_readme.md
     → pusher (haiku) → commit + push code and docs together
+    → last phase, no coordinator: verifier (sonnet) → merge, push, clean up
 ```

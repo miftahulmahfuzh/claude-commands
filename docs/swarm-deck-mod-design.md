@@ -84,7 +84,8 @@ directory, so a child that has moved out of its worktree answers *"no swarm owns
 the guard disarms in precisely the session that needed it. Identity travels in the
 environment instead.
 
-A session with no `SWARM_*` pair is **dormant**: no guard, no heartbeat, no rows.
+A session with no `SWARM_*` pair gets no question guard, no heartbeat and no rows. The quota
+economy hooks and the lease check are not swarm features and run in every session.
 
 ## The marshal
 
@@ -95,9 +96,10 @@ on('tool.call', { tool: 'AskUserQuestion' }, guard).catch(failClosed)
 ```
 
 Returns `{ deny }` without calling `next`, so the question never renders and the child reads
-the deny text as the tool result. The text is the precedence ladder verbatim, plus the plan
-index's `## Decisions` section, ending with an instruction to decide and record the decision
-in `completion_report.decisions`.
+the deny text as the tool result. The text is the precedence ladder verbatim, ending with an
+instruction to decide and record the decision in `completion_report.decisions`. It does not
+quote the plan index's `## Decisions`: the child already read them from the index, which is
+where they are inherited from.
 
 It deliberately does **not** call `$.model.complete` to answer the question, even though
 model-call time is exempt from the hook's 10-second budget. The child already holds the plan,

@@ -196,8 +196,9 @@ plan's verification commands, and hands off to `completion-handler`.
 
 It stops after one phase by default so the next starts in a fresh context; `--all` continues in
 one session. Phases stay blocked until their dependencies complete. When the phase it finishes is
-the set's last and no orchestrator owns the set, it lands the branch itself: merge into `main`,
-push, delete the worktree and branch.
+the set's last and no orchestrator owns the set, `completion-handler` lands it: the independent
+`verifier` first, then merge into `main`, push, delete the worktree and branch. That is the one
+place a set without a coordinator is landed, under `/do` as well.
 
 **It writes no plans.** Handed a `*_code_analyzer.md` it refuses and names `/analyze` — an
 analysis describes the code, and filling the gap here is what this command deliberately doesn't
@@ -221,7 +222,7 @@ The plan is done at 22:30 and the work starts at 22:30, with nothing pasted. The
 the same thing:
 
 ```bash
-/analyze --orchestrate --permission-mode bypassPermissions   # the default, spelled out
+/analyze --permission-mode bypassPermissions                 # the default, spelled out
 /analyze --no-orchestrate                                     # plan only, print the command
 /analyze --permission-mode acceptEdits                        # narrow what the launched sessions may do
 ```
@@ -267,7 +268,8 @@ made, not answering questions that blocked.
 Nothing waits for you at the merge either. The orchestrator lands a multi-phase set with
 `swarm.py land`: merge into `main` in a throwaway worktree, apply and verify migrations, push,
 then delete the set's worktree and branch. A one-phase plan, or a set walked by hand, is landed
-the same way by whichever `/implement` or `/do` finishes the last phase. You wake up to the work
+by `completion-handler` when whichever `/implement` or `/do` finishes the last phase: verifier
+first, then the same merge, push and cleanup. You wake up to the work
 on `main`, one notification saying it landed or why it stopped, and a list of decisions to
 review — overturning any one of them costs a commit.
 
@@ -451,10 +453,11 @@ on its own to touch a phase still working, a `done` whose commit is not yet on t
 window id that now belongs to somebody else, or the caller's own window. A failed phase keeps its
 window until asked for by name, because that output is what someone is about to read.
 
-Sessions address each other by name — `ListAgents` lists the peers, `SendMessage` writes to one —
-so a phase session reports to its coordinator when it lands, and warns any peer whose working
-directory is inside a worktree it is about to delete. Messaging is the local nervous system and
-dies with the machine; the committed ledger is the skeleton and does not. `swarm.py verify`
+A phase session reports by writing the ledger (`swarm.py report`), and the coordinator's
+`swarm.py watch` detects it without any message. Where `SendMessage` exists, a message makes the
+report arrive sooner and warns any peer whose working directory is inside a worktree about to be
+deleted. Messaging is local, optional and dies with the machine; the committed ledger is the
+skeleton and does not. `swarm.py verify`
 re-derives every phase's real status from the branch and `todos.md` rather than trusting what the
 ledger claims, and never downgrades a landed phase on absent evidence — on a clone that has not
 fetched yet, that mistake would re-run work that already shipped.
@@ -784,7 +787,7 @@ your-project/
                                            #   paths, and its full suite
 ```
 
-TaskIDs are `P{0-3}-{SCOPE}-{ID}` (e.g. `P0-DB-A236`), unique across every `todos.md` in the
+TaskIDs are `P{0-4}-{SCOPE}-{ID}` (e.g. `P0-DB-A236`), unique across every `todos.md` in the
 repo. Tasks are tagged EASY / NORMAL / HARD; EASY and NORMAL can run from the task description
 alone, HARD requires a plan file — and `/do` gets one by running `/analyze` rather than by asking
 for it.

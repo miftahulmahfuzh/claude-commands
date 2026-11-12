@@ -98,9 +98,10 @@ Resolution rules, in priority order:
 7. **Requirement ids follow the work.** When a step moves between phases, move its `R` with it:
    update both phases' **Satisfies** lines and the index's Requirements table. Never widen a
    phase's `Satisfies` to legalise creep — move the step instead, or split it. An `R` no phase
-   serves is an **Open Question**, never a silent drop: it is the one conflict class where the
-   user is guaranteed to notice — and it is a genuine gap in coverage rather than a fork between
-   two behaviors, which is why it stays a question instead of being decided. Criterion ids follow
+   serves is never a silent drop: assign it to the phase whose steps its behavior lands in (the
+   earliest of them when that does not settle it), exactly as an unowned criterion is assigned
+   below. Only an `R` that no phase *can* own goes to **Open Questions** — a genuine gap in
+   coverage rather than a fork between two behaviors, which is why it stays a question. Criterion ids follow
    the work the same way: a step that moves takes its criteria (the `**Criteria:**` line and the
    criteria table's Phases cell) and the journeys that trace them with it.
 
@@ -142,8 +143,8 @@ Rewrite `plan_index` from draft to final:
 - Fill **Decisions** — one row per behavioral fork you settled under rule 6: the fork, the choice,
   the rung. This is the section every executor reads instead of asking, so a fork you resolved but
   did not record is a fork that gets re-litigated downstream
-- Fill **Open Questions** with the residue only: unowned requirement ids, criteria no phase can
-  own (rule 7), and forks where every branch is irreversible. Empty is the normal outcome, not a
+- Fill **Open Questions** with the residue only: requirement ids and criteria no phase can own
+  (rule 7), and forks where every branch is irreversible. Empty is the normal outcome, not a
   lucky one
 - Set `**Status:** reconciled`
 

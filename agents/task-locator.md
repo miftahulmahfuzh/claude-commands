@@ -19,7 +19,9 @@ You find tasks by TaskID across a repository. Return data only — do not modify
    ```
 3. Validate exactly one match. Zero or many → error (if zero, list 3–5 nearby TaskIDs from the same package code as a hint).
 4. Derive `package_path` from the match: strip leading `./` and trailing `/.workflows/todos.md`. A root-level match → `.`.
-5. Read the matched file and extract the task block (from `### {task_id}` until the next `### ` or section break). Parse:
+5. Read the matched file and extract the task entry: the list item `- [ ] **{task_id}** …` (or
+   `- [x]`), down to the next list item at the same indent or a section break. An older file may
+   hold it as a `### {task_id}` heading block instead; read that the same way. Parse:
    - `priority` — from TaskID prefix (P0–P4)
    - `difficulty` — from `**Difficulty**:` line; missing → error pointing to `/update-todos`
    - `difficulty_line` — that line **verbatim**, resolved value and all. Cards are written by
@@ -29,12 +31,13 @@ You find tasks by TaskID across a repository. Return data only — do not modify
      line contains HARD at all — a card that calls any part of itself hard is a card asking for a
      plan — and never make the caller ask a second time for the text you already read.
    - `type` — from `**Type**:` line (Bug | Feature | Refactor | Docs)
-   - `title` — heading text after the TaskID
+   - `title` — the entry's text after the TaskID
    - `context` — first ~3 lines of body text
    - `plan_file` — from the `**Plan**:` line; resolve it relative to `package_path` and report
      whether the file actually exists on disk. Downstream this decides whether the plan is
      adopted or a brief is built, so an unverified path is worse than none.
-   - `plan_set` — from the `**Plan Set**:` line, if present (the plan index and phase number)
+   - `plan_set` — from the `**Plan Set**:` line, if present: the plan index path exactly as
+     written there, and the phase number
    - `depends_on` — TaskIDs from the `**Depends on**:` line, if present
 6. For every TaskID in `depends_on`, find its own entry and report whether it is complete.
    Return the ones that are not as `depends_on_incomplete`. You are already reading every
@@ -59,7 +62,7 @@ task_metadata:
   title: "{title}"
   context: "{context}"
   plan_file: "{path}" | ""          # only when it exists on disk
-  plan_set: "{SLUG}_PLAN.md phase {N}" | ""
+  plan_set: {file: "{the plan index path, verbatim}", phase: N} | ""
   depends_on: ["{TaskID}"]
   depends_on_incomplete: ["{TaskID}"]   # the subset of depends_on that is not complete
 ```

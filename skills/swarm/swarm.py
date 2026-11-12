@@ -355,7 +355,12 @@ def waves(ledger):
 
 
 def runnable(ledger):
-    """Pending phases whose every dependency is `done` -- what to spawn right now."""
+    """Pending phases whose every dependency is `done` -- what to spawn right now.
+
+    In isolated mode a dependency must also be integrated: the dependent's worktree is cut
+    from the integration branch, and a dependency still on its own branch is not in it.
+    `integrated` is stamped by `verify`; a ledger it has not stamped counts as integrated.
+    """
     phases = {p["n"]: p for p in ledger.get("phases", [])}
     out = []
     for n in sorted(phases):
@@ -363,7 +368,7 @@ def runnable(ledger):
         if phase["status"] != "pending":
             continue
         deps = [phases[d] for d in phase["depends_on"] if d in phases]
-        if all(d["status"] == "done" for d in deps):
+        if all(d["status"] == "done" and d.get("integrated", True) for d in deps):
             out.append(n)
     return out
 
@@ -395,13 +400,17 @@ def resolve(repo, ref):
     return None, None
 
 
-def commit_state(repo, sha, branch):
+def commit_state(repo, sha, branch, phase_branch=None):
     """Whether a recorded commit actually landed -- or whether this box cannot tell.
 
     Three outcomes, and the third is the one that matters. A commit missing from the
     object store is not evidence of anything: it was authored on another machine and
     never pushed, or pushed to a branch this clone has not fetched. Calling that
     `pending` would send the orchestrator to re-run a phase that already shipped.
+
+    A fourth, `unintegrated`, exists for isolated mode: the phase committed on its own
+    `phase-<N>-<slug>` branch and the integrator has not merged it into the set branch
+    yet. That phase is finished; calling it `pending` would respawn it.
     """
     # `cat-file -e` prints NOTHING on success, and git() returns "" for that -- falsy.
     # Testing truthiness reported every commit that DOES exist as unfetched, which made
@@ -414,7 +423,16 @@ def commit_state(repo, sha, branch):
         return "unknown", f"branch {branch} does not resolve here"
     if git("merge-base", "--is-ancestor", sha, name, cwd=repo) is not None:
         return "done", f"commit {sha[:8]} is on {name}"
+    own, _ = resolve(repo, phase_branch) if phase_branch else (None, None)
+    if own and git("merge-base", "--is-ancestor", sha, own, cwd=repo) is not None:
+        return "unintegrated", f"commit {sha[:8]} is on {own}, not yet integrated into {name}"
     return "pending", f"commit {sha[:8]} exists but is not on {name}"
+
+
+def phase_branch(ledger, n):
+    """The branch an isolated-mode phase commits on (analyze-orchestrator step 4)."""
+    slug = ledger.get("slug")
+    return f"phase-{n}-{slug}" if slug else None
 
 
 def verify(repo, ledger):
@@ -428,11 +446,16 @@ def verify(repo, ledger):
     branch = ledger.get("branch")
     findings = []
     for phase in ledger.get("phases", []):
-        derived, evidence = "pending", []
+        derived, evidence, integrated = "pending", [], True
 
         sha = phase.get("commit")
         if sha:
-            derived, note = commit_state(repo, sha, branch)
+            derived, note = commit_state(repo, sha, branch,
+                                         phase_branch(ledger, phase["n"]))
+            if derived == "unintegrated":
+                # Finished, on its own branch. The ledger's word stands; what is missing
+                # is integration, which `runnable` and `landable` hold out for.
+                integrated, derived = False, "unknown"
             evidence.append(note)
 
         task = phase.get("task_id")
@@ -451,8 +474,18 @@ def verify(repo, ledger):
         # that already shipped -- duplicating work and conflicting with itself.
         if derived == "unknown":
             derived = phase["status"]
-            evidence.append("kept the ledger's word: no local evidence either way")
+            if integrated:
+                evidence.append("kept the ledger's word: no local evidence either way")
 
+        # A `failed` mark is a verdict (the coordinator's, or the verifier's through it),
+        # not a claim about git, so git cannot overturn it. Deriving it away un-stalled a
+        # failed phase's dependents on the next round. A respawn or a new report clears it.
+        if phase["status"] == "failed" and derived != "failed":
+            evidence.append(f"kept failed: git alone says {derived}, and a failure is "
+                            "cleared by a respawn or a new report, not by verify")
+            derived = "failed"
+
+        phase["integrated"] = integrated
         if derived != phase["status"]:
             findings.append({"phase": phase["n"], "ledger": phase["status"],
                              "derived": derived, "evidence": evidence})
@@ -810,8 +843,8 @@ def reap_verdict(phase, entry, repo, ledger, include_failed=False, force=False):
                        "read; --include-failed closes it (the log is saved either way)")
     sha, branch = phase.get("commit"), ledger.get("branch")
     if status == "done" and sha and branch:
-        state, note = commit_state(repo, sha, branch)
-        if state != "done":
+        state, note = commit_state(repo, sha, branch, phase_branch(ledger, phase["n"]))
+        if state not in ("done", "unintegrated"):     # on its own branch is finished too
             return False, f"reports done but {note} -- verify before closing its window"
     return True, f"{status}, verified"
 
@@ -1180,11 +1213,13 @@ def cmd_verify(args):
             data["updated"] = now()
             data["verified_at"] = now()
         ledger = load(path)
+        verify(repo, ledger)            # re-stamp `integrated`, which runnable reads
     print(json.dumps({"swarm": True, "slug": slug, "disagreements": findings,
                       "applied": bool(args.apply and findings),
                       "runnable_now": runnable(ledger), "stalled": stalled(ledger),
                       "phases": [{k: p.get(k) for k in
-                                  ("n", "title", "status", "derived", "commit", "task_id")}
+                                  ("n", "title", "status", "derived", "integrated",
+                                   "commit", "task_id")}
                                  for p in ledger.get("phases", [])]}, indent=2))
     return 0
 
@@ -1954,6 +1989,9 @@ def landable(repo, ledger):
                 f"phase {phase['n']} derives as {phase.get('derived')} "
                 f"(ledger says {phase['status']}): " + "; ".join(phase.get("evidence") or
                                                                  ["no evidence"]))
+        elif phase.get("integrated") is False:
+            blockers.append(f"phase {phase['n']} is not integrated: "
+                            + "; ".join(phase.get("evidence") or ["no evidence"]))
     if not ledger.get("branch"):
         blockers.append("the ledger records no branch to merge")
     return blockers
@@ -2162,7 +2200,9 @@ def cmd_land(args):
 
     # ------------------------------------------------------------------- cleanup
     here = os.getcwd()
-    if inside(here, land) or (wt and inside(here, wt)):
+    phase_trees = phase_worktrees(repo, slug)
+    if inside(here, land) or (wt and inside(here, wt)) or \
+            any(path and inside(here, path) for _, path in phase_trees):
         out.update({"ok": False, "reason": f"cwd {here} is inside a worktree this step "
                                            "deletes",
                     "hint": f"cd {repo} first -- a session cannot outlive its own cwd"})
@@ -2192,6 +2232,18 @@ def cmd_land(args):
         if not args.keep_remote:
             plan.append(("delete the remote branch",
                          ("push", "origin", "--delete", branch)))
+    # Isolated mode leaves one worktree and one `phase-<N>-<slug>` branch per phase. Each
+    # goes only once its own branch is on the base, the same proof the set branch needs.
+    kept = []
+    for name, path in phase_trees:
+        if git_run("merge-base", "--is-ancestor", name, base, cwd=repo)[0] != 0:
+            kept.append(name)
+            continue
+        if path and Path(path).is_dir():
+            plan.append((f"remove {name}'s worktree", ("worktree", "remove", "--force", path)))
+        plan.append((f"delete {name}", ("branch", "-D", name)))
+    if kept:
+        out["kept_unmerged_phase_branches"] = kept
 
     if args.dry_run:
         out.update({"ok": True, "merged_into_base": merged,
@@ -2221,6 +2273,20 @@ def cmd_land(args):
                 "cleaned": done, "failed": failed})
     print(json.dumps(out, indent=2))
     return 0
+
+
+def phase_worktrees(repo, slug):
+    """[(branch, worktree path or None)] for every local `phase-<N>-<slug>` branch."""
+    pattern = re.compile(rf"phase-\d+-{re.escape(slug)}")
+    names = (git("for-each-ref", "--format=%(refname:short)", "refs/heads/", cwd=repo)
+             or "").split()
+    paths, current = {}, None
+    for line in (git("worktree", "list", "--porcelain", cwd=repo) or "").splitlines():
+        if line.startswith("worktree "):
+            current = line[len("worktree "):]
+        elif line.startswith("branch refs/heads/"):
+            paths[line[len("branch refs/heads/"):]] = current
+    return [(n, paths.get(n)) for n in names if pattern.fullmatch(n)]
 
 
 def plan_matches(needle, recorded, slug):
@@ -2669,6 +2735,49 @@ def selftest():
     phases[2]["status"] = "failed"
     eq("a failure does not block its sibling", runnable(ledger), [2])
     eq("but it strands everything downstream", stalled(ledger), [4])
+    phases[0]["integrated"] = False
+    eq("a done dependency still on its own branch holds its dependents back",
+       runnable(ledger), [])
+    phases[0].pop("integrated")
+
+    # A `failed` mark is a verdict; git cannot overturn it. Deriving it to `pending`
+    # (no commit) or `done` (commit on the branch) un-stalled its dependents.
+    marked = {"branch": "feature/nope", "phases": [
+        {"n": 1, "status": "failed", "commit": None, "depends_on": [], "task_id": None}]}
+    eq("verify never derives a failed phase away", verify("/nonexistent-repo", marked), [])
+    eq("and stamps it failed", marked["phases"][0]["derived"], "failed")
+
+    # Isolated mode, in a real repo: a phase commit on `phase-<N>-<slug>` is finished but
+    # not integrated -- not pending (that respawns it) and not landable (that ships
+    # a set branch without it).
+    with tempfile.TemporaryDirectory() as tmp:
+        def sh(*a):
+            subprocess.run(("git",) + a, cwd=tmp, capture_output=True, check=True)
+        sh("init", "-q", "-b", "main")
+        sh("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty",
+           "-m", "base")
+        sh("branch", "feature/iso")
+        sh("checkout", "-q", "-b", "phase-1-iso")
+        sh("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty",
+           "-m", "phase 1")
+        sha = git("rev-parse", "HEAD", cwd=tmp)
+        iso = {"slug": "iso", "branch": "feature/iso", "phases": [
+            {"n": 1, "status": "done", "commit": sha, "depends_on": [], "task_id": None},
+            {"n": 2, "status": "pending", "commit": None, "depends_on": [1],
+             "task_id": None}]}
+        eq("an unintegrated phase keeps its done", verify(tmp, iso), [])
+        eq("but is stamped not integrated", iso["phases"][0]["integrated"], False)
+        eq("so its dependent is not runnable yet", runnable(iso), [])
+        eq("and the set is not landable", any("not integrated" in b
+                                               for b in landable(tmp, iso)), True)
+        eq("cleanup finds the phase branch", [n for n, _ in phase_worktrees(tmp, "iso")],
+           ["phase-1-iso"])
+        eq("and no other set's", phase_worktrees(tmp, "other"), [])
+        sh("checkout", "-q", "feature/iso")
+        sh("merge", "-q", "--ff-only", "phase-1-iso")
+        eq("once integrated it is done and integrated", verify(tmp, iso), [])
+        eq("integrated", iso["phases"][0]["integrated"], True)
+        eq("and its dependent runs", runnable(iso), [2])
 
     # --- discovery must answer for the index, not only for the phase bodies -------
     # Both directions are failures with the same shape: a session acting on a wrong

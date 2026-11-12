@@ -11,9 +11,10 @@ skill is how a coordinator session drives that, and how a phase session reports 
 
 Two channels, and keeping them apart is what makes the whole thing work:
 
-- **Messaging is the nervous system, and it is local.** `ListAgents` sees sessions on this
-  machine (plus cloud ones); `SendMessage` addresses them by name. It is live, cheap, and dies
-  with the machine.
+- **Messaging is the fast path, and it is local.** `ListAgents` sees sessions on this machine
+  (plus cloud ones); `SendMessage` addresses them by name. It is live, cheap, dies with the
+  machine, and may not exist in a session at all — so **detection never depends on it**: a
+  phase's ledger write is its report, and `swarm.py watch` finds it without any message.
 - **Git is the skeleton, and it is global.** The durable ledger is committed, so another laptop
   can pick the set up hours later with nothing but a `git pull`.
 
@@ -171,15 +172,9 @@ The human form prints one line for it too: `artifact classes: declared in
 
 `integrator` runs the FULL suite after merging a wave, and which suite that is cannot be baked
 into a global agent: a hardcoded `npm test` waves through a repo whose CI is four bespoke guards
-plus a typecheck and a build (`skills/task/task_gh.py:1737 workflow_gate()`). It walks a ladder —
-the one `skills/task/DESIGN.md:239-242` already established for a session landing its own work,
-with the repo's own CI put at the top:
-
-1. `.workflows/swarm.json` → `suite.steps` — the repo saying it outright
-2. `.github/workflows/*.yml` → every `run:` step of every push/pull_request job, in order
-3. `package.json` scripts (`test`, `typecheck`, `build`, `lint`) or a `Makefile` `test` target
-4. the language default — `pytest`, `cargo test`, `go test ./...`
-5. nothing — report `suite: none` and say in the report that the wave merged unverified
+plus a typecheck and a build. It walks a ladder from `.workflows/swarm.json` → `suite.steps` (the
+repo saying it outright) down to `suite: none`; **`agents/integrator.md` step 4 owns that ladder**,
+so read it there rather than from a copy.
 
 `suite.setup` and `suite.notes` are where a repo's hard-won worktree knowledge goes, because an
 integration worktree is not the main checkout and a suite that silently tests the wrong tree is
@@ -396,8 +391,9 @@ Three consequences the swarm depends on:
 - **Re-read `ListAgents` immediately before sending.** Never send to a name captured earlier in
   the session; a cached name is a guess about the present.
 - **The ledger records `coordinator_session_id` alongside the name.** Before reporting, confirm
-  the name still resolves; if it is gone, tell the user rather than sending a phase report to
-  whichever session now happens to hold that name.
+  the name still resolves; if it is gone, the ledger write already holds the report — say so
+  and stop, rather than sending it to whichever session now holds that name or asking the user
+  to relay it.
 
 ## The ledger, in two halves
 
@@ -435,7 +431,7 @@ it.
 
 `launch` opens one named session in a new tmux window, with no ledger required — the same
 mechanics as `spawn`, minus the phase. It exists so a session can hand off without a human in the
-middle: `/analyze --orchestrate` uses it to start the orchestrator the moment the plan exists,
+middle: `/analyze` uses it (its Step 11) to start the orchestrator the moment the plan exists,
 rather than leaving a pasteable command on screen until somebody wakes up.
 
 ```bash
@@ -497,9 +493,10 @@ Then, until nothing is runnable and nothing is live:
 
 1. **Spawn every runnable phase, in one round.** `spawn --slug <slug> --phase N` opens a detached
    tmux window (`-d`, so it never steals the window the user is watching) running
-   `/implement -f <plan> --phase N`. Every phase of the set gets the **same worktree** — phase
-   N+1 has to build against phase N's code, so one worktree per phase would have each phase
-   planning against a tree the others' work never reached. See **One worktree, many writers**.
+   `/implement -f <plan> --phase N`. By default each phase of a wave gets its own worktree, cut
+   from the integration branch at the start of the wave, and passed with `--cwd`; without
+   `--cwd` it falls back to the set's one shared worktree. `analyze-orchestrator.md` step 4 owns
+   that choice and how the worktrees are cut. See **Worktrees and commits**.
 2. **Arm the watch before the turn ends:** `swarm.py watch --slug <slug>` under `Monitor`
    (re-armed on expiry until the set lands). It prints a line for each phase whose ledger or git
    derivation moved, each window that closed on unfinished work, and each shell running past
@@ -538,123 +535,37 @@ runnable**. A failure in one branch of the DAG never pauses the branches it does
 is never a reason to ask whether to continue: halting a set on one failed phase turns a partial
 night into an empty one.
 
-### One worktree, many writers
+### Worktrees and commits
 
-Every phase of a set runs in the worktree `/analyze` cut for it, concurrently. That is the right
-design — a phase must build against its dependencies' code — but it means `git status` in that
-tree shows **other phases' half-written files** alongside the running phase's own, with nothing
-in git to mark which is which.
+Isolation is the default: `analyze-orchestrator.md` step 4 cuts one worktree per phase from the
+integration branch, and the `integrator` merges each wave before the next is cut. Phases in one
+wave are independent by construction, and the write-set gate proves it. A set run without
+`--cwd` shares one worktree instead, and then `git status` there shows other phases'
+half-written files beside the running phase's own.
 
-So a phase that stages the tree as a whole commits its siblings' unfinished work under its own
-name, pushes it, and reports a green test run against a tree that will never exist again. The
-plan index's **File ownership** table is the only thing that separates them, and it is prose, not
-a lock.
+Either way, **committing safely is `pusher`'s job, and its rules live in `agents/pusher.md`**:
+an explicit path allowlist, a commit bounded by pathspec (or a private index for a file two
+phases share), and no tree-wide git command (`reset --hard`, `clean`, `checkout .`,
+`restore .`, bare `stash`, `checkout <branch>`), ever. `/implement` and `/do` report
+`modified_files`; `completion-handler` turns that into the allowlist.
 
-The flow closes this: `/implement` and `/do` report `modified_files`, `completion-handler` turns
-that into a `paths` allowlist, and `pusher` stages that list — never `git add .`, `git add -A` or
-`git commit -a`. A coordinator checks it held by reading each commit's file list against the
-ownership table before believing the phase's report.
+What is the coordinator's own:
 
-MEASURED 2026-10-06 on `build-promotion-path`: phases 1, 2 and 3 ran at once in one worktree.
-Phase 1 committed while phase 3's partly-written `lab/prereg.py`, `commands/lab.py` and new tests
-sat dirty beside it; phase 3 later committed while phase 2's `research.py` was mid-edit. Both
-scoped their stages and nothing was contaminated — but at the time nothing *required* it, so a
-clean set was two independent correct guesses. The allowlist exists to make it a property of the
-flow instead.
-
-One thing the allowlist does **not** license: never `git stash`, `git restore`, `git checkout --`
-or `git clean` a path outside it to tidy the tree first. Everything outside your allowlist is a
-peer's uncommitted work, and discarding it is the only failure in this area that nothing can
-recover — the commit is still in history, but their edits are simply gone.
-
-### The index is shared too — commit by pathspec, never by index
-
-`git add <explicit paths>` is **not** sufficient, and believing it is cost this workflow three
-mis-attributed commits in one morning. The worktree's **index is shared as well as its working
-tree**: you stage your files, a peer stages theirs into the same index seconds later, and
-whichever session runs `git commit` next commits *both*. Per-path staging buys you nothing,
-because the race is between your `add` and your `commit`, not inside either one.
-
-> **`git commit -- <explicit paths>` is the only safe form.** A pathspec-limited commit takes its
-> content from the working tree for exactly those paths and ignores the rest of the index.
-
-**One sharp edge: a pathspec commit only sees TRACKED files.** A file your phase just created is
-untracked, so `git commit -- <newfile>` silently leaves it out, and the window reopens for it. The
-safe shape for a new file is to `git add` it and then *still* bound the commit by pathspec:
-
-```bash
-git add -- <newfile>                              # the only thing that must touch the index
-git commit -m "<message>" -- <every path, new and old>
-```
-
-The pathspec on the **commit** is what bounds the result. A peer staging into the index between
-those two commands then changes nothing: only your paths go in either way.
-
-MEASURED 2026-10-08 on `gotrade-fee-rebuild`, independently reported by two phases:
-
-- Phase 2 re-implemented 13 files, staged exactly those 13 by name, used no bare-path verb
-  anywhere — and phase 4's session committed moments later. `86ae23f` went out with phase 4's
-  message *"feat(sim): the bracket path can express and charge Gotrade's real fees"* carrying
-  **17 files, none of them `sim/`**: phase 2's 13, phase 3's `benchmark.py` and
-  `test_paper_benchmark.py`, plus bookkeeping.
-- Phase 3 staged its three paths, confirmed `git diff --cached` showed exactly those three, then
-  ran `git commit -m` with no pathspec. `836d1a5` went out under phase 3's message carrying
-  **phase 4's entire bracket path** — `sim/charges.py`, `rules.py`, `sizing.py`, `lifecycle.py`,
-  `split_adjust.py`, `__init__.py`, `paper/bracket.py` and six test files.
-
-Both verified their staged set correctly. Both were still wrong, because the thing they verified
-had changed by the time they committed.
-
-**The damage is attribution, not loss — so do not "fix" it by rewriting history.** Every file is
-committed and on the branch; only the commit messages lie, and the set merges as one branch where
-a message is cosmetic. Rewriting a pushed commit in a worktree that five sessions are actively
-pushing to is strictly worse than the wrong message. Report it, record it in the ledger, move on.
-
-**The coordinator's consequence:** a commit's file list may be a *peer's* work under this phase's
-name, so reading it against the ownership table tells you a phase's work landed **somewhere**, not
-that it landed in its own commit. When a file is missing from the phase that owns it, search the
-whole branch for it (`git log --format=%h <branch> | while read c; do git show --stat --format="" $c | grep -q <path> && echo $c; done`)
-**before** concluding it was lost — a phase told "your work vanished" will re-implement work that
-is already on the branch, which is how a wrong message turns into a real conflict.
-
-### Never run a tree-wide git command in a shared worktree
-
-The rule above is phrased per-path, and that phrasing left a hole wide enough to lose a phase
-through: **the most destructive commands take no path at all.** `git reset --hard` does not read
-as "a path outside my allowlist", because it names no path — it reverts *every tracked file of
-every peer*, and for unstaged changes it leaves no object behind. There is no reflog entry, no
-dangling blob, no `fsck --lost-found` to recover from. The work is simply gone.
-
-**Banned outright while any peer shares the worktree, no exceptions and no path form:**
-
-| Never | Because | Do this instead |
-|---|---|---|
-| `git reset --hard` | reverts every tracked file in the tree, all peers included; unstaged work leaves no recoverable object | `git reset --soft HEAD~1` to undo your own commit — it moves HEAD and touches **nothing** in the working tree |
-| `git clean -fd` / `-fdx` | deletes every untracked file, including peers' new source files | delete your own files by name |
-| `git checkout .` / `git checkout -- .` / `git restore .` | the bare `.` is the whole tree | `git checkout -- <each path you own>` |
-| `git stash` (bare) / `git stash pop` | stashes the whole tree and the stack is shared across worktrees | `git stash push -u -m "<phase>-<unique-tag>"`, recover with `apply <sha>` |
-| `git checkout <branch>` / `git switch` | moves every peer's tree to another commit | never; the set has one branch by design |
-
-**The trap is that the reach for one of these is almost always correct in intent.** MEASURED
-2026-10-08 on `gotrade-fee-rebuild`: phase 1 committed, noticed its commit had swept in phase 3's
-`benchmark.py` and `test_paper_benchmark.py` under phase 1's own message — the contamination this
-section exists to prevent, caught correctly by the phase itself — and reached for
-`git reset --hard origin/<branch>` to undo it. The guard worked: neither bad commit ever reached
-the branch. But the *cleanup* destroyed phase 4's twelve files of finished, verified, uncommitted
-work in the same instant, and cost phase 3 ~86 lines of tests it had to be told to recover from a
-tag. One session's correct instinct, executed tree-wide, took out two uninvolved peers.
-
-So: **to undo your own commit, `git reset --soft HEAD~1`.** It does exactly what the instinct
-wants — unmakes the commit, leaves every byte in the tree — and it is safe with twelve writers
-present. `--mixed` (the default, no flag) is also tree-safe: it unstages but edits nothing.
-`--hard` is the only one that writes to the working tree, and it is never the right tool here.
-
-**If one has already been run, the coordinator's first move is to preserve, not to repair.**
-`git reflog` names every commit the reset orphaned; tag each one immediately —
-`git tag -f rescue/reset-casualty-<sha> <sha>` — *before* anything else, because orphaned commits
-are gc-able and tags make them permanent. Then diff each tag against the branch to find out what
-is actually missing, and tell the owning phase what to recover. Do not restore a peer's files
-yourself: the phase owns them and is the better judge of which version it wanted.
+- **Read each commit's file list against the plan index's File ownership table** before believing
+  a phase's report (`git show --stat --format="" <sha>`). In a shared worktree it tells you a
+  phase's work landed *somewhere*, not that it landed in its own commit: when a file is missing
+  from the phase that owns it, search the whole branch
+  (`git log --format=%h <branch> | while read c; do git show --stat --format="" $c | grep -q <path> && echo $c; done`)
+  **before** concluding it was lost. A phase told "your work vanished" re-implements work that is
+  already on the branch. A wrong commit message is cosmetic; never rewrite pushed history to fix
+  one.
+- **If a tree-wide command has already been run, preserve before you repair.** `git reflog` names
+  every commit the reset orphaned; tag each one at once —
+  `git tag -f rescue/reset-casualty-<sha> <sha>` — because orphaned commits are gc-able and tags
+  make them permanent. Then diff each tag against the branch, and tell the owning phase what to
+  recover. Do not restore a peer's files yourself. MEASURED 2026-10-08 on `gotrade-fee-rebuild`:
+  one phase's `git reset --hard` destroyed another's twelve finished, uncommitted files, and the
+  tags were how the rest was recovered.
 
 ### Spawn children on the coordinator's own permission mode
 
@@ -677,7 +588,8 @@ you do not have, stop and say so.
 ## Landing the set
 
 **Land only verified work.** Every phase needs a wave verdict of `verified`, `inconclusive`
-(with its reason carried into the landing report), or `self-verified (small-set rule)`. A phase whose wave verdict is `failed`, and
+(with its reason carried into the landing report), `self-verified (small-set rule)`, or
+`self-verified (quota economy, N%)`. A phase whose wave verdict is `failed`, and
 not re-verified after a fix, keeps the set off `main`. Green tests do not mean the feature works.
 
 The loop above ends with N phases on a branch, which is worth nothing until it is on `main`.
@@ -811,7 +723,7 @@ refuses and tells the user to open it once by hand. `--no-trust` opts out.
 ## The mesh
 
 Phase sessions may message each other directly, not only the coordinator. Kept useful rather than
-chatty by restricting it to four message kinds — everything else goes to the coordinator.
+chatty by restricting it to five message kinds — everything else goes to the coordinator.
 
 | Kind | When | Body |
 |---|---|---|
@@ -822,9 +734,11 @@ chatty by restricting it to four message kinds — everything else goes to the c
 | `CLAIM` | **before** taking a step a live peer owns | which step, which set, and that you are doing it now |
 
 Three hard rules. **A message states a fact; it never delegates work** — "I deleted `SortRows`"
-is a mesh message, "please delete `SortRows` for me" is not. **`WARN` before destroying shared
-ground**: a session removing a worktree tells every peer whose cwd lives inside it, because their
-working directory is about to stop existing.
+is a mesh message, "please delete `SortRows` for me" is not, and asking a peer to do what your own
+permissions denied is permission laundering. **Never ask a peer for a decision or block on a
+reply** — decide on the ladder, or report. **`WARN` before destroying shared ground**: a session
+removing a worktree tells every peer whose cwd lives inside it, because their working directory
+is about to stop existing.
 
 **`CLAIM` goes before the act, and its whole value is the ordering.** The step this exists for is
 the **merge**: a set's coordinator owns it (its Step 5), so any other session taking it — because
@@ -875,8 +789,7 @@ that converts one stalled phase into a stalled set.
 
 ## Reporting, from a phase session
 
-Both halves, in this order. The file is the record; the message is the notification. Doing only
-one leaves either a silent coordinator or an unrecoverable set.
+The ledger write is the report; a message, where one can be sent, only makes it arrive sooner.
 
 ```bash
 python3 ~/.claude/skills/swarm/swarm.py find --plan .workflows/plan/<slug>/phase-2.md
@@ -919,8 +832,8 @@ ordinary `/do` outside any swarm is unaffected.
 own index — the `PLAN.md` that `spawn` writes onto every child's command line
 (`/implement -f <...>/orchestration/<slug>/PLAN.md --phase 3`). FIXED 2026-09-25, having been
 the mirror image of the basename bug above: too *tight* a match, answering `swarm: false` for
-the one path every child is guaranteed to hold. Since `/implement` auto-lands a set's last
-phase when no coordinator owns it, that answer sent the final phase to merge a set its live
+the one path every child is guaranteed to hold. Since a set's last phase auto-lands
+(`completion-handler` step 5a) when no coordinator owns it, that answer sent the final phase to merge a set its live
 coordinator was already landing — two merges of one set on `main`, caught only because the
 coordinator warned the child by hand. An index hit names the set but not which phase you are,
 so it returns `"phase": null` with a `phase_note`; pass `--phase N` — your own number, from

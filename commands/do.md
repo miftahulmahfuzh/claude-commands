@@ -298,14 +298,15 @@ cleanup sections and run each journey. Keep the evidence paths for the report. A
 journey is a failure like a red test: fix the code, never the journey. One you cannot run is
 `inconclusive` with its reason, never a pass. A brief or plan with no Proof, in a repo with a
 harness, still gets one journey: the change's own user-visible effect, driven once.
-`/do` tasks are small, so this self-check is the whole verification. There is no separate
-verifier agent on this path, to keep it cheap. Say `self-verified` in the report so nobody
-mistakes it for an independent check.
-**Quota economy:** if the swarm-deck context block says `Weekly quota N% used ... ECONOMY MODE`, run the
-Proof once on the cheapest journeys that cover the exit criteria, record paid/live journeys (real model
-calls, `test:live*`) as `inconclusive (quota economy)`, re-run only a journey that failed, and dispatch no
-extra agents. It also passes `--model sonnet` to every `swarm.py spawn` and `launch`. No block means
-normal rules; never measure usage yourself.
+For a standalone task this self-check is the whole verification — no separate verifier, to keep
+it cheap — so say `self-verified` in the report and nobody mistakes it for an independent check.
+On a plan set's **last** phase, `completion-handler` runs the set's independent verification
+before it lands it, exactly as it does for `/implement` (Step 4).
+**Quota economy:** if the swarm-deck context block says `Weekly quota N% used ... ECONOMY MODE`,
+run the Proof once, on the cheapest journeys that cover the exit criteria; record paid or live
+journeys (real model calls, `test:live*`) as `inconclusive (quota economy)`, re-run only a journey
+that failed, and dispatch no extra review or research agents. No block means the normal rules;
+never measure usage yourself.
 
 **On both routes the main context does NOT:** read `todos.md`, `package_readme.md` or
 `analysis_report.md` · read documentation · update `todos.md` · run git · write plans.
@@ -313,12 +314,20 @@ normal rules; never measure usage yourself.
 ```yaml
 completion_report:
   task_id: "{TaskID}"
+  package_path: "{from the locator}"
+  method: "/do"
   status: "success|failure"
   plan_source: "adopted:{path}" | "brief-only"
   modified_files: ["{file}"]
+  shared_paths: ["{file}"]          # plan-set phase only: files the File ownership table also gives a peer
+  proof: {result: "verified-first-pass | verified-after-fix | inconclusive | self-verified", journeys: N, evidence: "{dir}"}
   drift_notes: ["{if any}"]
   decisions: ["{fork} → {choice} ({the rung that decided it})"]
   error_message: "{if failure}"
+plan_set:                           # only when the locator returned one
+  file: "{task_metadata.plan_set.file, verbatim}"
+  phase: N
+  next_task_id: ""                  # completion-handler reads it from the index
 ```
 
 ### Phase 3: Completion (Subagents 4 → 5 → 6)
@@ -331,11 +340,17 @@ was resolved, and — for a plan-set phase — ticks the phase in the plan index
 next phase's task.
 
 It also returns **the next session's command** — `/do {next TaskID}`, or, when the phase just
-completed was the last one, nothing: it lands the set itself (its Step 5a) rather than handing a
-human a merge command, unless a swarm coordinator already owns landing it. It is the only step in
-this pipeline that has read the plan index, so the main context prints what it returns instead of
-deriving it; deriving it would mean reading `todos.md` in the main context, which is the thing
-this pipeline exists to prevent.
+completed was the last one, nothing: it verifies and lands the set itself (its step 5a) rather
+than handing a human a merge command, unless a swarm coordinator already owns landing it. It is
+the only step in this pipeline that has read the plan index, so the main context prints what it
+returns instead of deriving it; deriving it would mean reading `todos.md` in the main context,
+which is the thing this pipeline exists to prevent.
+
+On the last phase, act on its `landing.status` exactly as `/implement` Step 5a describes. The one
+that needs this session is `verifier_failed`: fix the code from its `repro` lines (never the
+journey), re-run the failing journeys, and dispatch `completion-handler` again with the fix's
+`modified_files`, the same `plan_set` and `reverify: true`. A second failure comes back `failed`,
+and the session stops with it.
 
 Then dispatches:
 
@@ -349,48 +364,22 @@ Runs **before** the pusher so README updates are committed with the code.
 
 #### Step 6: `pusher` (haiku)
 
-Stages, writes a conventional-commit message, commits, pushes.
-
-It stages a **`paths` allowlist**, never `git add .`, and `completion-handler` builds that list
-from `completion_report.modified_files` plus the bookkeeping files steps 4 and 5 wrote. A
-plan-set phase shares its worktree with every other phase of the set running at the same time, so
-an unscoped stage commits a peer's half-written files under this task's name. Report what *this
-task* changed, not what `git status` shows dirty.
-
-If pusher reports paths it left out of the commit, that is a peer mid-write in the same tree, not
-an error — it surfaces in the final report and nothing goes back to sweep them in.
-
-**The index is shared too, so staging carefully is not enough.** `git add <your paths>` followed
-by a bare `git commit` commits whatever the shared index holds, and a peer stages into it between
-your two commands. Use **`git commit -- <explicit paths>`**. A pathspec commit only sees tracked
-files, so a file you just created needs `git add -- <newfile>` first — then still bound the
-commit by pathspec. MEASURED 2026-10-08 on `gotrade-fee-rebuild`: two phases each staged only
-their own files, verified the staged set, and each still shipped a commit carrying a peer's entire
-phase under its own message. If your work turns up under a peer's message it is **not lost** —
-find it on the branch before re-implementing, and never rewrite pushed history over a message.
-
-**And never run a tree-wide git command there, not even to undo your own mistake.**
-`git reset --hard`, `git clean -fd`, `git checkout .`, `git restore .`, bare `git stash` and
-`git checkout <branch>` are all banned while a peer shares the worktree. None of them takes a
-path, so none is caught by "stay inside your allowlist", and `--hard` reverts every tracked file
-of every peer with no recoverable object left for unstaged work.
-
-To undo a commit you just made: **`git reset --soft HEAD~1`**, which moves HEAD and touches
-nothing in the tree. To revert your own edits: `git checkout -- <each path you own>`.
-
-MEASURED 2026-10-08 on `gotrade-fee-rebuild`: a session correctly caught that its own commit had
-swept in a peer's files, reached for `git reset --hard` to undo it, and destroyed another phase's
-twelve files of finished uncommitted work in the same instant. If you have already run one, stop
-and tell the coordinator — `git reflog` still names the orphaned commits until gc takes them.
+Stages, writes a conventional-commit message, commits, pushes — exactly the `paths` allowlist
+`completion-handler` builds from `completion_report.modified_files` plus the bookkeeping files
+steps 4 and 5 wrote. So report what *this task* changed, not what `git status` shows dirty: a
+plan-set phase may share its worktree with peers, and `pusher` holds every rule for committing
+safely there (`agents/pusher.md`). Paths it reports leaving out are a peer mid-write, not an
+error. If your work turns up under a peer's message it is **not lost** — find it on the branch
+before re-implementing, and never rewrite pushed history over a message.
 
 #### Step 7: Report to the Swarm (Main Context, only if there is one)
 
-A phase run by an orchestrator has a session waiting on it. Report in **both** halves, in this
-order — the file is the record, the message is the notification, and doing only one leaves either
-a silent coordinator or a set nobody can resume:
+A phase run by an orchestrator has a session waiting on it. The ledger write is the report; a
+message, where one can be sent, only makes it arrive sooner. This is the same report as
+`/implement` Step 4b:
 
 ```bash
-python3 ~/.claude/skills/swarm/swarm.py find --plan <the plan file this task used>
+python3 ~/.claude/skills/swarm/swarm.py find --plan <the plan file this task used> --task <TaskID>
 ```
 
 `{"swarm": false, ...}` means this task belongs to no swarm — say nothing, do nothing, done. Every
@@ -401,33 +390,19 @@ Otherwise `find` returns the `slug`, the `phase`, the `coordinator` to address a
 
 ```bash
 python3 ~/.claude/skills/swarm/swarm.py report --slug <slug> --phase <N> \
-    --status done --commit <sha from pusher> --task <TaskID> --note "<one line>"
+    --status done --commit <sha from pusher> --task <TaskID> --note "<one line>; proof: <verified-first-pass | verified-after-fix | inconclusive> <evidence dir>"
 ```
 
-Check that name is still in `ListAgents` first. Session names are mutable and reused —
-one listed as `agentic-golang-30` renamed itself to `analyze-carry-similarity-branch` a
-minute later — so a name read earlier can deliver this report to an unrelated session. If
-the coordinator is gone, the ledger write above already recorded the outcome: say so and
-stop.
+The `proof:` clause is what the coordinator's small-set rule reads, so never leave it out. Any
+decision the ladder produced goes in the `--note` too. A phase that failed reports
+`--status failed` with the reason.
 
-then, **where this session has a `SendMessage` tool**, message the coordinator — `DONE`, the
-TaskID, the commit, and one line on what actually changed. Report `failed` the same way, with the
-reason: a coordinator that is told a phase failed can strand its dependents deliberately, while
-one left guessing stalls the whole set.
-
-**The ledger write above is the report; the message only makes it arrive sooner.** The
-coordinator detects a finished phase from the ledger, git and `todos.md` (`swarm.py watch`), and
-the `swarm-deck` mod wakes it when this session's row goes `finished`. So with no `SendMessage`
-tool, say in one line that the outcome is in the ledger and stop — **never ask the user to relay
-it**. MEASURED 2026-11-11 on `ears-acceptance-criteria`: no session in the set had the tool; all
-four phases ended by asking the owner to "tell the coordinator", and the coordinator, watching
-nothing that moved, sat idle until the owner did.
-
-**Mesh messages** go to peers directly, and only these: `READY` when an Interface Contract item
-a dependent is waiting on now exists, `NEED` before assuming a dependency landed, `WARN` before
-deleting a worktree or branch a peer is sitting in. A message states a fact and never delegates
-work — "I deleted `SortRows`" is a mesh message; "please delete `SortRows` for me" is not, and
-asking a peer to do what this session could not is permission laundering.
+Then, **only where this session has a `SendMessage` tool and the coordinator's name is still in
+`ListAgents`** (names are reused, so a stale one can reach an unrelated session), message it:
+`DONE` or `FAILED`, the TaskID, the commit, one line on what changed. Otherwise say in one line
+that the outcome is in the ledger and stop — **never ask the user to relay it**. Peer messages
+follow the mesh rules in `skills/swarm/SKILL.md`: a message states a fact and never delegates
+work.
 
 This step runs **after** `pusher`, because the commit sha is part of the report and an unpushed
 commit is not something another machine can resume from.
@@ -663,15 +638,16 @@ Next — phase 2 of 4, in a new session:
   /do P1-TC-A002
 ```
 
-**Success — the last phase of a plan set.** No next task exists, so `completion-handler` lands
-it itself (its Step 5a) instead of handing back a merge command — remove human in the loop means
-this session is on `main`, pushed, and cleaned up before it prints anything:
+**Success — the last phase of a plan set.** No next task exists, so `completion-handler`
+verifies and lands it itself (its step 5a) instead of handing back a merge command — remove human
+in the loop means this session is on `main`, pushed, and cleaned up before it prints anything:
 ```
 ✅ Task Completed: P1-TC-A004
 📦 Package: toolcore
 🌿 Branch: feature/purge-direct-streaming-tool
 
 Plan complete — 4/4 phases.
+Verification: verified
 Merged feature/purge-direct-streaming-tool into origin/main @ a1b2c3d, pushed.
 Worktree and branch feature/purge-direct-streaming-tool deleted.
 ```
@@ -740,11 +716,12 @@ Deployed to `~/.claude/agents/` by `sync.sh`, dispatched by `subagent_type`:
 | `task-locator` | haiku | find the TaskID, extract metadata |
 | `context-loader` | opus | load and synthesize context — **brief path only** |
 | `plan-generator` | opus | execution brief for a task with no plan — **brief path only** |
-| `completion-handler` | opus | update `todos.md`, dispatch readme-updater and pusher, land the last phase |
+| `completion-handler` | opus | update `todos.md`, dispatch readme-updater and pusher, verify and land the last phase |
 | `readme-updater` | opus | update the most-impacted `package_readme.md` |
 | `pusher` | haiku | stage, commit, push |
+| `verifier` | sonnet | dispatched by `completion-handler` before it lands a set |
 
-> Step 4 (execution) runs in the **main context** and has no agent file, by design.
+> Phase 2 (execution) runs in the **main context** and has no agent file, by design.
 
 ---
 

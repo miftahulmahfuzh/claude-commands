@@ -130,9 +130,11 @@ rather than letting N children meet the same fork independently:
    and carry the same line into the ledger note at `init`. Step 2 pushes both, so a resume on
    another machine inherits the decisions instead of re-deriving them.
 
-An unresolvable item — every branch irreversible, nothing on the ladder speaking — is the one that
-stops, per iron rule 4: report it and end the session before spawning, because a swarm launched
-over a real fork does the wrong work N times in parallel.
+Two kinds of item stop instead, per iron rule 4: report them and end the session before
+spawning. A fork where every branch is irreversible, with nothing on the ladder speaking, because
+a swarm launched over a real fork does the wrong work N times in parallel. And a requirement or
+acceptance criterion no phase can own (`/analyze`'s trace rule), because no rung of the ladder
+can build what no phase plans, and landing without it ships the ask unbuilt.
 
 **Resume (`--resume`).** Read `<repo>/.workflows/orchestration/*/ledger.json`. With no slug, if
 exactly one set is unfinished, take it. **If several are, pick one and say which** — the set whose
@@ -314,8 +316,8 @@ session fixes for itself.
   Use that form, not `spawn --isolate`. **`swarm.py spawn` has no `--isolate` argument and never
   had one** — VERIFIED: `grep -c isolate skills/swarm/swarm.py` is `0`; `git log --all -S'isolate'
   -- skills/swarm/swarm.py` is empty across the whole history, so the flag was only ever written
-  into prose; and its argparse (`skills/swarm/swarm.py:2113-2124`) defines only `--slug --phase
-  --prefix --prompt --cwd --permission-mode --model --force --no-trust --dry-run`. `--cwd` does
+  into prose; and its `spawn` argparse defines only `--slug --phase --prefix --prompt --cwd
+  --permission-mode --model --force-model --force --no-trust --dry-run`. `--cwd` does
   exist and is the mechanism. Separate worktrees turn concurrent writes into separate branches,
   and disjoint regions of one file then merge cleanly at Step 4c.
 
@@ -500,11 +502,10 @@ Loop until `runnable_now` is empty:
    write-set gate above is what proves it rather than assuming it.
 
    The old shared-worktree default, for reference, and still what `spawn` does when it is given
-   no `--cwd` — it falls back to the ledger's set-wide worktree (`swarm.py:852`):
+   no `--cwd` — it falls back to the ledger's set-wide worktree (`cmd_spawn` in `swarm.py`):
 
-   **Every phase in the wave runs in the SAME worktree — the one `/analyze` cut for the set — and
-   that is deliberate.** Phase N+1 needs phase N's code on disk to build against, so one worktree
-   per phase would mean each phase planning against a tree the others' work had not reached. The
+   **Every phase in the wave runs in the SAME worktree — the one `/analyze` cut for the set.**
+   Each phase builds on what is already on disk, with no integration step between waves. The
    cost is that concurrent phases see each other's uncommitted files, and a phase that stages the
    tree as a whole commits its siblings' half-written work under its own name.
 
@@ -515,82 +516,29 @@ Loop until `runnable_now` is empty:
    another phase owns is a contaminated commit even when the tests passed, because the tests
    passed against a tree that included work its author never finished.
 
-   MEASURED 2026-10-06 on `build-promotion-path`: phases 1, 2 and 3 ran concurrently in one
-   worktree. Phase 1 committed while phase 3's partly-written `lab/prereg.py`, `commands/lab.py`
-   and tests were dirty beside it. Both sessions chose explicit path allowlists unprompted and
-   nothing was contaminated — but at the time nothing in the flow required it, so the clean
-   result was two correct guesses rather than a guarantee. `pusher` and `completion-handler` were
-   changed to require the allowlist; this check is the belt to that braces.
+   How a phase commits safely in a shared worktree — the allowlist, a commit bounded by pathspec
+   or a private index, and the ban on tree-wide git commands — is `pusher`'s, and lives only in
+   `agents/pusher.md`. What is yours:
 
-   **The allowlist does not stop the commit either, because the INDEX is shared as well as the
-   tree.** A phase can stage exactly its own files by name, verify `git diff --cached`, and still
-   ship a commit carrying a peer's whole phase — because a peer stages into the same index between
-   the `add` and the `commit`, and a bare `git commit` takes all of it. MEASURED 2026-10-08 on
-   `gotrade-fee-rebuild`, from two phases independently: `86ae23f` went out under phase 4's
-   message carrying 17 files **none of which were `sim/`**, and `836d1a5` went out under phase 3's
-   message carrying phase 4's entire bracket path. Both sessions had staged correctly.
-
-   Two consequences for a coordinator, and the second is the one that bites:
-
-   - **Reading a commit's file list against the ownership table no longer tells you whose work it
-     is.** It tells you the work landed *somewhere*. Before concluding a phase's work is missing,
-     search the whole branch for the file:
-     `git log --format=%h <branch> | while read c; do git show --stat --format="" $c | grep -q <path> && echo $c; done`
-   - **Never tell a phase its work vanished without running that search first.** MEASURED in the
-     same run: phase 4's entire bracket path was on the branch inside phase 3's commit while
-     phase 4 believed it had been destroyed. Had it re-implemented on that belief, a cosmetic
-     mis-attribution would have become a real conflict. The correct instruction to the phase is
-     "your work is at `<sha>`; diff against it and report", never "re-run your plan".
-
-   **Do not fix a mis-attributed commit by rewriting it.** Every file is on the branch, only the
-   message lies, and the set merges as one branch where the message is cosmetic. Rewriting a
-   pushed commit in a worktree five sessions are pushing to is strictly worse. Record it in the
-   ledger note and in `Decided without asking`, and move on.
-
-   **The allowlist stops contamination; it does not stop a tree-wide command, and that is the
-   failure that actually destroys work.** `git reset --hard` names no path, so "stay inside your
-   allowlist" never catches it — and it reverts every tracked file of every peer, leaving no
-   recoverable object behind for anything unstaged. Same for `git clean -fd`, `git checkout .`,
-   `git restore .`, bare `git stash` and `git checkout <branch>`.
-
-   MEASURED 2026-10-08 on `gotrade-fee-rebuild`: phase 1 committed, correctly noticed its commit
-   had swept in phase 3's `benchmark.py` and `test_paper_benchmark.py` under its own message, and
-   reached for `git reset --hard origin/<branch>` to undo it. The contamination guard worked
-   perfectly — neither bad commit reached the branch. The *cleanup* destroyed phase 4's twelve
-   files of finished, verified, uncommitted work in the same instant and cost phase 3 ~86 lines
-   of tests. One session's correct instinct, executed tree-wide, took out two uninvolved peers.
-
-   So when a wave spawns into a shared worktree, **say the ban once to every child in the wave**,
-   with the safe alternative beside it — the reach for `reset --hard` is almost always a correct
-   instinct aimed at the wrong tool:
-
-   - to undo your own commit: `git reset --soft HEAD~1` (moves HEAD, touches nothing in the tree)
-   - to revert your own edits: `git checkout -- <each path you own>`
-   - to set work aside: `git stash push -u -m "p<N>-<unique-tag>"`, recover with `apply <sha>`
-
-   **Say the between-wave protocol in the same breath**, because every phase in every wave but
-   the first inherits a tree that moved under it, and three of the four items cost nothing until
-   the one time they are missing:
-
-   - commit explicit paths, and a **private `GIT_INDEX_FILE`** when a file is genuinely shared —
-     a pathspec commit reads the working tree, so it takes a peer's uncommitted edit to any file
-     it names
-   - `git fetch` and rebase before reporting, never `--autostash`, and `merge --ff-only` instead
-     of rebase for a branch carrying a shared binary
-   - re-run the touched test files *after* catching up: a green from before a peer landed is not
-     a green, and the plan's impact counts were measured at the base commit
-   - a peer's failure report is unverified until this session reproduces it — a concurrent run
-     reddens tests that read exactly like your own regression
-
-   `/implement` carries all four in full; the wave message only has to make the child expect them.
-
-   **If one has already run, preserve before you repair, and do it first.** `git reflog` names
-   every commit the reset orphaned, and orphaned commits are gc-able — so tag each one *before*
-   investigating: `git tag -f rescue/reset-casualty-<sha> <sha>`. Then diff each tag against the
-   branch to learn what is actually missing, and tell the owning phase what to recover. Do not
-   restore a peer's files yourself: the phase owns them and knows which version it wanted. A
-   phase whose work is gone re-runs from its plan — which is exactly why `/analyze` builds phases
-   that stand alone.
+   - **A commit's file list tells you the work landed *somewhere*, not whose it is.** Two phases
+     that staged correctly have still shipped each other's files under the wrong message
+     (`gotrade-fee-rebuild`, 2026-10-08). Before telling a phase its work is missing, search the
+     whole branch:
+     `git log --format=%h <branch> | while read c; do git show --stat --format="" $c | grep -q <path> && echo $c; done`.
+     The instruction to the phase is "your work is at `<sha>`; diff against it and report", never
+     "re-run your plan" — re-implementing turns a cosmetic mis-attribution into a real conflict.
+   - **Never rewrite a mis-attributed commit.** Every file is on the branch and the set merges as
+     one; record it in the ledger note and in `Decided without asking`, and move on.
+   - **When a wave spawns into a shared worktree, say once to every child** that tree-wide git
+     commands are banned (`git reset --soft HEAD~1` undoes its own commit; `git checkout -- <its
+     paths>` reverts its own edits), and that it catches up, re-runs its touched tests and
+     reproduces a peer's failure before reporting (`/implement` Step 4, the three checks).
+   - **If a tree-wide command has already run, preserve before you repair, and do it first.**
+     `git reflog` names every commit the reset orphaned, and orphaned commits are gc-able — so tag
+     each one *before* investigating: `git tag -f rescue/reset-casualty-<sha> <sha>`. Then diff
+     each tag against the branch, and tell the owning phase what to recover. Do not restore a
+     peer's files yourself. MEASURED 2026-10-08: one phase's `git reset --hard` destroyed another's
+     twelve finished, uncommitted files.
 3. **Arm the watch — before this turn ends, every wave, no exceptions.** A coordinator that
    ends its turn with nothing armed is a coordinator that waits forever: nothing else starts its
    next turn. Run the set's watch under `Monitor` (unbounded, at the 30-minute maximum, re-armed
@@ -622,9 +570,13 @@ Loop until `runnable_now` is empty:
    `ListAgents` in a loop, and never send "are you done?".
 4. **Collect reports** as they arrive (`<cross-session-message from="impl-<slug>-p2">`), and act
    on every `ACT` line the watch prints the same way: verify, read the commit, reap that phase,
-   spawn what is runnable. **Each phase is handled the moment it finishes, never at the end of
-   its wave** — a wave-mate still running is not a reason to leave a verified phase's window open,
-   to delay pushing its ledger row, or to hold back a phase it just unblocked.
+   spawn what `verify` lists as `runnable_now`. **Each phase is handled the moment it finishes,
+   never at the end of its wave** — a wave-mate still running is not a reason to leave a verified
+   phase's window open, to delay pushing its ledger row, or to hold back a phase it just
+   unblocked. The one thing that does wait is isolation: a phase committed on its own
+   `phase-<N>-<slug>` branch is finished but not integrated, and `runnable_now` holds its
+   dependents back until step 6 has merged it, because their worktrees are cut from the
+   integration branch.
 4b. **Answer a child that asks — never relay it.** `/do` and `/implement` forbid the question, so
    a child asking one is a session on an older prompt, a genuine plan contradiction, or a fork
    its own ladder could not reach. All three are yours: you hold the plan index, the Requirements
@@ -636,7 +588,10 @@ Loop until `runnable_now` is empty:
    The only exception is iron rule 4's stop: a fork where every branch is irreversible, which is
    reported, not asked.
 5. **Verify, then believe.** `swarm.py verify --slug <slug> --apply`. A phase that reports `done`
-   whose commit is not on the branch has not landed, whatever it said.
+   whose commit is on neither the set branch nor its own `phase-<N>-<slug>` branch has not
+   landed, whatever it said. One that is only on its own branch derives `integrated: false`:
+   finished, waiting for step 6. A phase you marked `failed` stays `failed` through `verify`; a
+   respawn or a new report is what clears it.
 
    `verify` answers *did it land*, not *did it land only what it owned* — and in a shared worktree
    those are different questions. So also read the commit's own file list:
@@ -692,7 +647,9 @@ Loop until `runnable_now` is empty:
    - `inconclusive` → go on, and carry the claims and reasons into the final report, listing
      every `inconclusive` criterion id with its reason (`no journey` included).
    - `map_drift` → the coordinator fixes those `features/*.md` entries in its ledger commit.
-   Skip it for a wave that changed no runnable behavior, and say so in the round's notes.
+   Skip it only for a wave that touched nothing observable — code comments, test internals or CI
+   config — and say so in the round's notes. A wave that changes user-facing docs is verified: the
+   verifier checks a doc's claims against the running app.
 
    **The small-set rule.** Skip the separate verifier, and land on the implementers' own evidence,
    only when ALL of these hold:
@@ -732,9 +689,9 @@ Loop until `runnable_now` is empty:
    scrollback is the evidence. `reap` captures each pane's whole history to
    `.workflows/orchestration/<slug>/logs/phase-N.log` and then closes the window, so the tab bar
    holds only what is still running. It refuses on its own to touch a phase that is still
-   working, a `done` whose commit is not on the branch, a window whose id now belongs to some
-   other window, or this session's own window — so it is safe to run every round without
-   reading the list first.
+   working, a `done` whose commit is on neither the set branch nor its own phase branch, a window
+   whose id now belongs to some other window, or this session's own window — so it is safe to run
+   every round without reading the list first.
 
    A "round" is one phase finishing, not one wave. `reap` closes every verified `done` phase
    whatever its wave-mates are doing; run it as soon as each one verifies. MEASURED 2026-11-11:
@@ -743,7 +700,7 @@ Loop until `runnable_now` is empty:
 
    A **failed** phase keeps its window: that failure is what someone is about to read. Close it
    with `--include-failed` once the user has seen it, or when landing the set.
-8. Recompute and go to 1.
+9. Recompute and go to 1.
 
 **Stragglers.** An idle notice with no report means the phase stopped without finishing. Send that
 session one message asking what happened — a peer is not a human, and `SendMessage` to a live
@@ -966,9 +923,10 @@ When every phase is `done`:
    python3 $S reap --slug <slug> --include-failed
    python3 $S land --slug <slug> --step cleanup
    ```
-   `cleanup` removes the land worktree and its branch, removes the set's worktree, and deletes the
-   branch local and remote. **It refuses unless `git merge-base --is-ancestor` proves the branch
-   is already in the base** — which is what makes it safe to run unattended: a stop at step 3, 4
+   `cleanup` removes the land worktree and its branch, removes the set's worktree, deletes the
+   branch local and remote, and removes every isolated phase's worktree and `phase-<N>-<slug>`
+   branch that is already in the base (any that is not is listed as kept). **It refuses unless
+   `git merge-base --is-ancestor` proves the branch is already in the base** — which is what makes it safe to run unattended: a stop at step 3, 4
    or 5 leaves the branch standing by construction rather than by remembering to. Pass
    `--keep-remote` when an open pull request still needs `origin/<branch>`. A worktree with
    uncommitted residue is force-removed and its `git status --porcelain` kept in `logs/`, since

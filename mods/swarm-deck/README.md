@@ -38,7 +38,10 @@ outside any turn — watching the set costs no tokens.*
 - requires the decision be recorded in `completion_report.decisions`, which already flows into
   `todos.md`, the commit body and the swarm ledger
 
-Outside a swarm it is **dormant**: an ordinary interactive session is untouched.
+Outside a swarm the question guard, the heartbeat and the `/fleet` rows are **dormant**: an
+ordinary interactive session gets none of them. Three hooks do run in every session, because
+they are not about a swarm: the quota-economy verifier refusal and model switch (below), and the
+lease check that queues a command touching a shared test service.
 
 ### A phase that asks
 
@@ -231,7 +234,7 @@ claude --plugin-dir .      # load it live, hot-reloads on save
 
 ## Status
 
-Slices 1 and 2 of 4 — the guard, and the heartbeat behind it. 8 tests, 0 fail.
+Slices 1–6 shipped (see the design doc's checklist); 10 test files, 87 tests.
 
 Each phase publishes its own row into `$.store`, which is shared by every session on the
 machine, on a 15-second timer that runs *outside any turn* — so a coordinator watching ten
@@ -239,9 +242,8 @@ phases spends no tokens to do it. One key per phase rather than one per set, bec
 phases of a set run concurrently by construction and a shared document would have them
 losing each other's writes exactly when the set is busiest.
 
-Refused forks are written down as they happen, under their own per-phase key. The
-coordinator's "Decided without asking" review is reconstructed at the end of a run today,
-which means a coordinator that dies takes the record with it; this makes it durable.
+Refused forks are written down as they happen, under their own per-phase key, so the
+coordinator's "Decided without asking" review survives a coordinator that dies.
 
 `/fleet` draws those rows as a docked pane, registered with `immediate: true` so it opens
 **while Claude is working** — a deck you can only open between turns is a deck you cannot open

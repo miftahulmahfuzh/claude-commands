@@ -19,9 +19,12 @@ triggered` and move on.
 
 ## Scope: how much to build
 
-1. **Subtract before you add.** Before adding to something, look for what it makes obsolete:
-   dead branches, unused options, the adapter the new path replaces. Delete that first, in an
-   earlier step or phase, then build on the smaller base.
+1. **Subtract before you add.** Before adding to something, look for what is already dead: a
+   branch nothing reaches, an option nothing sets, an adapter with no caller left. Delete that
+   first, in an earlier step of your phase, then build on the smaller base. Something that still
+   has live callers is not dead yet: it goes after its callers move, in the order `/analyze` and
+   the reconciler set (deletion lands last). A deletion that belongs to another phase goes under
+   **Handoffs**.
 2. **Laziness protocol.** Prefer the smallest change that solves the stated problem: delete
    over modify, modify over add, reuse over new abstraction. A framework for a single caller
    is scope creep.
@@ -46,8 +49,8 @@ triggered` and move on.
 ## Verification: what counts as proof
 
 7. **Prove it works.** Each phase ends with proof on the real artifact (the running app, the
-   real command, the written row), not "it compiles" or "the unit test I wrote passes". If the
-   repo has a verification skill (`.claude/skills/verify-*`), the plan's **Proof** uses it.
+   real command, the written row), not "it compiles" or "the unit test I wrote passes". How the
+   plan's **Proof** is written, with a harness or without one, is `phase-planner`'s format.
 8. **Sequence into verifiable units.** Order steps and phases so each one ends in a check that
    can fail. A long run of edits verified only at the end is one giant unverified unit.
 9. **Test behavior, not implementation.** Tests assert what a caller or user can observe, so

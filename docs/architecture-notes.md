@@ -66,7 +66,7 @@ Most commands operate on a target package directory that contains a `.workflows/
 
 ```
 <package>/.workflows/
-├── todos.md                 # task list with TaskIDs (P{0-3}-{SCOPE}-{ID})
+├── todos.md                 # task list with TaskIDs (P{0-4}-{SCOPE}-{ID})
 ├── plan/
 │   ├── {TaskID}.md          # the plan a task executes (copied here by /implement)
 │   ├── {SLUG}_PLAN.md       # repo-root .workflows/ only — /analyze plan index
@@ -83,7 +83,7 @@ Most commands operate on a target package directory that contains a `.workflows/
 **Only `/analyze`.** This is the single most important invariant in the repo — it was previously split between `/analyze` and `/implement`, which produced plans of two different provenances and no way to tell which was authoritative.
 
 - `/analyze` → read-only investigation **plus a complete plan, every run**: `<session-id>_code_analyzer.md` (descriptive) + `<SLUG>_PLAN.md` (index) + `.workflows/plan/<slug>/phase-{N}.md` for N ∈ 1..20, in a worktree it cuts. N=1 is not a different mode for the *planning* artifacts — same shape, one phase — but it is a different mode for the hand-off: Step 11 launches a one-phase plan straight into `/implement -f <PLAN> --phase 1` in a new tmux pane, and skips `/analyze-orchestrator` entirely, because there is no DAG to schedule and nothing to land except one commit. N > 1 still launches the orchestrator. It also numbers the user's asks `R1..Rn` and maps every phase onto the `R`s it serves — the plan index's **Requirements** table, which is what lets `create-task` shape the board without re-deriving the decomposition.
-- `/implement -f .workflows/plan/<SLUG>_PLAN.md` → **executes**. Creates one task per phase, copies each phase plan to `{pkg}/.workflows/plan/{TaskID}.md` unchanged, applies one phase, hands to `completion-handler`. It writes no plans; handed an analysis document it refuses and names `/analyze`. When the phase it just finished was the plan set's last (a single-phase plan, or `--all` reaching the end) and no swarm coordinator owns it, **it lands the branch itself** — Step 5a merges into `main` in a throwaway worktree, pushes, then deletes the plan's worktree and branch — rather than printing a `git merge` command for a human to run. That merge-it-yourself branch is exactly what closes the gap `/analyze`'s "nothing to land except one commit" (above) glosses over: one commit still has to reach `main`, and for N=1 there is no orchestrator coming to do it.
+- `/implement -f .workflows/plan/<SLUG>_PLAN.md` → **executes**. Creates one task per phase, copies each phase plan to `{pkg}/.workflows/plan/{TaskID}.md` unchanged, applies one phase, hands to `completion-handler`. It writes no plans; handed an analysis document it refuses and names `/analyze`. When the phase it just finished was the plan set's last (a single-phase plan, or `--all` reaching the end) and no swarm coordinator owns it, **the branch is landed without a human** — `completion-handler`'s step 5a runs the set's independent verification, merges into `main` in a throwaway worktree, pushes, then deletes the plan's worktree and branch — rather than printing a `git merge` command for a human to run. Landing lives only there, for `/do` and `/implement` alike: when it also lived in `/implement`, the handler merged first, unverified, and `/implement` then tried to land the same branch again. That merge-it-yourself branch is exactly what closes the gap `/analyze`'s "nothing to land except one commit" (above) glosses over: one commit still has to reach `main`, and for N=1 there is no orchestrator coming to do it.
 - `/do <TaskID>` → executes an **existing** task. Executes its plan file directly in the main context if there is one (the adopted path); builds a routing brief from the task text for EASY/NORMAL without one; **escalates a HARD task with no plan file by running `/analyze` itself** (Step 1c, before any subagent), which plans and — launching execution being its default — runs it: directly for a single phase, via the orchestrator for several. `--no-escalate` prints the command and stops instead.
 - When code has drifted from what a plan quotes: small drift → follow intent and note it; large drift → stop and re-run `/analyze`. Neither executor improvises a replacement plan.
 - `/update-readme`, `/update-todos`, `/reorganize-todos`, `/postmortem`, `/analyze-package` → maintenance commands on `.workflows/` contents.
@@ -129,7 +129,7 @@ reconciler's ledger in `agents/plan-reconciler.md` to match.
 **Reconciliation decides behavioral forks; it does not park them.** The plan index has two
 sections and the split is load-bearing: `## Decisions` holds every fork settled on the precedence
 ladder, each with the rung that settled it, and the executors inherit those instead of asking;
-`## Open Questions` is reserved for an unowned requirement id or criterion, or a fork where *every* branch is
+`## Open Questions` is reserved for a requirement id or criterion no phase can own, or a fork where *every* branch is
 irreversible, which is the only thing that still refuses `/analyze`'s Step 11 launch. Parking an
 ordinary contradiction there is what cost a six-phase set an entire night — every phase touching
 it meets the same fork alone, at 3am. `/analyze` Step 8 and `agents/plan-reconciler.md` rules 6–7
@@ -250,12 +250,12 @@ phase table's columns in `commands/analyze.md`, check `parse_index` in `swarm.py
 that table by header name.
 
 ### Pusher agent (`agents/pusher.md`)
-Owns *all* git side effects for command-driven work. `/do` and `/implement` no longer perform direct git operations — they delegate to `pusher`. If you add a new command that mutates files, end it by spawning `pusher` rather than running `git` inline. Users can also invoke it directly by saying "run pusher".
+Owns every commit and push for command-driven work, and is the one place the shared-worktree commit rules live (allowlist, pathspec or private-index commit, no tree-wide command). `/do` and `/implement` commit nothing themselves — they delegate to `pusher` through `completion-handler`, whose step 5a is the only merge. If you add a new command that mutates files, end it by spawning `pusher` rather than running `git` inline. Users can also invoke it directly by saying "run pusher".
 
 ## Conventions
 
 ### TaskID format
-`P{0-3}-{SCOPE}-{ID}` (e.g. `P0-DB-A236`, `P1-CB-B789`). Priority `P0` is highest. Scope is a short package abbreviation. IDs must be unique across all `todos.md` files in a repo.
+`P{0-4}-{SCOPE}-{ID}` (e.g. `P0-DB-A236`, `P1-CB-B789`). Priority `P0` is highest. Scope is a short package abbreviation. IDs must be unique across all `todos.md` files in a repo.
 
 ### Difficulty classification
 Tasks are tagged EASY / NORMAL / HARD. EASY and NORMAL can run from the task description alone; **HARD requires a plan file** — `/do` escalates a HARD task without one by invoking `/analyze` itself instead of printing the command (`--no-escalate` restores the print-and-stop). A `**Difficulty**:` line that mentions HARD at all resolves to HARD, and `task-locator` returns that line verbatim as `difficulty_line` so nobody has to ask it twice. Branch isolation comes from the worktree `/analyze` cuts, not from `/do`.

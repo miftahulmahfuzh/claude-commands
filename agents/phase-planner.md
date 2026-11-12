@@ -149,7 +149,8 @@ The reconciler reads this section to detect cross-phase conflicts. Be exact and 
 **Proof:** {how the real artifact shows this phase works}
 - Harness: `{.claude/skills/verify-<app>}` — or `no harness`, and what is run instead
 - Feature-map entries: `{features/x.md}`, ... — or `none`
-- Journeys: one per claim and at least one per criterion in **Criteria**, one bullet per journey,
+- Journeys: one per claim and at least one per criterion in **Criteria** (except one you return
+  as `untraced`), one bullet per journey,
   written in exactly this form (the reconciler and the verifier parse it):
   `  - **J{k}** · traces R1.1, R1.2 — <commands or steps> → passes when <observable end state>`
   - **J1** · traces R1.1 — `curl -s localhost:3000/api/notes/42 | jq -c .tags` → passes when it prints `["beta"]` (an observable end state, not "it works")

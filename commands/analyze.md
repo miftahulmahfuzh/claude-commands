@@ -37,13 +37,17 @@ and the type from what the user wrote.
   that stops to ask is a mode that stalls until morning. Pass `acceptEdits`, `auto` or `manual`
   to narrow it.
 
-**`/analyze` alone is the full unattended workflow.** These are the same command:
+**`/analyze` alone is the full unattended workflow.** It plans, then launches execution on
+`bypassPermissions` (Step 11), so these two are the same command:
 
 ```bash
 /analyze
 <what you want changed>
+```
 
-/analyze --orchestrate --permission-mode bypassPermissions      # what the first one means
+```bash
+/analyze --permission-mode bypassPermissions
+<what you want changed>
 ```
 
 **Example — terse, classic form:**
@@ -156,8 +160,9 @@ decider in the workflow and the last one with the whole picture.
 So the contract with everything downstream:
 
 - **Resolve contradictions at Step 8, into a `## Decisions` section** — the choice and the rung
-  that decided it. `/implement`, `/do` and `/analyze-orchestrator` all carry the same precedence
-  ladder now; leaving them a fork is asking N sessions to re-derive what one session already knew.
+  that decided it. `/implement`, `/do` and `/analyze-orchestrator` carry the same precedence
+  ladder, except that their rung 5 is the task text where yours is the user's raw input from
+  Step 0; leaving them a fork is asking N sessions to re-derive what one session already knew.
 - **`## Open Questions` is reserved for two things:** a fork where *every* branch is
   irreversible, and a requirement or acceptance criterion no phase can own (the trace rule,
   Step 8). Those are the only items a plan set may legitimately stop on, and they are why Step 11
@@ -505,8 +510,8 @@ from Step 0 is satisfied by at least one phase**. Nothing downstream will fill a
 <plan index>`. It must exit 0: every criterion owned and traced, or `legacy` for an index with no
 `### Acceptance Criteria` table. Exit 2 lists each gap: fix it by the trace rule in Step 8 (for
 N = 1 there is no reconciler, so you edit the one phase plan yourself), refill the Journeys column
-(`--fill` prints the values), and run it again. Exit 1 means a phase plan the index names is
-missing. The only exit 2 that may survive this step is a criterion parked in `## Open Questions`
+(`--fill` prints the values), and run it again. Exit 1 means the index or a phase plan it names
+is missing or unreadable. The only exit 2 that may survive this step is a criterion parked in `## Open Questions`
 under that rule, and it holds the launch at Step 11 like any other item there.
 
 **And verify the two decision sections.** `## Open Questions` must be empty, or every item in it
