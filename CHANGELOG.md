@@ -7,10 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **Quota economy, models**: in economy mode the swarm-deck mod sets every subagent to Sonnet unless it names
-  haiku or sonnet, refuses a fork of an Opus parent, and flags an Opus main session. `swarm.py spawn` and
-  `launch` read the mod's `~/.claude/swarm-deck/quota.json` and default to `--model sonnet`; an explicit Opus
-  or Fable is refused unless `--force-model`.
+## [4.2.0] - 2026-11-12
+
+EARS acceptance criteria for `/analyze` plan sets, borrowed from Kiro's requirements-first specs.
+Each requirement now carries numbered criteria, every criterion must be owned by a phase and traced
+by a Proof journey, and the verifier reports one verdict per criterion.
+
+The swarm also stops depending on messages: the coordinator detects a finished phase from the
+ledger and git state, shared test services are queued through FIFO leases, and a weekly quota
+economy mode moves work off Opus and cuts independent verification.
+
+### Added
+- **EARS acceptance criteria**: `/analyze` writes an `### Acceptance Criteria` table under the
+  Requirements table, one row per criterion `R{n}.{m}` in one of six EARS patterns (ubiquitous,
+  event, state, unwanted, optional, complex). Step 6 maps each criterion to a phase, Step 7 hands
+  each `phase-planner` its `criteria:`, and every Proof journey traces criteria by id. An index
+  with no criteria table is legacy and runs as before. Explained in `docs/ears/README.md`
+- **`skills/swarm/ears_trace.py`**: checks the trace rule (every criterion has an owning phase
+  and at least one tracing journey). Exit 0 clean or legacy, 1 unreadable, 2 gaps; `--json`;
+  `--fill` prints the index's Journeys column. `plan-reconciler` rules 6–7 run it, and `/analyze`
+  Step 9 runs it for N = 1 too
+- **`swarm.py watch`**: one line per phase whose ledger or git status moved, per window closed on
+  unfinished work, and per shell past `MAX_SHELL_SCRIPT_DURATION` (default 5m), labelled
+  progressing / waiting on DB / idle-hung. Armed under `Monitor`, so the coordinator acts on each
+  finished phase without a message. Adds CONTENTION and QUEUE lines for leases
+- **Resource leases** (`lease.py`, `swarm.py lease RES -- CMD`): a FIFO queue per repo and
+  resource under the common git dir, with capacity from `max_concurrent`, `--status`, `--front`
+  and `--wait-max`. The holder's flock is inherited by the command, so it is released however the
+  work ends. Declared in `.workflows/swarm.json` `resources` {match, isolate, max_concurrent,
+  probe}. Worktrees isolate files, not the Postgres a suite talks to: measured on mcp-notes, a
+  ~5 minute integration suite took ~30 when three sessions ran it at once
+- **`swarm.py doctor`** (`/analyze-orchestrator` Step 2): checks the swarm-deck mod is configured,
+  no deny list hides SendMessage, Monitor, PushNotification or the notes tools, and the Claude Code
+  shell snapshot is quiet. Also reports `isolate: none` and undeclared fixed services
+- **Notifications**: the orchestrator sends one push notification when a set lands or stops, the
+  swarm-deck coordinator raises `$.ui.notify` once each for landed and failed, and `/implement`
+  sends one for landed / landing failed / drifted / undecidable (never for swarm-tracked phases)
+- **Quota economy mode** (swarm-deck): at or over the weekly threshold
+  (`CLAUDE_QUOTA_ECONOMY_PCT`, default 85) the mod attaches an ECONOMY MODE line and refuses
+  `verifier` spawns; proof runs once on the cheapest journeys. Every subagent defaults to Sonnet
+  unless it names haiku or sonnet, a fork of an Opus parent is refused, and an Opus main session is
+  flagged. The reading is written to `~/.claude/swarm-deck/quota.json`, and `swarm.py spawn` and
+  `launch` default to `--model sonnet` from it; an explicit Opus or Fable needs `--force-model`
+- **swarm-deck plan-set context**: a `prompt.submit` hook for `/analyze-orchestrator` and
+  `/implement` resolves `-f <index>` or `--resume [slug]`, runs `plan_graph.py --json`, and
+  attaches each phase plan's absolute path and size, or the path tried for a missing one.
+  `plan_graph.py --json` gains `plan`, `plan_path`, `plan_bytes` and `tried`
+- **Docs**: `docs/session-swarm.md` ("Sessions, not subagents": spawn routes, track record,
+  costs, comparison with agent teams, Gas Town and claude-squad), and a README section
+  "Borrowed from Kiro: EARS acceptance criteria"
+
+### Changed
+- **`verifier`** takes `plan_index` and returns `criteria: [{id, verdict, journeys, evidence}]`,
+  with a per-phase fallback for legacy indexes. `/analyze-orchestrator` and `/implement` act on
+  failed criteria
+- **`phase-planner`** traces each Proof journey to criterion ids; **`plan-reconciler`** decides an
+  owned-but-untraced criterion by editing the owning plan, assigns an unowned one a phase, and puts
+  only an unownable criterion in Open Questions
+- **Swarm detection never depends on a message.** The ledger write is a phase's report; phases
+  never ask the user to relay it, and each finished phase is verified and reaped on its own, not at
+  the end of its wave. swarm-deck rows go `finished`, the live coordinator's deck wakes it with
+  `$.prompt.submit`, and `tool.check` answers permission asks in swarm sessions (allow and log;
+  deny with a reason for irreversible commands)
+- **swarm-deck Bash guard**: in a repo that declares resources, a matching command is rewritten
+  to run under its lease (backgrounded when the queue is busy), and process-table and `pgrep -f`
+  wait loops are refused. Fails open
+- **Verification credentials** come from the repo's `.env` / `.env.local`, never the shell. A
+  personal key exported in a profile had been billing the owner for company work; a failing repo
+  key now blocks the run instead of falling back
+- **Shared test databases** are named as a fourth isolation hazard in the swarm skill, the
+  orchestrator's provisioning list, `/implement`'s red-run check and the integrator's suite hazards
+- **README**: "Nothing asks you; a few things stop" replaces the contradictory "refuses to launch"
+  wording and lists the three stops; the pipeline description now says a one-phase plan launches
+  `/implement` directly and every executor lands its own set
+
+### Fixed
+- **`/analyze-orchestrator`** decides "phase plan missing" with `plan_graph.py` or `test -f`,
+  never a listing: a truncated `ls | head` had hidden a committed `phase-7.md`
+- **`swarm.py verify --apply`** no longer resets a live phase to pending
+- **swarm-deck** announces one wake per phase finish (it was up to three) and none after a phase
+  is reaped; the terminal shows only denials, while every approval is still logged under
+  `swarm/<slug>/approvals/<phase>`
+- **`swarm.py lease`**: options parse on either side of the resource (`--capacity` was being
+  executed as the command), an empty or dash-led command exits 2, and a command that cannot start
+  exits 127 with its ticket released
+- **`swarm.py land`** finds drizzle-kit migrations: the out folder is read from
+  `drizzle.config.*` (default `drizzle`), and drizzle's `meta/` journal and snapshots are not
+  counted as migrations
+- **Docs**: the dead Kiro link now points at
+  https://kiro.dev/docs/specs/feature-specs/requirements-first/
 
 ## [4.1.0] - 2026-11-04
 
@@ -695,6 +780,7 @@ a real run rather than imagined.
 ### Project Milestone
 This represents the initial release of the Claude Commands Collection, providing a complete foundation for custom Claude Code command management with professional documentation and automated installation.
 
+[4.2.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v4.2.0
 [4.1.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v4.1.0
 [4.0.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v4.0.0
 [3.0.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v3.0.0
