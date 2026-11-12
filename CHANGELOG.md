@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-11-12
+
+One owner per rule. An audit of the swarm workflow found the same rule copied into two to six
+files and drifting apart, and one real bug from it: a plan set without a coordinator could be
+landed twice, the first time without its verifier. Each rule now lives in the file that owns it
+and every other copy is a pointer. The audit itself is now a skill, so it can be run again.
+
+### Added
+- **`audit-and-resolve-swarm-workflows` skill**: three parallel reviewers (execution, planning,
+  swarm + swarm-deck) report conflicting rules, drifted copies, stale references and duplicated
+  passages. The session re-checks each bug and conflict itself, reports it with a recommended
+  winner, fixes it to one owner per rule, proves the fix (selftests, sync, drift check), and
+  records what it kept on purpose in `known-intentional.md` so the next audit does not flag it
+- **`swarm.py` isolated-mode integration state**: a phase committed on its own
+  `phase-<N>-<slug>` branch derives as finished but not integrated (`integrated: false` in
+  `verify` output). `runnable_now` holds its dependents and `land check` refuses until the
+  integrator merges it. Selftests cover both
+- **`swarm.py land cleanup`** removes each merged per-phase worktree and `phase-<N>-<slug>`
+  branch, keeps any not yet on the base (`kept_unmerged_phase_branches`), and refuses when the
+  cwd is inside one of them
+- **CLAUDE.md**: the one-owner map (commit safety in `pusher`, landing and its verifier gate in
+  `completion-handler` step 5a, coordinator rules in `analyze-orchestrator`)
+
+### Changed
+- **Landing**: `completion-handler` step 5a is the only place a set without a coordinator is
+  landed, with the verifier gate inside it, for `/do` and `/implement` alike. `/implement` no
+  longer lands the branch itself
+- **`pusher`** owns every commit-safety rule; its procedure no longer ends in a bare
+  `git commit`, and it never prompts for credentials. The copies in `/implement`, `/do`,
+  `completion-handler`, the orchestrator and the swarm skill are now pointers
+- **Conflicts settled**: `engineering-principles` #1 deletes only dead code, and live code follows
+  deletion-lands-last; an unowned requirement is assigned a phase before it may be parked; the
+  orchestrator stops on an unownable criterion; docs-only waves are verified; the swarm skill's
+  landing gate accepts quota economy mode; isolation, not the shared worktree, is the default
+- **README**: phase sessions report by writing the ledger and the coordinator's `swarm.py watch`
+  detects it; `SendMessage` is optional and only makes the report arrive sooner
+- **`docs/session-swarm.md`**: the "Borrowed, and worth borrowing next" section states the two
+  borrowing rules (adopt only what we need and don't have; resolve every conflict it brings) and
+  gives each of seven candidate methods the reason it was not adopted
+
+### Fixed
+- **A set landed twice**: `completion-handler` merged without the verifier and `/implement` then
+  tried to land the same branch again
+- **`swarm.py verify`** keeps a coordinator's `failed` mark instead of deriving it away from git,
+  which had un-stalled a failed phase's dependents on the next round
+- **`swarm.py verify` / `reap`** no longer call a phase committed on its own branch `pending`,
+  which would have respawned it
+- **Drift and stale text**: `/do`'s report carries `proof:` and its `completion_report` matches
+  `/implement`'s; todos entries are read as list items; TaskIDs are `P0`-`P4`; the nonexistent
+  `--orchestrate` flag is gone; mesh rule counts, the swarm-deck README's status and dormant claim,
+  the design doc's deny text and step numbering are corrected
+
 ## [4.2.0] - 2026-11-12
 
 EARS acceptance criteria for `/analyze` plan sets, borrowed from Kiro's requirements-first specs.
@@ -780,6 +832,7 @@ a real run rather than imagined.
 ### Project Milestone
 This represents the initial release of the Claude Commands Collection, providing a complete foundation for custom Claude Code command management with professional documentation and automated installation.
 
+[4.3.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v4.3.0
 [4.2.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v4.2.0
 [4.1.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v4.1.0
 [4.0.0]: https://github.com/miftahulmahfuzh/claude-commands/releases/tag/v4.0.0
