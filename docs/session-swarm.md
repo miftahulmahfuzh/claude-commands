@@ -20,7 +20,7 @@ since 4 September 2026, not from a design that has not met production yet.
 - [Seeing the swarm: the session graph](#seeing-the-swarm-the-session-graph)
 - [Which one to use](#which-one-to-use)
 - [How others do it](#how-others-do-it)
-- [Borrowed, and worth borrowing next](#borrowed-and-worth-borrowing-next)
+- [Borrowed, and considered but not adopted](#borrowed-and-considered-but-not-adopted)
 - [References](#references)
 
 ---
@@ -329,7 +329,18 @@ have no dependency graph between tasks.
 
 The cost is that all of it had to be built and kept working.
 
-## Borrowed, and worth borrowing next
+## Borrowed, and considered but not adopted
+
+Two rules decide whether another project's method comes in, because every borrowed method adds
+instructions and the agents that follow this workflow pay for each redundant or conflicting one:
+
+1. **We need it, and we don't have it.** It fixes a real gap, shown by a run that went wrong, and
+   nothing here already does something similar. If something does, extend that part or skip the
+   method.
+2. **Every conflict it brings is resolved.** Each instruction it adds is checked against the rules
+   already here (the precedence ladder, plans as the only source of code, the verifier, the
+   small-set rule, economy mode, never-ask). The losing side is removed, so an agent never meets
+   two rules it has to choose between.
 
 Already borrowed: Cursor's [pstack](../README.md#borrowed-from-pstack), which supplied
 `engineering-principles` (read once, by the planners) and `create-verification-skill` (the
@@ -342,40 +353,42 @@ criteria by id, `plan-reconciler` catches a criterion with no owner or no journe
 `skills/swarm/ears_trace.py`), and the verifier returns a verdict per criterion instead of
 reading prose ([details](ears/README.md)).
 
-Candidates, ordered by how much they would sharpen analyze → orch → implement:
+Considered on 2026-11-12 and not adopted. Each one failed the first rule, and most failed the
+second as well. Re-open one only with a run that shows the gap:
 1. **Two-stage review: spec first, then quality**
-   ([Superpowers](https://github.com/obra/superpowers)). Split the verifier's verdict into "does
-   it do what the plan and the `R` rows say" and "is the code good". Run quality only after spec
-   passes, so a reviewer does not polish code that solves the wrong problem.
+   ([Superpowers](https://github.com/obra/superpowers)). The spec stage is the verifier, which
+   already gives one verdict per criterion. A quality stage fixes a gap Superpowers has and this
+   workflow does not: there the implementer writes its own code, here `/analyze` writes it into the
+   plan. A post-landing quality reviewer would contradict the plan's code blocks, which rank above
+   everything but invariants and exit criteria.
 2. **Kent Beck's three warning signs, checked mechanically**
-   ([Augmented Coding](https://newsletter.kentbeck.com/p/augmented-coding-beyond-the-vibes)):
-   loops, functionality nobody asked for, and tests disabled or deleted. The second and third are
-   diffable: files outside the phase plan's `## Files` table, and removed, skipped or loosened
-   assertions in test files. Those could run as a gate in `swarm.py verify` instead of relying on
-   a model to notice.
+   ([Augmented Coding](https://newsletter.kentbeck.com/p/augmented-coding-beyond-the-vibes)).
+   Unasked-for files are caught by the pusher's path allowlist and the coordinator's Step 5
+   file-list check. Weakened tests are forbidden in `/implement` and `/do`. Loops are caught by
+   `swarm.py watch` and the stall rules. No run has shown a weakened test. If one does, add a
+   `git diff --numstat` on test files to Step 5's existing check, not a new gate.
 3. **A constitution the plans are checked against**
-   ([Spec Kit](https://github.com/github/spec-kit)). `engineering-principles` is close already.
-   The step still missing is to have `plan-reconciler` fail a plan that breaks a repo-declared
-   rule (for example "no new dependency without a line in Why", or "every migration is
-   reversible"), so the check does not depend on a planner having remembered to apply it.
+   ([Spec Kit](https://github.com/github/spec-kit)). `engineering-principles`, each repo's
+   `CLAUDE.md` and the index's Invariants already play that part. A third rules document would
+   overlap with them and need its own rung on the ladder. If a plan ever breaks its repo's
+   `CLAUDE.md`, add one row to `plan-reconciler`'s conflict table.
 4. **Architect / editor split as the default** ([Aider](https://aider.chat/2024/09/26/architect.html)).
-   Plan on the strongest model and implement on a cheaper one, since the plan already contains
-   the code. Economy mode does this under quota pressure. Measuring it as the normal mode is the
-   obvious next experiment, given that `/analyze` cost more than fourteen phases together.
+   The mechanism exists (`--model`, economy mode, tiered agent models), and planning, not the
+   phases, is where the cost goes. Changing the default is an experiment, not a method: run one
+   multi-phase set with `--model sonnet` phases and compare verdicts, fix rounds and cost first.
 5. **Scope the reviewer, and enforce read-only with tools, not prose**
-   ([Claude Code best practices](https://code.claude.com/docs/en/best-practices)). "A reviewer
-   that's asked to find problems will always find something." Give the verifier an explicit
-   out-of-scope list (style, naming) and an agent definition with no Edit or Write tools, so
-   "never edits code" is a permission and not a request.
-6. **A Ralph loop for stalled phases** ([Huntley](https://ghuntley.com/ralph/)). Today, a phase
-   that dies is respawned from the integration branch. The alternative is a bounded loop: one item
-   per pass, a `fix_plan.md` regenerated each time, and the test suite as backpressure. That may
-   be cheaper for a phase stuck on a long tail of failing tests.
+   ([Claude Code best practices](https://code.claude.com/docs/en/best-practices)). The verifier's
+   scope is its criteria checklist. Problems it finds outside that scope become separate items, not
+   phase failures. It needs Bash to drive the app, so removing Edit and Write would enforce nothing.
+6. **A Ralph loop for stalled phases** ([Huntley](https://ghuntley.com/ralph/)). `/implement`
+   already fixes and re-runs until its checks pass, and a looping phase is killed and respawned.
+   Regenerating a `fix_plan.md` on every pass would put a second planner inside the executor,
+   against "only `/analyze` writes plans".
 7. **Keep review load in mind** ([Simon Willison](https://simonwillison.net/2025/Oct/5/parallel-coding-agents/)).
-   Running parallel agents is limited by how much a human can review, not by compute. The
-   `Decided without asking` block and the plan index's Decisions are the review queue. Making
-   them the first thing the morning summary shows, ranked by how reversible each call is, would
-   spend that attention where it matters.
+   `Decided without asking` is already the morning's review queue, and the end-of-run notification
+   counts it. The summary opens with what happened to `main` on purpose. Every decided item can be
+   undone with one commit, because irreversible forks go to Open Questions instead, so there is
+   nothing to rank by reversibility.
 
 ## References
 
