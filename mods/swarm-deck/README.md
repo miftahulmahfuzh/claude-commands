@@ -160,6 +160,19 @@ not landed — calls `$.prompt.submit` for what changed: a phase finished or wen
 arrived, a shell crossed the threshold. The first refresh only seeds, so a reload is never woken
 for history. `$.prompt.submit` queues until the coordinator is idle; it never interrupts a turn.
 
+**One writer per row.** *The coordinator was told "phase 4 is done" a minute into phase 4's
+first turn.* MEASURED 2026-11-13: `SWARM_SLUG` and `SWARM_PHASE` are environment, so every
+`claude` a phase's hooks or shells start inherits the phase's identity. A plugin's hook ran
+`claude -p` for a one-turn side call; the child loaded this mod, wrote `starting`, `working`,
+`idle` and, on exit, `done` onto phase 4's row, and the coordinator's refresh read `done` before
+phase 4's next heartbeat restored `working`. Three things now stand in the way. A row carries the
+id of the session that writes it, and another session writes it only when that one said `done` or
+has missed three heartbeats (a respawned phase takes its number over that way); a headless
+session never writes one. A finish wakes the coordinator only when two refreshes, 15 s apart,
+agree. And a status wake names the row it fired on (key, status, turns, last tool, session,
+age), so a wrong one identifies its own source. A phase the coordinator reaped is read from the
+set's `.runtime.json` (`reaped.<n>`), which is where `swarm.py` records it.
+
 **Long shells.** *A shell that runs for twenty minutes looks exactly like a phase that is working.*
 Each phase's row carries its foreground Bash calls (command, start time, whether a subagent runs
 it). The deck lists them under the row; one past `MAX_SHELL_SCRIPT_DURATION` (default `5m`; `90s`,

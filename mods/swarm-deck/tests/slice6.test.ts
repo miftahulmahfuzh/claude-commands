@@ -37,7 +37,8 @@ function asPhase(on: any, env: Record<string, string> = {}) {
 
 /** The coordinator of `ears`, or a bystander when `me` is not the ledger's session. */
 function asCoordinator(on: any, me: string, env: Record<string, string> = {},
-                       ledger: () => unknown = () => ({ slug: 'ears', coordinator_session_id: 'orch' })) {
+                       ledger: () => unknown = () => ({ slug: 'ears', coordinator_session_id: 'orch' }),
+                       runtime: () => unknown = () => ({})) {
   mock.env(on, env)
   on('session.start', () => ({ cwd: '/repo' }))
   on('session.id', () => ({ value: me }))
@@ -45,7 +46,10 @@ function asCoordinator(on: any, me: string, env: Record<string, string> = {},
   on('command.register', () => ({ value: undefined }))
   on('session.repo', () => ({ value: { root: '/repo', remote: null } }))
   on('fs.list', () => ({ value: [{ name: 'ears', kind: 'dir', size: 0, isLink: false }] }))
-  on('fs.read', () => ({ value: JSON.stringify(ledger()) }))
+  // Two files live beside each other: the committed ledger and swarm.py's local runtime.
+  on('fs.read', ($: any, e: any) => ({
+    value: JSON.stringify(String(e.path).endsWith('/.runtime.json') ? runtime() : ledger()),
+  }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['drawn by Claude Code'] }))
   on('ui.log', () => ({ value: undefined }))
@@ -140,37 +144,48 @@ test('the coordinator is woken when a phase finishes -- once, and not for histor
   // The first refresh only seeds: a coordinator adopting a set mid-run is not woken for it.
   expect(woken).toEqual([])
 
+  // One reading is one writer's word: the wake waits for the next refresh to agree.
   saved.set(ROW, row({ status: 'finished', updatedAt: 14000 }))
+  await clock.advance(15000)
+  expect(woken).toEqual([])
+  saved.set(ROW, row({ status: 'finished', updatedAt: 29000 }))
   await clock.advance(15000)
   expect(woken).toHaveLength(1)
   expect(woken[0]).toContain('phase 4 is finished')
   expect(woken[0]).toContain('swarm.py verify --slug ears --apply')
 
-  saved.set(ROW, row({ status: 'finished', updatedAt: 29000 }))
+  saved.set(ROW, row({ status: 'finished', updatedAt: 44000 }))
   await clock.advance(15000)
   expect(woken).toHaveLength(1)
 })
 
 test('finished, then done, then a report after it is reaped: one wake for one finish', async ($, on) => {
   const ledger: any = { slug: 'ears', coordinator_session_id: 'orch', phases: [{ n: 4, status: 'spawned' }] }
-  const woken = asCoordinator(on, 'orch', {}, () => ledger)
+  const runtime: any = { sessions: { '4': { name: 'impl-ears-p4' } }, reaped: {} }
+  const woken = asCoordinator(on, 'orch', {}, () => ledger, () => runtime)
   const clock = mock.clock(on)
   const saved = storeSpy(on, { [ROW]: row({ status: 'working', updatedAt: 0 }) })
 
   await $.session.start(START)
   saved.set(ROW, row({ status: 'finished', updatedAt: 14000 }))
   await clock.advance(15000)
-  expect(woken).toHaveLength(1)
+  expect(woken).toEqual([])
 
-  // The ledger catches up: the same finish, not a second one.
+  // The session exits: the second reading agrees it has ended, and that is the one wake.
   saved.set(ROW, row({ status: 'done', updatedAt: 29000 }))
   await clock.advance(15000)
   expect(woken).toHaveLength(1)
+  await clock.advance(15000)
+  expect(woken).toHaveLength(1)
 
-  // Reaped: whatever that phase's row or reports do now, the coordinator already closed it.
-  ledger.phases[0] = { n: 4, status: 'done', reaped_at: '2026-11-11T03:30:00Z' }
-  saved.set(ROW, row({ status: 'finished', updatedAt: 44000 }))
-  saved.set('swarm/ears/sent/4', [{ text: 'DONE phase 4 again', at: 44000 }])
+  // Reaped, recorded where swarm.py records it -- the runtime file, never the ledger's
+  // phases. Whatever that phase's row or reports do now, the coordinator already closed it.
+  ledger.phases[0] = { n: 4, status: 'done' }
+  runtime.sessions = {}
+  runtime.reaped = { '4': { phase: 4, reaped_at: '2026-11-11T03:30:00Z' } }
+  saved.set(ROW, row({ status: 'finished', updatedAt: 59000 }))
+  saved.set('swarm/ears/sent/4', [{ text: 'DONE phase 4 again', at: 59000 }])
+  await clock.advance(15000)
   await clock.advance(15000)
   expect(woken).toHaveLength(1)
 })
@@ -196,6 +211,8 @@ test('a report and the status lines after it are one finish; working again re-ar
   saved.set(ROW, row({ status: 'working', updatedAt: 44000 }))
   await clock.advance(15000)
   saved.set(ROW, row({ status: 'finished', updatedAt: 59000 }))
+  await clock.advance(15000)
+  saved.set(ROW, row({ status: 'finished', updatedAt: 74000 }))
   await clock.advance(15000)
   expect(woken).toHaveLength(2)
   expect(woken[1]).toContain('phase 4 is finished')

@@ -17,6 +17,14 @@
 // what keeps the guard dormant in ordinary interactive work -- the property test 3 pins.
 let swarm = null
 
+// This session's id, and whether it runs headless (`claude -p`). Both read at session.start,
+// both only ever used to decide who may write the phase's row -- see ownsRow.
+let me = null
+let headless = false
+
+/** Three missed heartbeats: a row this old has no live writer behind it. */
+const CLAIM_MS = 45000
+
 // What the heartbeat reports. Module-level so the hooks share it the way the engine
 // intends: one hook records, another publishes.
 let lastTool = null
@@ -65,6 +73,39 @@ function rowKey() {
   return 'swarm/' + swarm.slug + '/phase/' + swarm.phase
 }
 
+/**
+ * True when THIS session is the one that may write the phase's row.
+ *
+ * SWARM_SLUG and SWARM_PHASE are environment, and environment is inherited: every `claude`
+ * a phase's hooks or shells start carries the phase's identity. MEASURED 2026-11-13 on
+ * random-twin-yardstick: a plugin's hook in phase 4 ran `claude -p` for a one-turn Haiku
+ * call (14:49:14-19 and 14:52:40-46). That child loaded this mod, took phase 4's identity,
+ * wrote starting -> working -> idle onto phase 4's row, and on exit wrote `done`. Phase 4's
+ * next heartbeat put `working` back, but the coordinator's refresh had already read `done`
+ * and woke it with "phase 4 is done" -- twice, one minute and five minutes into a turn that
+ * ran thirteen.
+ *
+ * The guards stay armed in such a child (identity is unchanged, so nothing is disarmed);
+ * only the row has an owner. A headless session never owns one: `swarm.py spawn` starts
+ * every phase interactively in a tmux window. Otherwise the row belongs to the session
+ * whose id it carries for as long as that session keeps heartbeating; a row that says
+ * `done`, has gone three heartbeats without a write, or predates this field is free, which
+ * is what lets a respawned phase take its number over.
+ *
+ * Unknown reads as owner: a store that cannot be read must not silence a real phase.
+ */
+async function ownsRow($) {
+  if (headless) return false
+  try {
+    const row = await $.store.get(rowKey())
+    if (!row || !row.session || !me || row.session === me) return true
+    if (row.status === 'done' || missing(row.updatedAt)) return true
+    return (await $.clock.now()) - row.updatedAt > CLAIM_MS
+  } catch (err) {
+    return true
+  }
+}
+
 /** The forks this phase settled alone -- same one-writer rule as the row. */
 function decisionKey() {
   return 'swarm/' + swarm.slug + '/decided/' + swarm.phase
@@ -109,6 +150,7 @@ async function watch($, e, next) {
  */
 async function publish($) {
   if (swarm === null) return
+  if (!(await ownsRow($))) return
   let contextPct = null
   try {
     const usage = await $.session.usage()
@@ -120,6 +162,7 @@ async function publish($) {
     await $.store.set(rowKey(), {
       slug: swarm.slug,
       phase: swarm.phase,
+      session: me,
       coordinator: swarm.coordinator || null,
       status: phaseState,
       turns: turns,
@@ -261,11 +304,14 @@ async function mirror($, e, result) {
  */
 async function finish($) {
   if (swarm === null) return
+  // A child that inherited this phase's identity ends long before the phase does.
+  if (!(await ownsRow($))) return
   phaseState = 'done'
   try {
     await $.store.set(rowKey(), {
       slug: swarm.slug,
       phase: swarm.phase,
+      session: me,
       coordinator: swarm.coordinator || null,
       status: 'done',
       turns: turns,
@@ -820,7 +866,11 @@ function startDeckTimer($) {
  * that is not there.
  */
 async function refresh($) {
-  if (fleetSlug === null) {
+  // ONE slug for the whole pass. fleetSlug is module state and this function awaits a
+  // dozen times; rediscover() and /fleet can change it in between, and rows read under one
+  // set must never be compared against what was last seen of another.
+  const slug = fleetSlug
+  if (slug === null) {
     $.ui.invalidate('ui.render')
     return
   }
@@ -830,15 +880,16 @@ async function refresh($) {
   } catch (err) {
     return
   }
-  const prefix = 'swarm/' + fleetSlug + '/phase/'
-  const sentPrefix = 'swarm/' + fleetSlug + '/sent/'
+  const prefix = 'swarm/' + slug + '/phase/'
+  const sentPrefix = 'swarm/' + slug + '/sent/'
   const rows = []
   const latest = []
   for (const key of keys) {
     try {
       if (key.startsWith(prefix)) {
         const row = await $.store.get(key)
-        if (row) rows.push(row)
+        // The key it was read from travels with the row, so a wake can name its source.
+        if (row) rows.push(Object.assign({}, row, { key: key }))
       } else if (key.startsWith(sentPrefix)) {
         // The mirrored reports. Without reading these the durability fix is write-only:
         // the text survives an approval gate and then nobody can see it.
@@ -855,32 +906,57 @@ async function refresh($) {
   }
   rows.sort((a, b) => Number(a.phase) - Number(b.phase))
   latest.sort((a, b) => Number(a.phase) - Number(b.phase))
+  // The watched set changed while the store was being read: these rows are the old set's.
+  if (fleetSlug !== slug) return
   fleet = rows
   reports = latest
   leaseLines = await readLeases($)
   $.ui.invalidate('ui.render')
   // A phase is never woken by its own deck: only the set's live coordinator acts on it.
   if (swarm !== null) return
-  const ledger = await ownLedger($, fleetSlug)
+  const ledger = await ownLedger($, slug)
+  const closed = ledger !== null ? await reaped($, slug) : new Set()
+  const now = await $.clock.now()
+  if (fleetSlug !== slug) return
   owner = ledger !== null && !ledger.landed
   if (ledger !== null) {
-    const m = milestones(announced && announced.slug === fleetSlug ? announced : null, ledger)
-    announced = Object.assign({ slug: fleetSlug }, m.next)
+    const m = milestones(announced && announced.slug === slug ? announced : null, ledger)
+    announced = Object.assign({ slug: slug }, m.next)
     for (const line of m.lines) {
       try {
-        await $.ui.notify(fleetSlug + ' ' + line, { title: 'swarm' })
+        await $.ui.notify(slug + ' ' + line, { title: 'swarm' })
       } catch (err) {
         // No channel, or a hook refused it: the band and the termination block still say it.
       }
     }
   }
-  const now = await $.clock.now()
-  const seenSlug = seen && seen.slug
-  const closed = new Set((ledger && Array.isArray(ledger.phases) ? ledger.phases : [])
-    .filter(p => p.reaped_at).map(p => String(p.n)))
-  const found = changes(seenSlug === fleetSlug ? seen : null, rows, latest, now, closed)
-  seen = Object.assign({ slug: fleetSlug }, found.next)
-  if (owner) await wake($, found.events)
+  // No await between reading `seen` and writing it: two refreshes may overlap (the timer
+  // does not wait for a slow one), and each must compare against a whole earlier pass.
+  const found = changes(seen && seen.slug === slug ? seen : null, rows, latest, now, closed)
+  seen = Object.assign({ slug: slug }, found.next)
+  if (owner) await wake($, slug, found.events)
+}
+
+/**
+ * The phases whose window the coordinator has closed, as strings.
+ *
+ * SHIPPED BUG: this was read from `ledger.phases[].reaped_at`, a field nothing writes.
+ * `swarm.py reap` records a closed window in the set's .runtime.json, under `reaped.<n>`
+ * (see `forget` in skills/swarm/swarm.py), so the set was always empty and a reaped phase
+ * could wake the coordinator again. A phase that has a session again was respawned, and is
+ * not closed.
+ */
+async function reaped($, slug) {
+  try {
+    const found = await discover($)
+    if (!found.root) return new Set()
+    const runtime = JSON.parse(await $.fs.read(found.root + '/.workflows/orchestration/' + slug + '/.runtime.json'))
+    const live = runtime.sessions || {}
+    return new Set(Object.keys(runtime.reaped || {}).filter(n => !(n in live)))
+  } catch (err) {
+    // No runtime file on this machine: nothing is known to be closed.
+    return new Set()
+  }
 }
 
 /** `working 41%  Bash   12s ago`, or the reason there is nothing to say. */
@@ -943,19 +1019,33 @@ function oneLine(text, width) {
  */
 function changes(prev, rows, latest, now, closed) {
   const shut = closed || new Set()
-  const next = { status: {}, report: {}, shell: {}, ended: {} }
+  const next = { status: {}, report: {}, shell: {}, ended: {}, pending: {} }
   const events = []
   const ended = phase => Boolean(prev && prev.ended && prev.ended[phase])
+  const pending = phase => Boolean(prev && prev.pending && prev.pending[phase])
   for (const row of rows) {
     const label = shown(row, now).label
     next.status[row.phase] = label
     const terminal = label === 'finished' || label === 'done'
-    // Ended stays set until the phase works again, so finished -> done is one finish.
-    if (terminal || (ended(row.phase) && label !== 'working')) next.ended[row.phase] = true
-    if (shut.has(String(row.phase))) continue
-    if (prev && prev.status[row.phase] !== label) {
-      if (terminal && !ended(row.phase)) events.push('phase ' + row.phase + ' is ' + label)
-      if (label === 'QUIET') events.push('phase ' + row.phase + ' has stopped heartbeating')
+    const closedPhase = shut.has(String(row.phase))
+    if (ended(row.phase)) {
+      // Ended stays set until the phase works again, so finished -> done is one finish.
+      if (label !== 'working') next.ended[row.phase] = true
+    } else if (terminal) {
+      // Seeding, or a phase the coordinator already closed: history, never news.
+      if (!prev || closedPhase) next.ended[row.phase] = true
+      // TWO READINGS, 15s APART, MUST AGREE before a finish wakes anyone. A finish is the
+      // one event the coordinator acts on irreversibly (verify, reap, spawn the next wave),
+      // and a single reading of a shared store is one writer's word. See ownsRow for the
+      // night a one-second `done` cost two coordinator turns.
+      else if (pending(row.phase)) {
+        next.ended[row.phase] = true
+        events.push('phase ' + row.phase + ' is ' + label + source(row, now))
+      } else next.pending[row.phase] = true
+    }
+    if (closedPhase) continue
+    if (prev && prev.status[row.phase] !== label && label === 'QUIET') {
+      events.push('phase ' + row.phase + ' has stopped heartbeating' + source(row, now))
     }
     for (const s of Array.isArray(row.shells) ? row.shells : []) {
       if (missing(s.startedAt)) continue
@@ -979,10 +1069,23 @@ function changes(prev, rows, latest, now, closed) {
       const status = 'phase ' + report.phase + ' is '
       for (let i = events.length - 1; i >= 0; i--) if (events[i].startsWith(status)) events.splice(i, 1)
       next.ended[report.phase] = true
+      delete next.pending[report.phase]
       events.push('phase ' + report.phase + ' sent a report: ' + oneLine(report.text, 300))
     }
   }
   return { next: next, events: events }
+}
+
+/**
+ * The row a status wake fired on, so a wrong one names its own source. Every false wake so
+ * far had to be reconstructed from timestamps after the row had already changed back.
+ */
+function source(row, now) {
+  return ' [row ' + (row.key || 'swarm/' + row.slug + '/phase/' + row.phase) +
+    ': status ' + row.status + ', turns ' + (missing(row.turns) ? '--' : row.turns) +
+    ', last tool ' + (row.lastTool || '--') +
+    ', session ' + (row.session ? String(row.session).slice(0, 8) : '--') +
+    ', updated ' + ago(now, row.updatedAt) + ' ago]'
 }
 
 /** The set's ledger when THIS session coordinates it, landed or not; else null. */
@@ -1027,14 +1130,14 @@ function milestones(prev, ledger) {
  * Start a coordinator turn for what changed. $.prompt.submit queues until the session is
  * idle, so a busy coordinator reads it when it next stops rather than being interrupted.
  */
-async function wake($, events) {
+async function wake($, slug, events) {
   if (events.length === 0) return
   const text = [
-    'swarm-deck: set ' + fleetSlug + ' changed while you were not looking.',
+    'swarm-deck: set ' + slug + ' changed while you were not looking.',
     ...events.map(x => '- ' + x),
     '',
     'Act on it now, from git rather than from this message: `python3 ~/.claude/skills/swarm/swarm.py ' +
-      'verify --slug ' + fleetSlug + ' --apply`, read each new commit\'s file list, reap, and spawn ' +
+      'verify --slug ' + slug + ' --apply`, read each new commit\'s file list, reap, and spawn ' +
       'whatever is runnable. For a long shell, read the pane (`tmux capture-pane -p -t <window>`) ' +
       'before deciding it is stuck; kill and respawn only a loop.',
   ].join('\n')
@@ -1523,6 +1626,12 @@ export function register(on) {
   on('session.start', async ($, e, next) => {
     const slug = await $.env.get('SWARM_SLUG')
     const phase = await $.env.get('SWARM_PHASE')
+    headless = e.isInteractive === false
+    try {
+      me = await $.session.id()
+    } catch (err) {
+      // No id: ownership cannot be told apart, so this session writes as it always did.
+    }
     try {
       const ms = duration(await $.env.get('MAX_SHELL_SCRIPT_DURATION'))
       if (ms !== null) maxShellMs = ms
