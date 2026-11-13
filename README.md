@@ -28,6 +28,7 @@ be built before it held, and how it compares with agent teams, Gas Town, claude-
   - [`swarm`](#swarm)
   - [`create-task`](#create-task)
   - [`audit-and-resolve-swarm-workflows`](#audit-and-resolve-swarm-workflows)
+  - [`report-swarm-bug`](#report-swarm-bug)
 - [Borrowed from pstack](#borrowed-from-pstack)
   - [`engineering-principles`](#engineering-principles)
   - [`create-verification-skill`](#create-verification-skill)
@@ -506,6 +507,24 @@ other copy becomes a pointer. What an audit keeps on purpose goes into its
 `known-intentional.md`, so the next run does not flag it again. The first run (2026-11-12) found
 a plan set that could be landed twice, the first time without its verifier.
 
+It has two more sources besides the files. It reads the `#aoi-bug` notes that
+[`report-swarm-bug`](#report-swarm-bug) filed since the last audit, reproduces the open ones,
+and treats several reports on one component as a sign that earlier fixes treated symptoms. Then
+it researches two questions only: what Claude Code has added since the last audit that lets us
+delete a rule or solve an open problem, and whether anyone has solved what the audit could not.
+Each candidate has to pass the borrowing tenets, and what survives is a proposal to the owner,
+not an edit.
+
+### `report-swarm-bug`
+`/report-swarm-bug <what happened>`, typed in any session of any repo when the workflow itself
+does something wrong, redundant, conflicting or wasteful. It saves one note in a fixed format
+(the owner's words, the set, phase and role, the claude-commands commit and Claude Code version,
+the ledger status and the pasted evidence), tags it `#aoi-bug #aoi-open` and links it to the
+session. It records and does not diagnose, so it is cheap enough to run in a live coordinator,
+and it never fixes in place: "fix it now" launches a separate session in this repo. A fixed
+report is closed with its commit and stays readable for the next audit. `/postmortem` is for
+the code of the codebase being worked on; this is for the workflow only.
+
 ## Borrowed from pstack
 
 Two pieces of this pipeline are adapted from Lauren Tan's
@@ -771,6 +790,7 @@ claude-commands/
 │   ├── task/                 # + DESIGN.md, taskcore/task_gh/task_gl/todos/session.py
 │   ├── swarm/                # + swarm.py, plan_graph.py, ears_trace.py, tests/ — the orchestrator's mechanics
 │   ├── audit-and-resolve-swarm-workflows/  # + reviewer briefs, known-intentional.md
+│   ├── report-swarm-bug/     # + capture.sh — files the aoi-bug notes the audit reads
 │   ├── engineering-principles/     # from pstack — read by the planners
 │   ├── create-verification-skill/  # from pstack — + references/
 │   └── …                     # the standalone skills — see docs/other-tools.md

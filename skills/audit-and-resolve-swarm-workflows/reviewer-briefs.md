@@ -5,6 +5,9 @@ two placeholders, and update the file lists when the inventory (SKILL.md step 1)
 
 `{KNOWN}` — the entries of `known-intentional.md`, verbatim.
 `{SINCE}` — the commit range since the last audit, and the files it touched.
+`{REPORTS}` — the aoi-bug clusters from SKILL.md step 1b that fall in this reviewer's files: for
+each, the note ids, the symptom in the owner's words and the pasted evidence. "none" when there
+are none or the notes server was unavailable.
 
 ## Shared rules (append to every brief)
 
@@ -29,6 +32,11 @@ Do NOT report these; they are deliberate decisions:
 {KNOWN}
 
 Changed since the last audit (look hardest here): {SINCE}
+
+Reported from real runs since the last audit: {REPORTS}
+For each, read the code and prompts behind the symptom and say which lines cause it, as a finding
+of the kinds above, or say plainly that you could not find the cause. Do not explain a report
+away: the symptom was observed.
 
 Only report what you verified by reading the actual lines. Every finding needs file:line and a
 short quote of each side. No style preferences, no "could be clearer". At most one line per
