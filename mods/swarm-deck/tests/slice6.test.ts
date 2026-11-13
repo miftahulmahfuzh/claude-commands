@@ -135,7 +135,7 @@ test('a shell past MAX_SHELL_SCRIPT_DURATION lights the deck and the band', asyn
   await band.unmount()
 })
 
-test('the coordinator is woken when a phase finishes -- once, and not for history', async ($, on) => {
+test('the coordinator is woken when a phase ends unrecorded -- once, and not for history', async ($, on) => {
   const woken = asCoordinator(on, 'orch')
   const clock = mock.clock(on)
   const saved = storeSpy(on, { [ROW]: row({ status: 'working', updatedAt: 0 }) })
@@ -145,94 +145,82 @@ test('the coordinator is woken when a phase finishes -- once, and not for histor
   expect(woken).toEqual([])
 
   // One reading is one writer's word: the wake waits for the next refresh to agree.
-  saved.set(ROW, row({ status: 'finished', updatedAt: 14000 }))
+  saved.set(ROW, row({ status: 'done', updatedAt: 14000 }))
   await clock.advance(15000)
   expect(woken).toEqual([])
-  saved.set(ROW, row({ status: 'finished', updatedAt: 29000 }))
   await clock.advance(15000)
   expect(woken).toHaveLength(1)
-  expect(woken[0]).toContain('phase 4 is finished')
+  expect(woken[0]).toContain('phase 4\'s session has ended')
   expect(woken[0]).toContain('swarm.py verify --slug ears --apply')
 
-  saved.set(ROW, row({ status: 'finished', updatedAt: 44000 }))
+  await clock.advance(15000)
   await clock.advance(15000)
   expect(woken).toHaveLength(1)
 })
 
-test('finished, then done, then a report after it is reaped: one wake for one finish', async ($, on) => {
-  const ledger: any = { slug: 'ears', coordinator_session_id: 'orch', phases: [{ n: 4, status: 'spawned' }] }
-  const runtime: any = { sessions: { '4': { name: 'impl-ears-p4' } }, reaped: {} }
+test('a phase the coordinator reaped never wakes it again, whatever its row or reports do', async ($, on) => {
+  const ledger: any = { slug: 'ears', coordinator_session_id: 'orch', phases: [{ n: 4, status: 'done', commit: 'abc1234' }] }
+  // Reaped, recorded where swarm.py records it -- the runtime file, never the ledger's phases.
+  const runtime: any = { sessions: {}, reaped: { '4': { phase: 4, reaped_at: '2026-11-11T03:30:00Z' } } }
   const woken = asCoordinator(on, 'orch', {}, () => ledger, () => runtime)
   const clock = mock.clock(on)
-  const saved = storeSpy(on, { [ROW]: row({ status: 'working', updatedAt: 0 }) })
+  const saved = storeSpy(on, { [ROW]: row({ status: 'finished', updatedAt: 0 }) })
 
   await $.session.start(START)
-  saved.set(ROW, row({ status: 'finished', updatedAt: 14000 }))
-  await clock.advance(15000)
+  saved.set(ROW, row({ status: 'done', updatedAt: 14000 }))
+  saved.set('swarm/ears/sent/4', [{ text: 'DONE phase 4 again', at: 14000, delivered: false }])
+  for (let i = 0; i < 12; i++) await clock.advance(15000)
   expect(woken).toEqual([])
-
-  // The session exits: the second reading agrees it has ended, and that is the one wake.
-  saved.set(ROW, row({ status: 'done', updatedAt: 29000 }))
-  await clock.advance(15000)
-  expect(woken).toHaveLength(1)
-  await clock.advance(15000)
-  expect(woken).toHaveLength(1)
-
-  // Reaped, recorded where swarm.py records it -- the runtime file, never the ledger's
-  // phases. Whatever that phase's row or reports do now, the coordinator already closed it.
-  ledger.phases[0] = { n: 4, status: 'done' }
-  runtime.sessions = {}
-  runtime.reaped = { '4': { phase: 4, reaped_at: '2026-11-11T03:30:00Z' } }
-  saved.set(ROW, row({ status: 'finished', updatedAt: 59000 }))
-  saved.set('swarm/ears/sent/4', [{ text: 'DONE phase 4 again', at: 59000 }])
-  await clock.advance(15000)
-  await clock.advance(15000)
-  expect(woken).toHaveLength(1)
 })
 
-test('a report and the status lines after it are one finish; working again re-arms it', async ($, on) => {
+test('a report stands in for the finish; working again re-arms it', async ($, on) => {
   const woken = asCoordinator(on, 'orch')
   const clock = mock.clock(on)
   const saved = storeSpy(on, { [ROW]: row({ status: 'working', updatedAt: 0 }) })
+  let now = 0
+  const tick = async (status: string) => {
+    now += 15000
+    saved.set(ROW, row({ status, updatedAt: now - 1000 }))
+    await clock.advance(15000)
+  }
 
   await $.session.start(START)
-  saved.set(ROW, row({ status: 'finished', updatedAt: 14000 }))
-  saved.set('swarm/ears/sent/4', [{ text: 'DONE phase 4 at abc1234', at: 14000 }])
-  await clock.advance(15000)
+  await tick('working')
+  // It reported and nobody by that name was there: said at once, and it IS the finish.
+  saved.set('swarm/ears/sent/4', [{ text: 'DONE phase 4 at abc1234', at: now, delivered: false }])
+  await tick('finished')
   expect(woken).toHaveLength(1)
-  expect(woken[0]).toContain('sent a report: DONE phase 4 at abc1234')
-  expect(woken[0]).not.toContain('phase 4 is finished')
-
-  saved.set(ROW, row({ status: 'done', updatedAt: 29000 }))
-  await clock.advance(15000)
+  expect(woken[0]).toContain('sent a report that was NOT delivered: DONE phase 4 at abc1234')
+  for (let i = 0; i < 28; i++) await tick('finished')
   expect(woken).toHaveLength(1)
 
-  // The coordinator sent it back to work; its next finish is news.
-  saved.set(ROW, row({ status: 'working', updatedAt: 44000 }))
-  await clock.advance(15000)
-  saved.set(ROW, row({ status: 'finished', updatedAt: 59000 }))
-  await clock.advance(15000)
-  saved.set(ROW, row({ status: 'finished', updatedAt: 74000 }))
-  await clock.advance(15000)
+  // The coordinator sent it back to work; a finish that nothing follows is news again.
+  await tick('working')
+  for (let i = 0; i < 22; i++) await tick('finished')
   expect(woken).toHaveLength(2)
-  expect(woken[1]).toContain('phase 4 is finished')
+  expect(woken[1]).toContain('phase 4 finished its turn 5m ago and nothing followed')
 })
 
-test('the coordinator is woken at each threshold a shell crosses -- the progress report', async ($, on) => {
+test('with no watch running, a long shell wakes the coordinator: at the line, then every sixth', async ($, on) => {
   const woken = asCoordinator(on, 'orch', { MAX_SHELL_SCRIPT_DURATION: '1m' })
   const clock = mock.clock(on)
   const shells = [{ command: 'npm test', startedAt: 0, agent: true }]
   const saved = storeSpy(on, { [ROW]: row({ shells, updatedAt: 0 }) })
 
   await $.session.start(START)
-  for (let t = 15000; t <= 135000; t += 15000) {
+  for (let t = 15000; t <= 345000; t += 15000) {
     saved.set(ROW, row({ shells, updatedAt: t - 1000 }))
     await clock.advance(15000)
   }
-  // 1m and 2m crossed: two wakes, each naming the command and that a subagent runs it.
-  expect(woken).toHaveLength(2)
+  // 1m crossed; 2m to 5m are the same shell and nothing new.
+  expect(woken).toHaveLength(1)
   expect(woken[0]).toContain('one shell running 60s (in a subagent): npm test')
-  expect(woken[1]).toContain('2m')
+  for (let t = 360000; t <= 375000; t += 15000) {
+    saved.set(ROW, row({ shells, updatedAt: t - 1000 }))
+    await clock.advance(15000)
+  }
+  expect(woken).toHaveLength(2)
+  expect(woken[1]).toContain('6m')
 })
 
 test('a session that only watches someone else\'s set is never woken', async ($, on) => {
@@ -241,7 +229,9 @@ test('a session that only watches someone else\'s set is never woken', async ($,
   const saved = storeSpy(on, { [ROW]: row({ status: 'working', updatedAt: 0 }) })
 
   await $.session.start(START)
-  saved.set(ROW, row({ status: 'finished', updatedAt: 14000 }))
+  saved.set(ROW, row({ status: 'done', updatedAt: 14000 }))
+  await clock.advance(15000)
+  await clock.advance(15000)
   await clock.advance(15000)
   expect(woken).toEqual([])
 })

@@ -125,7 +125,18 @@ function sentKey() {
  * is the session's to poll, so it is not tracked.
  */
 async function watch($, e, next) {
-  if (swarm === null) return next(e)
+  if (swarm === null) {
+    // The coordinator reading its set from git: from here on it knows every phase's state
+    // as of now. Stamped at the START of the call, so nothing that lands during it counts.
+    if (e.tool === 'Bash' && /swarm\.py\S*\s+(verify|reap|land)\b/.test(String(e.command || ''))) {
+      try {
+        ackAt = await $.clock.now()
+      } catch (err) {
+        // No clock: nothing is acknowledged, and the deck errs towards saying it.
+      }
+    }
+    return next(e)
+  }
   lastTool = e.tool
   if (e.tool !== 'Bash' || e.run_in_background === true) return next(e)
   const entry = {
@@ -718,6 +729,42 @@ let owner = false
 /** What the last refresh saw, so a wake names only what changed. Null until seeded. */
 let seen = null
 
+// What THIS session already knows, when it is the coordinator. Each is a fact the deck can
+// observe directly, and each makes a wake redundant (see changes):
+//   inbox   the peer messages this session received -- a phase's own report, delivered
+//   ackAt   when this session last started `swarm.py verify|reap|land`, which reads every
+//           phase from git and the ledger
+//   inTurn  whether its main loop is mid-turn: a wake submitted now only queues, and is
+//           stale by the time it is read
+let inbox = []
+let ackAt = null
+let inTurn = false
+
+/** The last readable .runtime.json per set: swarm.py rewrites it in place, so one read in
+ * many catches it empty, and "nothing is reaped, nobody is watching" would be a wrong wake. */
+let runtimeSeen = null
+
+/**
+ * How long a thing must stay true before it wakes the coordinator. Each is the time a
+ * better-informed channel needs to arrive first; a wake fires only if none did.
+ *
+ *   ended     one more refresh: a single reading of a shared store is one writer's word
+ *   finished  MEASURED 2026-11-13: all five phases' turns ended 2-4 minutes before their
+ *             commit and report existed, and each early wake cost a turn that found
+ *             `pending`. Worth a wake only when nothing follows.
+ *   recorded  the phase's own message, or the coordinator's next verify
+ *   report    a held message is slow, not lost: this is how slow
+ */
+const GRACE = { ended: 15000, finished: 5 * 60000, recorded: 60000, report: 2 * 60000 }
+
+/** A wake waits for the coordinator's turn to end, but not for longer than this. */
+const BUSY_MAX_MS = 10 * 60000
+
+/** After the first warning, a long shell is mentioned again every this many thresholds. */
+const SHELL_REPEAT = 6
+
+const TERMINAL = ['done', 'failed', 'blocked']
+
 /** The ledger milestones last announced (landed, failed phases). Null until seeded. */
 let announced = null
 
@@ -915,7 +962,7 @@ async function refresh($) {
   // A phase is never woken by its own deck: only the set's live coordinator acts on it.
   if (swarm !== null) return
   const ledger = await ownLedger($, slug)
-  const closed = ledger !== null ? await reaped($, slug) : new Set()
+  const runtime = ledger !== null ? await runtimeFacts($, slug) : { closed: new Set(), watch: null }
   const now = await $.clock.now()
   if (fleetSlug !== slug) return
   owner = ledger !== null && !ledger.landed
@@ -932,30 +979,69 @@ async function refresh($) {
   }
   // No await between reading `seen` and writing it: two refreshes may overlap (the timer
   // does not wait for a slow one), and each must compare against a whole earlier pass.
-  const found = changes(seen && seen.slug === slug ? seen : null, rows, latest, now, closed)
+  const found = changes(seen && seen.slug === slug ? seen : null, {
+    rows: rows,
+    latest: latest,
+    now: now,
+    closed: runtime.closed,
+    recorded: recorded(ledger),
+    watching: watchAlive(runtime.watch, now),
+    inbox: inbox,
+    ackAt: ackAt,
+    busy: inTurn,
+  })
   seen = Object.assign({ slug: slug }, found.next)
   if (owner) await wake($, slug, found.events)
 }
 
+/** The ledger's word on each phase that has ended: { '4': { status, commit, at } }. */
+function recorded(ledger) {
+  const out = {}
+  for (const p of (ledger && Array.isArray(ledger.phases) ? ledger.phases : [])) {
+    if (!TERMINAL.includes(p.status)) continue
+    const at = Date.parse(p.reported_at || '')
+    out[String(p.n)] = { status: p.status, commit: String(p.commit || '').slice(0, 8), at: isNaN(at) ? null : at }
+  }
+  return out
+}
+
 /**
- * The phases whose window the coordinator has closed, as strings.
- *
- * SHIPPED BUG: this was read from `ledger.phases[].reaped_at`, a field nothing writes.
- * `swarm.py reap` records a closed window in the set's .runtime.json, under `reaped.<n>`
- * (see `forget` in skills/swarm/swarm.py), so the set was always empty and a reaped phase
- * could wake the coordinator again. A phase that has a session again was respawned, and is
- * not closed.
+ * True while a `swarm.py watch` for this set is running: it writes `watch.at` (epoch
+ * seconds) into .runtime.json every half minute and removes it when it ends.
  */
-async function reaped($, slug) {
+function watchAlive(watch, now) {
+  if (!watch || missing(watch.at)) return false
+  const allowed = Math.max(90000, 3 * 1000 * (Number(watch.interval) || 0))
+  return now - watch.at * 1000 < allowed
+}
+
+/**
+ * What swarm.py's local runtime file says: which phases the coordinator has closed, and
+ * whether a watch is running.
+ *
+ * SHIPPED BUG: closed phases were read from `ledger.phases[].reaped_at`, a field nothing
+ * writes. `swarm.py reap` records a closed window in the set's .runtime.json, under
+ * `reaped.<n>` (see `forget` in skills/swarm/swarm.py), so the set was always empty and a
+ * reaped phase could wake the coordinator again. A phase that has a session again was
+ * respawned, and is not closed.
+ */
+async function runtimeFacts($, slug) {
   try {
     const found = await discover($)
-    if (!found.root) return new Set()
+    if (!found.root) return { closed: new Set(), watch: null }
     const runtime = JSON.parse(await $.fs.read(found.root + '/.workflows/orchestration/' + slug + '/.runtime.json'))
     const live = runtime.sessions || {}
-    return new Set(Object.keys(runtime.reaped || {}).filter(n => !(n in live)))
+    const facts = {
+      closed: new Set(Object.keys(runtime.reaped || {}).filter(n => !(n in live))),
+      watch: runtime.watch || null,
+    }
+    runtimeSeen = { slug: slug, facts: facts }
+    return facts
   } catch (err) {
-    // No runtime file on this machine: nothing is known to be closed.
-    return new Set()
+    // Caught mid-rewrite, most often: the last good reading stands. No file at all on this
+    // machine means nothing is known to be closed and nobody is known to be watching.
+    if (runtimeSeen && runtimeSeen.slug === slug) return runtimeSeen.facts
+    return { closed: new Set(), watch: null }
   }
 }
 
@@ -999,8 +1085,27 @@ function oneLine(text, width) {
   return flat.length > width ? flat.slice(0, width - 1) + '\u2026' : flat
 }
 
+/** Whitespace collapsed and entities undone, so a report compares equal however it travelled. */
+function plain(text) {
+  return String(text || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim()
+}
+
+/** Did a peer message this session received carry this report? Its opening is enough. */
+function received(messages, text) {
+  const head = plain(text).slice(0, 80)
+  if (head.length === 0) return false
+  return (messages || []).some(m => m.includes(head))
+}
+
+/** Which warning a shell of this age is on: 0 below the line, 1 at it, 2 at 6x, 3 at 12x. */
+function shellStep(age) {
+  const n = Math.floor(age / maxShellMs)
+  return n < 1 ? 0 : 1 + Math.floor(n / SHELL_REPEAT)
+}
+
 /**
- * What changed since the last refresh that the coordinator has to act on.
+ * What the coordinator has to act on and does not already know.
  *
  * Pure, so the test can drive it. The first call only seeds: a session that reloads, or a
  * coordinator that adopts a set mid-run, must not be woken for history.
@@ -1011,67 +1116,126 @@ function oneLine(text, width) {
  * to subscribe with, its Monitor watched HEAD and the tmux window count (a finished claude
  * idles, it does not exit), and nothing else could start its turn. This is that something.
  *
- * One wake per finish, and none for a phase the coordinator already closed. MEASURED
- * 2026-11-11 on session-fork-awareness: a phase's end arrived as three wakes -- its report,
- * `finished` when it idled, `done` when the ledger caught up -- and a reaped phase woke the
- * coordinator again for the same finish. `closed` holds the phases whose window the ledger
- * says was reaped; a finish is announced once and re-armed only when the phase works again.
+ * MEASURED 2026-11-13 on random-twin-yardstick, the opposite failure: 16 wakes in one
+ * five-phase set, of which 14 told the coordinator nothing. Seven repeated a report the
+ * phase's own message had already delivered; five said "finished" minutes before there was
+ * a commit to act on; two repeated a long-shell line `swarm.py watch` had printed seconds
+ * earlier. Each cost a coordinator turn. So the deck is now the BACKSTOP, not the bell:
+ *
+ *   - every condition is re-read from the present on each refresh, and wakes only once it
+ *     has stayed true for its GRACE -- the time a better channel needs to get there first;
+ *   - it is dropped the moment the coordinator provably knows: the report arrived as a
+ *     message (inbox), it ran verify/reap/land since (ackAt), the window is reaped (closed),
+ *     the ledger made it moot (recorded), or a running watch owns that line (watching);
+ *   - nothing is submitted mid-turn, where it would only queue and go stale;
+ *   - one wake per (phase, kind, occurrence), ever: `told` holds every key already said or
+ *     ruled out.
  */
-function changes(prev, rows, latest, now, closed) {
-  const shut = closed || new Set()
-  const next = { status: {}, report: {}, shell: {}, ended: {}, pending: {} }
+function changes(prev, view) {
+  const now = view.now
+  const shut = view.closed || new Set()
+  const ledger = view.recorded || {}
+  const next = { since: {}, worked: {}, told: Object.assign({}, prev ? prev.told : {}) }
   const events = []
-  const ended = phase => Boolean(prev && prev.ended && prev.ended[phase])
-  const pending = phase => Boolean(prev && prev.pending && prev.pending[phase])
-  for (const row of rows) {
+  const settle = key => { next.told[key] = true }
+  const first = key => (prev && prev.since && key in prev.since ? prev.since[key] : now)
+  const offer = (key, grace, text) => {
+    if (next.told[key]) return
+    // Seeding: whatever is already true is history.
+    if (!prev) return settle(key)
+    const since = first(key)
+    next.since[key] = since
+    const age = now - since
+    if (age < grace) return
+    if (view.busy && age < grace + BUSY_MAX_MS) return
+    settle(key)
+    delete next.since[key]
+    events.push(text(since))
+  }
+  const sentAt = {}
+  // Phases whose latest report this session was handed as a message: it has been told.
+  const heard = {}
+  for (const report of view.latest) {
+    sentAt[String(report.phase)] = report.at
+    if (report.delivered !== false && received(view.inbox, report.text)) heard[String(report.phase)] = true
+  }
+
+  for (const row of view.rows) {
+    const p = String(row.phase)
     const label = shown(row, now).label
-    next.status[row.phase] = label
-    const terminal = label === 'finished' || label === 'done'
-    const closedPhase = shut.has(String(row.phase))
-    if (ended(row.phase)) {
-      // Ended stays set until the phase works again, so finished -> done is one finish.
-      if (label !== 'working') next.ended[row.phase] = true
-    } else if (terminal) {
-      // Seeding, or a phase the coordinator already closed: history, never news.
-      if (!prev || closedPhase) next.ended[row.phase] = true
-      // TWO READINGS, 15s APART, MUST AGREE before a finish wakes anyone. A finish is the
-      // one event the coordinator acts on irreversibly (verify, reap, spawn the next wave),
-      // and a single reading of a shared store is one writer's word. See ownsRow for the
-      // night a one-second `done` cost two coordinator turns.
-      else if (pending(row.phase)) {
-        next.ended[row.phase] = true
-        events.push('phase ' + row.phase + ' is ' + label + source(row, now))
-      } else next.pending[row.phase] = true
+    // The last time this phase was seen working names its current finish: working again
+    // re-arms it without anyone having to remember to.
+    const worked = label === 'working' ? now : (prev && prev.worked && p in prev.worked ? prev.worked[p] : 0)
+    next.worked[p] = worked
+    if (shut.has(p)) continue
+
+    if (label === 'QUIET') {
+      offer(p + '|quiet|' + row.updatedAt, 0,
+        () => 'phase ' + p + ' has stopped heartbeating' + source(row, now))
     }
-    if (closedPhase) continue
-    if (prev && prev.status[row.phase] !== label && label === 'QUIET') {
-      events.push('phase ' + row.phase + ' has stopped heartbeating' + source(row, now))
+    // Its session is gone and the ledger never heard it finish: the window closed on
+    // unfinished work. Said by the deck whether or not a watch is running.
+    if (label === 'done' && !ledger[p]) {
+      offer(p + '|ended|' + (row.session || '') + '|' + worked, GRACE.ended,
+        () => 'phase ' + p + '\'s session has ended, and the ledger does not record it done, ' +
+          'failed or blocked' + source(row, now))
+    }
+    // Its turn ended. That is not yet anything to act on: the commit, the ledger line and
+    // the report follow. It is news only if they do not.
+    const reported = !missing(sentAt[p]) && sentAt[p] >= worked
+    if (label === 'finished' && !ledger[p] && !reported) {
+      offer(p + '|finished|' + worked, GRACE.finished,
+        since => 'phase ' + p + ' finished its turn ' + ago(now, since) + ' ago and nothing ' +
+          'followed: no report, and the ledger does not record it done' + source(row, now))
     }
     for (const s of Array.isArray(row.shells) ? row.shells : []) {
       if (missing(s.startedAt)) continue
-      const key = row.phase + '@' + s.startedAt
-      // One wake per threshold crossed: 5m, then 10m, then 15m -- a progress report that
-      // costs the phase nothing and the coordinator one turn per interval.
-      const step = Math.floor((now - s.startedAt) / maxShellMs)
-      next.shell[key] = step
-      if (prev && step >= 1 && step > (prev.shell[key] || 0)) {
-        events.push('phase ' + row.phase + ' has had one shell running ' + ago(now, s.startedAt) +
+      const step = shellStep(now - s.startedAt)
+      if (step < 1) continue
+      const key = p + '|shell|' + s.startedAt + '|' + step
+      // ONE SOURCE for a long shell. The watch's line is the better one -- it has the pid
+      // and whether the process tree is moving -- so while a watch runs the deck is silent
+      // and only the row and the band show it. With no watch, this is the only warning.
+      if (view.watching) { settle(key); continue }
+      offer(key, 0,
+        () => 'phase ' + p + ' has had one shell running ' + ago(now, s.startedAt) +
           (s.agent ? ' (in a subagent)' : '') + ': ' + oneLine(s.command, 160))
-      }
     }
   }
-  for (const report of latest) {
-    next.report[report.phase] = report.at
-    if (shut.has(String(report.phase))) continue
-    if (prev && !missing(report.at) && report.at !== prev.report[report.phase]) {
-      // A report is the phase saying it finished: it stands in for the status line, and
-      // the status lines that follow it are the same finish.
-      const status = 'phase ' + report.phase + ' is '
-      for (let i = events.length - 1; i >= 0; i--) if (events[i].startsWith(status)) events.splice(i, 1)
-      next.ended[report.phase] = true
-      delete next.pending[report.phase]
-      events.push('phase ' + report.phase + ' sent a report: ' + oneLine(report.text, 300))
+
+  // The ledger says a phase ended. A running watch prints that as an ACT line the instant
+  // it happens, and the phase's own report says it too; with no watch, no report received
+  // and no verify since, nothing else will start a turn for it.
+  for (const p of Object.keys(ledger)) {
+    if (shut.has(p)) continue
+    const rec = ledger[p]
+    const key = p + '|recorded|' + rec.status + '|' + rec.commit
+    if (next.told[key]) continue
+    const at = missing(rec.at) ? first(key) : rec.at
+    if (view.watching || heard[p] || (!missing(view.ackAt) && view.ackAt >= at)) { settle(key); continue }
+    offer(key, GRACE.recorded,
+      () => 'phase ' + p + ' is recorded ' + rec.status + (rec.commit ? ' at ' + rec.commit : '') +
+        ' in the ledger, and this session has not verified since')
+  }
+
+  for (const report of view.latest) {
+    const p = String(report.phase)
+    if (shut.has(p) || missing(report.at)) continue
+    const key = p + '|report|' + report.at
+    if (next.told[key]) continue
+    if (report.delivered === false) {
+      // Nobody by that name, several by it, or the recipient gone: the store is the only
+      // copy of what the phase said.
+      offer(key, 0, () => 'phase ' + p + ' sent a report that was NOT delivered: ' + oneLine(report.text, 300))
+      continue
     }
+    // It reached this session as the phase's own message, or this session has read the
+    // phase's finished state from git since it was sent: a second copy is a wasted turn.
+    const verified = Boolean(ledger[p]) && !missing(view.ackAt) && view.ackAt >= report.at
+    if (received(view.inbox, report.text) || verified) { settle(key); continue }
+    offer(key, GRACE.report,
+      () => 'phase ' + p + ' sent a report ' + ago(now, report.at) + ' ago that has not reached ' +
+        'this session (held for approval, most likely): ' + oneLine(report.text, 300))
   }
   return { next: next, events: events }
 }
@@ -1571,6 +1735,10 @@ function quotaLine(q) {
 
 /** The prompt.submit hook: the plan block (if any), then the quota line (if over). */
 async function promptContext($, e, next) {
+  // A peer's message, as a turn of its own or delivered into a running one. Kept so a
+  // report this session has already been handed is not handed to it again.
+  const from = e.origin && e.origin.kind
+  if (from === 'peer' || from === 'peer-send-message') inbox = inbox.concat([plain(e.text)]).slice(-40)
   const planned = await attachPlan($, e, x => x)
   await refreshQuota($)
   const commanded = ['analyze-orchestrator', 'implement', 'do', 'analyze'].includes(e.command?.name)
@@ -1804,6 +1972,7 @@ export function register(on) {
   on('tool.call', watch).catch(async ($, e, next) => next(e))
 
   on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) inTurn = true
     if (swarm !== null) {
       turns += 1
       // `finalizing` is sticky: completion-handler's own turns must not drag the phase
@@ -1815,6 +1984,7 @@ export function register(on) {
   })
 
   on('turn.complete', async ($, e, next) => {
+    if (e.agentId === undefined) inTurn = false
     // A subagent finishing is not the phase finishing, and reporting it as idle makes a
     // busy session look parked -- which is the one misreading that matters on a deck
     // built to spot sessions that have gone quiet.

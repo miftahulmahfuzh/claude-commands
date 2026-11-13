@@ -140,7 +140,7 @@ test('a done that is gone by the next refresh wakes nobody', async ($, on) => {
   expect(woken).toEqual([])
 })
 
-test('a real finish wakes once, on the second reading, and names the row it fired on', async ($, on) => {
+test('a session that really ended wakes once, on the second reading, and names the row it fired on', async ($, on) => {
   const woken = asCoordinator(on, { 'ledger.json': LEDGER })
   const clock = mock.clock(on)
   const { saved } = storeSpy(on, { [ROW]: row({ updatedAt: 0 }) })
@@ -154,8 +154,9 @@ test('a real finish wakes once, on the second reading, and names the row it fire
 
   expect(woken).toHaveLength(1)
   expect(woken[0]).toContain('set ears changed')
-  expect(woken[0]).toContain('- phase 4 is done [row swarm/ears/phase/4: status done, turns 7, ' +
-    'last tool SendMessage, session phase-4, updated 16s ago]')
+  expect(woken[0]).toContain('- phase 4\'s session has ended, and the ledger does not record it done, failed ' +
+    'or blocked [row swarm/ears/phase/4: status done, turns 7, last tool SendMessage, session phase-4, ' +
+    'updated 16s ago]')
 })
 
 test('a phase swarm.py reaped is closed: read from .runtime.json, where reap records it', async ($, on) => {
@@ -166,22 +167,19 @@ test('a phase swarm.py reaped is closed: read from .runtime.json, where reap rec
   const { saved } = storeSpy(on, { [ROW]: row({ updatedAt: 0 }) })
 
   await $.session.start(START)
-  // The coordinator saw the commit in git and reaped the window before the deck caught up.
+  // The coordinator reaped the window before the deck caught up with its row or its report.
   runtime.sessions = {}
   runtime.reaped = { '4': { phase: 4, reaped_at: '2026-11-13T14:48:11+07:00', how: 'closed (done, verified)' } }
   saved.set(ROW, row({ status: 'done', updatedAt: 14000 }))
-  saved.set('swarm/ears/sent/4', [{ text: 'DONE phase 4', at: 14000 }])
-  await clock.advance(15000)
-  await clock.advance(15000)
+  saved.set('swarm/ears/sent/4', [{ text: 'DONE phase 4', at: 14000, delivered: false }])
+  for (let i = 0; i < 10; i++) await clock.advance(15000)
   expect(woken).toEqual([])
 
-  // Respawned under the same number: it has a session again, so its next finish is news.
+  // Respawned under the same number: it has a session again, so what it says is news.
   runtime.sessions = { '4': { name: 'impl-ears-p4' } }
-  saved.set(ROW, row({ status: 'working', updatedAt: 44000 }))
-  await clock.advance(15000)
-  saved.set(ROW, row({ status: 'finished', updatedAt: 59000 }))
-  await clock.advance(15000)
+  saved.set(ROW, row({ status: 'working', updatedAt: 164000 }))
+  saved.set('swarm/ears/sent/4', [{ text: 'DONE phase 4, second run', at: 164000, delivered: false }])
   await clock.advance(15000)
   expect(woken).toHaveLength(1)
-  expect(woken[0]).toContain('phase 4 is finished')
+  expect(woken[0]).toContain('DONE phase 4, second run')
 })

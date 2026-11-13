@@ -199,8 +199,15 @@ owner typed "apparently p1 and p2 are done". Phase 3 then sat finished for phase
 So the report is the ledger write, and two independent watchers turn it into a coordinator turn:
 `swarm.py watch` (ledger, git, `todos.md`, tmux and the process table, under `Monitor`) and the
 `swarm-deck` mod (a phase row going `finished` → `$.prompt.submit` in the coordinator). The same
-two flag a foreground shell past `MAX_SHELL_SCRIPT_DURATION` (default 5m) with its command, at
-every further multiple, which is the phase's progress report written for it. And `verify --apply`
+two flag a foreground shell past `MAX_SHELL_SCRIPT_DURATION` (default 5m) with its command — but
+one at a time. On random-twin-yardstick (2026-11-13) the deck sent 16 wakes and 14 repeated what
+the coordinator already knew: reports its inbox already held, `finished` minutes before a commit
+existed, the watch's own shell line. So the watch is the bell and the deck the backstop: the watch
+writes a heartbeat into `.runtime.json` (`watch.at`), the deck leaves shells and ledger lines to a
+live watch, holds each wake for a grace period, and drops it once the coordinator provably knows
+(report received, `verify`/`reap`/`land` run since, phase reaped). A long shell is paged at the
+threshold, on a change of state (progressing → idle-hung) and every sixth multiple, not at every
+one. The table is in `mods/swarm-deck/README.md`. And `verify --apply`
 no longer resets a phase whose window is live to `pending` — it made `runnable_now` list running
 phases.
 

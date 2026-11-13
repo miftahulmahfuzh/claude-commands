@@ -168,17 +168,40 @@ first turn.* MEASURED 2026-11-13: `SWARM_SLUG` and `SWARM_PHASE` are environment
 phase 4's next heartbeat restored `working`. Three things now stand in the way. A row carries the
 id of the session that writes it, and another session writes it only when that one said `done` or
 has missed three heartbeats (a respawned phase takes its number over that way); a headless
-session never writes one. A finish wakes the coordinator only when two refreshes, 15 s apart,
-agree. And a status wake names the row it fired on (key, status, turns, last tool, session,
+session never writes one. A session's end wakes the coordinator only when two refreshes, 15 s
+apart, agree. And a status wake names the row it fired on (key, status, turns, last tool, session,
 age), so a wrong one identifies its own source. A phase the coordinator reaped is read from the
 set's `.runtime.json` (`reaped.<n>`), which is where `swarm.py` records it.
 
 **Long shells.** *A shell that runs for twenty minutes looks exactly like a phase that is working.*
 Each phase's row carries its foreground Bash calls (command, start time, whether a subagent runs
 it). The deck lists them under the row; one past `MAX_SHELL_SCRIPT_DURATION` (default `5m`; `90s`,
-`10m`, `1h` all parse) turns the row `SHELL` in yellow, lights the band, and wakes the coordinator
-once per multiple of the threshold — a progress report the phase never had to remember to send.
+`10m`, `1h` all parse) turns the row `SHELL` in yellow and lights the band. Who wakes the coordinator depends on whether
+`swarm.py watch` is running for the set: while it is, the watch does, because its line has the pid
+and whether the process tree is moving, and the deck stays silent; with no watch, the deck does,
+once at the threshold and again every sixth multiple (5m, then 30m, 60m).
 A backgrounded command returns at once and is not timed.
+
+**A backstop, not a bell.** *Sixteen wakes in one five-phase set, fourteen of them about
+something the coordinator already knew.* MEASURED 2026-11-13: seven repeated a report the phase's
+own message had already delivered, five said `finished` two to four minutes before there was a
+commit to act on, two repeated the watch's long-shell line. Each cost a coordinator turn. The deck
+now wakes only for what has stayed true for a grace period and that the coordinator provably does
+not know:
+
+| What | Wakes | Dropped when |
+| --- | --- | --- |
+| A phase stops heartbeating | at once | never |
+| Its session ended and the ledger has no terminal status for it | on the second refresh | the phase is reaped |
+| A report with `delivered: false` | at once | the phase is reaped |
+| A report that was delivered | after 2 minutes | it arrived here as a peer message, or this session ran `swarm.py verify`, `reap` or `land` after it was sent and the ledger records the phase |
+| A turn that ended (`finished`) | after 5 minutes | a report or a ledger line followed |
+| The ledger records a phase `done`, `failed` or `blocked` | after 1 minute | a watch is running, its report arrived here, or this session verified since |
+| A long shell | at the threshold, then every sixth | a watch is running |
+
+Nothing is submitted while the coordinator is mid-turn (for up to 10 minutes): a wake sent then
+only queues and is stale when read. Every condition is re-read on each refresh, so what the turn
+made moot is never sent. One wake per phase, kind and occurrence, ever.
 
 **Landed and failed, out loud.** *The termination block is written for someone at the window.*
 The coordinator's deck raises a native notification (`$.ui.notify`) when its set's ledger records

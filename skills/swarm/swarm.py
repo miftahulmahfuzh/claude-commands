@@ -1378,6 +1378,41 @@ def shell_label(shell, now, idle_after, probe=None):
     return "progressing"
 
 
+def shell_kind(label):
+    """A long shell's state without its numbers, so "idle-hung ... 3m05s" and "... 4m00s"
+    are one state and only a change of state is news."""
+    if not label:
+        return None
+    return re.split(r"[:(]", label, maxsplit=1)[0].strip()
+
+
+# A long shell is paged when it crosses the line, when its state changes, and again every
+# this many multiples of the line (30m at the default 5m). MEASURED 2026-11-13 on
+# random-twin-yardstick: "running 5m" then "running 10m" for the same progressing pytest,
+# three times in one set -- each a coordinator turn that read the pane and did nothing.
+LONG_SHELL_REPEAT = 6
+
+# How often a running watch says it is alive, in .runtime.json. The swarm-deck mod reads it
+# and leaves long shells to the watch, whose line carries the pid and whether it is moving.
+WATCH_BEAT_S = 30.0
+
+
+def watch_beat(path, at, interval, last):
+    """Record that a watch is running (or, with `at` None, that it stopped). Returns the
+    time of the beat on file, so the loop writes one every WATCH_BEAT_S and not every tick."""
+    if at is not None and last is not None and at - last < WATCH_BEAT_S:
+        return last
+    try:
+        with locked(Path(path)) as data:
+            if at is None:
+                data.pop("watch", None)
+            else:
+                data["watch"] = {"pid": os.getpid(), "at": at, "interval": interval}
+    except OSError:
+        return last                      # a watch that cannot say so still watches
+    return at
+
+
 def pane_shells(pane_pid, table):
     """Every Bash tool call running under one tmux pane, oldest first.
 
@@ -1453,9 +1488,19 @@ def watch_events(prev, cur, max_shell, label=None):
         before = {s["pid"]: s for s in was.get("shells") or []}
         for shell in now["shells"]:
             step = int(shell["seconds"] // max_shell)
-            old = before.get(shell["pid"])
-            if step >= 1 and step > int((old or {"seconds": 0})["seconds"] // max_shell):
-                state = f" [{label(n, shell)}]" if label else ""
+            if step < 1:
+                continue
+            old = before.get(shell["pid"]) or {}
+            was_step = int(old.get("seconds", 0) // max_shell)
+            said = label(n, shell) if label else None
+            # Kept on the reading, which is the next tick's `prev`: a state is news only
+            # against one this watch has already named.
+            shell["label_kind"] = shell_kind(said)
+            crossed = was_step < 1
+            turned = "label_kind" in old and old["label_kind"] != shell["label_kind"]
+            again = step // LONG_SHELL_REPEAT > was_step // LONG_SHELL_REPEAT
+            if crossed or turned or again:
+                state = f" [{said}]" if said else ""
                 events.append(f"SHELL phase {n}: running {shell['seconds'] // 60}m"
                               f"{shell['seconds'] % 60:02d}s (pid {shell['pid']}){state}: "
                               f"{' '.join(shell['command'].split())[:160]}")
@@ -1559,9 +1604,10 @@ def cmd_watch(args):
     limit = parse_duration(args.max_shell or os.environ.get("MAX_SHELL_SCRIPT_DURATION")
                            or DEFAULT_MAX_SHELL) or parse_duration(DEFAULT_MAX_SHELL)
     idle_after = parse_duration(os.environ.get("SWARM_IDLE_AFTER") or "3m") or 180
-    prev, seen = None, {}
+    prev, seen, beat = None, {}, None
     while True:
         table, cpu, at = process_table(), process_cpu(), time.time()
+        beat = watch_beat(runtime_path(repo, slug), at, args.interval, beat)
         ledger = load(path)
         cur = carry_progress(prev, watch_state(repo, ledger, load(runtime_path(repo, slug)),
                                                table, cpu), at)
@@ -1601,6 +1647,7 @@ def cmd_watch(args):
         seen = lines
         if args.once or all(x["status"] in TERMINAL or x["derived"] in TERMINAL
                             for x in cur.values()):
+            watch_beat(runtime_path(repo, slug), None, args.interval, beat)
             return 0
         prev = cur
         time.sleep(args.interval)
@@ -3164,9 +3211,53 @@ def selftest():
     eq("a new worker is progress", shell_label(c["4"]["shells"][0], 1310.0, 180), "progressing")
     eq("a DB probe answer wins", shell_label(c["4"]["shells"][0], 1310.0, 180, "pid 9 blocked"),
        "waiting on DB: pid 9 blocked")
-    ev = watch_events(a, {"4": dict(b["4"], shells=[dict(b["4"]["shells"][0], seconds=605)])},
+    under = {"4": dict(a["4"], shells=[dict(a["4"]["shells"][0], seconds=290)])}
+    ev = watch_events(under, {"4": dict(b["4"], shells=[dict(b["4"]["shells"][0], seconds=305)])},
                       300, lambda n, sh: "progressing")
     eq("the SHELL line carries the label", any("[progressing]" in e for e in ev), True)
+
+    # watch: one page per long shell, then only news (MEASURED 2026-11-13: 5m and 10m lines
+    # for the same progressing pytest, each one a coordinator turn that changed nothing)
+    def at(seconds, **extra):
+        return {"4": {"status": "spawned", "derived": "pending", "commit": None, "window": "@1",
+                      "shells": [dict({"pid": 12, "seconds": seconds, "command": "pytest"},
+                                      **extra)]}}
+    says = {"label": "progressing"}
+    lab = lambda n, sh: says["label"]                                    # noqa: E731
+    r0 = at(290)
+    r1 = at(305)
+    eq("5m pages", len(watch_events(r0, r1, 300, lab)), 1)
+    r2 = at(605)
+    eq("10m of the same progressing shell does not", watch_events(r1, r2, 300, lab), [])
+    says["label"] = "idle-hung (no CPU or new processes for 3m05s)"
+    r3 = at(700)
+    ev = watch_events(r2, r3, 300, lab)
+    eq("a shell that stops moving pages at once", (len(ev), "[idle-hung" in (ev or [""])[0]),
+       (1, True))
+    says["label"] = "idle-hung (no CPU or new processes for 4m00s)"
+    r4 = at(755)
+    eq("and the same state a minute on does not", watch_events(r3, r4, 300, lab), [])
+    r5 = at(1805)
+    eq("thirty minutes pages again whatever the state", len(watch_events(r4, r5, 300, lab)), 1)
+    eq("a watch armed on an old shell does not page for it",
+       watch_events(at(700), at(710), 300, lab), [])
+    eq("the kind of a label drops its numbers", (shell_kind("idle-hung (no CPU for 3m05s)"),
+       shell_kind("waiting on DB: pid 9 blocked"), shell_kind("progressing"), shell_kind(None)),
+       ("idle-hung", "waiting on DB", "progressing", None))
+
+    # watch: the heartbeat the deck reads, so one of the two speaks about a shell, not both
+    with tempfile.TemporaryDirectory() as tmp:
+        beat = Path(tmp) / ".runtime.json"
+        beat.write_text(json.dumps({"sessions": {"4": {"name": "impl-x-p4"}}}))
+        eq("the first beat is written", watch_beat(beat, 1000.0, 10.0, None), 1000.0)
+        got = json.loads(beat.read_text())
+        eq("with who and how often", (got["watch"]["at"], got["watch"]["interval"],
+                                      got["watch"]["pid"] == os.getpid()), (1000.0, 10.0, True))
+        eq("and the sessions beside it are kept", got["sessions"], {"4": {"name": "impl-x-p4"}})
+        eq("not rewritten every tick", watch_beat(beat, 1010.0, 10.0, 1000.0), 1000.0)
+        eq("but refreshed within the half minute", watch_beat(beat, 1031.0, 10.0, 1000.0), 1031.0)
+        watch_beat(beat, None, 10.0, 1031.0)
+        eq("a watch that ends says so", "watch" in json.loads(beat.read_text()), False)
 
     # watch: two sessions on one resource (resource_users, contention, queue_lines)
     decl = {"pg": {"match": ["test:int"], "isolate": "none", "max_concurrent": None,
