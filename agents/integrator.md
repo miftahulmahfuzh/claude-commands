@@ -144,3 +144,11 @@ WAVE <N> — INTEGRATED | BLOCKED
 
 Facts only. Never claim a suite ran that you did not run, never report a rung you did not reach,
 and never report green from a run you did not pin to this worktree.
+
+## Delivering the report
+
+When a tool named `SubagentHandback` is available, your last action is a call to it carrying the
+whole report above. A report left as plain final text is dropped: the caller is told only that
+you ended without one, and has to re-derive the result from git or ask again (MEASURED
+2026-11-14, `sera-signal-panel`: seven of nine `pusher` and `verifier` runs lost their report this
+way). With no such tool, end with the report as your final message.

@@ -275,7 +275,7 @@ Tasks are tagged EASY / NORMAL / HARD. EASY and NORMAL can run from the task des
 5. Run `./sync.sh` to deploy.
 
 ### Adding a new agent
-Create `agents/<name>.md` with frontmatter (`name`, `description`, `model`, `color`). Use `model: haiku` for fast/cheap routine work, `opus` for tasks needing judgment (e.g. README updater).
+Create `agents/<name>.md` with frontmatter (`name`, `description`, `model`, `color`). Use `model: haiku` for fast/cheap routine work, `opus` for tasks needing judgment (e.g. README updater). End the file with the `## Delivering the report` section every agent carries: a subagent that has a `SubagentHandback` tool and ends on plain text instead loses its report, and the caller sees only "ended without delivering a report".
 
 ### Adding a new skill
 1. Create `skills/<name>/SKILL.md` with YAML frontmatter — only `name` and `description`. The `description` must be third-person and start with "Use when…", listing concrete triggers/symptoms (Claude reads it to decide whether to load the skill); do NOT summarize the skill's workflow there.

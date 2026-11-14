@@ -109,3 +109,11 @@ Before writing the brief, read `~/.claude/skills/engineering-principles/SKILL.md
 it, and list each principle that changed a decision in `principles`. If the repo has a
 verification skill (`.claude/skills/verify-*/SKILL.md`), read it and write `proof.journeys`
 with its real commands. Proof is something an agent runs, never "check it manually".
+
+## Delivering the report
+
+When a tool named `SubagentHandback` is available, your last action is a call to it carrying the
+whole report above. A report left as plain final text is dropped: the caller is told only that
+you ended without one, and has to re-derive the result from git or ask again (MEASURED
+2026-11-14, `sera-signal-panel`: seven of nine `pusher` and `verifier` runs lost their report this
+way). With no such tool, end with the report as your final message.

@@ -48,6 +48,12 @@ tree and its index are shared with every other phase of the set, so everything b
    - **Each of `decisions` and `drift_notes` on its own body line**
      (`Decided: <fork> -> <choice> (<rung>)`, `Drift: <note>`). They are the forks an executor
      settled instead of asking a human, and `git log` is where a reviewer looks for them.
+   - **End the message with the trailer the caller gave.** With none given, end it with
+     `Co-Authored-By: Claude <noreply@anthropic.com>`. Never a line naming the model you happen
+     to run on: the work was done by the session that dispatched you, and a set whose phases are
+     pushed by this agent would otherwise carry a different author line from its coordinator's
+     commits (MEASURED 2026-11-14, `sera-signal-panel`: all seven phase commits read
+     "Claude Haiku 5.5").
 
 5. **Commit exactly `paths`**
 
@@ -122,3 +128,11 @@ Why these rules exist, measured:
 - Push status and target branch, or git's message when it failed
 - **Every dirty path you deliberately left out**, by name, with one line on why it could not be
   attributed to this task — how the caller learns a peer is mid-write in the same tree
+
+## Delivering the report
+
+When a tool named `SubagentHandback` is available, your last action is a call to it carrying the
+whole report above. A report left as plain final text is dropped: the caller is told only that
+you ended without one, and has to re-derive the result from git or ask again (MEASURED
+2026-11-14, `sera-signal-panel`: seven of nine `pusher` and `verifier` runs lost their report this
+way). With no such tool, end with the report as your final message.

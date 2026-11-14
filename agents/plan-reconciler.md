@@ -178,3 +178,11 @@ summary: "{2–3 sentences}"
 Set `contract_changed: true` when your edits moved a deletion, creation, or rename between
 phases — the plans that depend on it were written against the old contract and need one more
 pass. The caller runs at most 2 rounds; on round 2, resolve or record, never defer.
+
+## Delivering the report
+
+When a tool named `SubagentHandback` is available, your last action is a call to it carrying the
+whole report above. A report left as plain final text is dropped: the caller is told only that
+you ended without one, and has to re-derive the result from git or ask again (MEASURED
+2026-11-14, `sera-signal-panel`: seven of nine `pusher` and `verifier` runs lost their report this
+way). With no such tool, end with the report as your final message.
